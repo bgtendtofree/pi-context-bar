@@ -78,6 +78,16 @@ export type ModelInfo = Readonly<{
 	reasoning: boolean;
 }> | null;
 
+export type GitState = Readonly<{
+	branch: string | null;
+	detachedOid: string | null;
+	ahead: number;
+	behind: number;
+	staged: number;
+	unstaged: number;
+	untracked: number;
+}>;
+
 export const emptyContextSegments = (): WritableContextSegments => ({
 	system: 0,
 	prompt: 0,
@@ -288,46 +298,74 @@ export const freeTextColor = (percent: number): string => {
 	return FREE_SEGMENT_TEXT;
 };
 
-export const segmentMixText = (snapshot: ContextSnapshot): string => {
-	if (snapshot.usedTokens <= 0 || segmentTotal(snapshot.segments) <= 0) return "";
+export type DominantSegment = Readonly<{
+	key: ContextSegmentKey;
+	label: string;
+	percent: number;
+}>;
 
-	const segments = USED_SEGMENTS.map(
-		(segment) => `${segment.label}${formatTokens(snapshot.segments[segment.key])}`,
-	).join("/");
+export const dominantSegments = (snapshot: ContextSnapshot, limit = 3): readonly DominantSegment[] => {
+	const total = segmentTotal(snapshot.segments);
+	if (snapshot.usedTokens <= 0 || total <= 0 || limit <= 0) return [];
 
-	// Segment allocation is estimated from message content even when total usage is measured.
-	return `mix~ ${segments}`;
+	return USED_SEGMENTS.map((segment, index) => ({
+		key: segment.key,
+		label: segment.label,
+		percent: Math.round((snapshot.segments[segment.key] / total) * 100),
+		index,
+	}))
+		.filter((segment) => segment.percent > 0)
+		.sort((left, right) => right.percent - left.percent || left.index - right.index)
+		.slice(0, limit)
+		.map(({ key, label, percent }) => ({ key, label, percent }));
 };
 
-/**
- * Free-zone metric options, widest → tightest.
- * Context usage + approximate segment mix sit beside CH and optional cost.
- */
+export const segmentMixText = (snapshot: ContextSnapshot, limit = 3): string => {
+	const segments = dominantSegments(snapshot, limit);
+	if (segments.length === 0) return "";
+
+	return `≈ ${segments.map((segment) => `${segment.label}${segment.percent}`).join(" ")}`;
+};
+
+export const formatCost = (cost: number): string => {
+	if (cost <= 0) return "";
+	return `$${cost >= 1 ? cost.toFixed(2) : cost.toFixed(3)}`;
+};
+
+const metricGroup = (...parts: readonly string[]): string => parts.filter(Boolean).join("   ");
+const efficiencyGroup = (ch: string, cost: string): string => [ch, cost].filter(Boolean).join("  ");
+
+/** Free-zone metric options, widest → tightest. Core health survives before mix and cost. */
 export const freeMetricOptions = (snapshot: ContextSnapshot, usage: SessionUsage): readonly string[] => {
 	const prefix = snapshot.usageIsEstimated ? "~" : "";
 	const percent =
 		snapshot.contextWindow > 0 ? `${prefix}${((snapshot.usedTokens / snapshot.contextWindow) * 100).toFixed(1)}%` : "";
-	const mix = segmentMixText(snapshot);
-	const ch = usage.cacheHitRate !== undefined ? `CH${usage.cacheHitRate.toFixed(1)}%` : "";
-	const chShort = usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "";
-	const cost = usage.cost > 0 ? `$${usage.cost.toFixed(3)}` : "";
-	const costShort = usage.cost > 0 ? `$${usage.cost.toFixed(2)}` : "";
+	const mix = segmentMixText(snapshot, 3);
+	const mixShort = segmentMixText(snapshot, 2);
+	const ch = usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "";
+	const cost = formatCost(usage.cost);
+	const options = ch
+		? [
+				metricGroup(percent, mix, efficiencyGroup(ch, cost)),
+				metricGroup(percent, mix, ch),
+				metricGroup(percent, mixShort, ch),
+				metricGroup(percent, efficiencyGroup(ch, cost)),
+				metricGroup(percent, ch),
+				percent,
+				ch,
+				"",
+			]
+		: [
+				metricGroup(percent, mix, cost),
+				metricGroup(percent, mix),
+				metricGroup(percent, mixShort),
+				metricGroup(percent, cost),
+				percent,
+				cost,
+				"",
+			];
 
-	const join = (...parts: string[]) => parts.filter(Boolean).join(" · ");
-
-	return [
-		join(percent, mix, ch, cost),
-		join(percent, mix, chShort, costShort),
-		join(percent, mix, chShort),
-		join(percent, ch, cost),
-		join(percent, chShort, costShort),
-		join(percent, chShort),
-		join(percent, mix),
-		join(percent, ch ? "CH" : ""),
-		percent,
-		chShort,
-		"",
-	];
+	return [...new Set(options)];
 };
 
 export const pickFirstFitting = (options: readonly string[], width: number): string => {
@@ -339,13 +377,13 @@ export const pickFirstFitting = (options: readonly string[], width: number): str
 };
 
 const styleSegmentMix = (text: string): string => {
-	let styled = foreground(FREE_SEGMENT_TEXT, "mix~ ");
-	const values = text.slice("mix~ ".length).split("/");
+	let styled = foreground(FREE_SEGMENT_TEXT, "≈ ");
+	const values = text.slice("≈ ".length).split(" ");
 
 	for (const [index, value] of values.entries()) {
-		const segment = USED_SEGMENTS[index];
+		const segment = USED_SEGMENTS.find((candidate) => candidate.label === value[0]);
 		if (!segment) continue;
-		if (index > 0) styled += foreground(FREE_SEGMENT_TEXT, "/");
+		if (index > 0) styled += foreground(FREE_SEGMENT_TEXT, " ");
 		styled += foreground(segment.color, segment.label);
 		styled += foreground(FREE_SEGMENT_TEXT, value.slice(segment.label.length));
 	}
@@ -357,18 +395,17 @@ export const styleFreeMetrics = (plain: string, percent: number): string => {
 	if (plain.length === 0) return "";
 
 	const color = freeTextColor(percent);
-	// Split on middle-dot separators so each metric family keeps one quiet accent.
-	const tokens = plain.split(" · ");
-	const styled = tokens.map((token) => {
-		if (token.startsWith("mix~ ")) return styleSegmentMix(token);
-		if (token.startsWith("CH")) return foreground(CACHE_HIT_TEXT, token);
-		if (token.startsWith("$")) return foreground(COST_TEXT, token);
-		// Only the usage % uses hot/full threshold colors.
-		if (token.includes("%") && !token.startsWith("CH")) return foreground(color, token);
-		return foreground(FREE_SEGMENT_TEXT, token);
-	});
-
-	return styled.join(foreground(FREE_SEGMENT_TEXT, " · "));
+	const tokens = plain.split(/( {2,})/);
+	return tokens
+		.map((token) => {
+			if (/^ {2,}$/.test(token)) return foreground(FREE_SEGMENT_TEXT, token);
+			if (token.startsWith("≈ ")) return styleSegmentMix(token);
+			if (token.startsWith("CH")) return foreground(CACHE_HIT_TEXT, token);
+			if (token.startsWith("$")) return foreground(COST_TEXT, token);
+			if (token.includes("%")) return foreground(color, token);
+			return foreground(FREE_SEGMENT_TEXT, token);
+		})
+		.join("");
 };
 
 const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>
@@ -423,89 +460,160 @@ export const renderPacmanLane = (
 	return `${consumed}${pacman}${pellets}${remainder}`;
 };
 
-export const formatModel = (model: ModelInfo, thinkingLevel: string, providerCount: number): string => {
-	if (!model) return "no-model";
-
-	const thinking = model.reasoning ? ` · ${thinkingLevel}` : "";
-	const base = `${model.id}${thinking}`;
-
-	return providerCount > 1 ? `(${model.provider}) ${base}` : base;
-};
-
-export const modelOptions = (model: ModelInfo, thinkingLevel: string, providerCount: number): readonly string[] => {
+export const editorModelOptions = (model: ModelInfo, thinkingLevel: string): readonly string[] => {
 	if (!model) return ["no-model", "?"];
 
 	const id = model.id;
 	const shortId = id.includes("/") ? (id.split("/").pop() ?? id) : id;
-	const thinking = model.reasoning ? thinkingLevel : "";
+	const thinking = model.reasoning && thinkingLevel !== "off" ? thinkingLevel : "";
 	const withThinking = thinking ? `${id} · ${thinking}` : id;
 	const shortWithThinking = thinking ? `${shortId} · ${thinking}` : shortId;
-	const withProvider = `(${model.provider}) ${withThinking}`;
-	const shortProvider = `(${model.provider}) ${shortWithThinking}`;
 
-	const options = [
-		providerCount > 1 ? withProvider : withThinking,
-		withThinking,
-		providerCount > 1 ? shortProvider : shortWithThinking,
-		shortWithThinking,
-		shortId,
-		shortId.length > 12 ? `${shortId.slice(0, 11)}…` : shortId,
-		"·",
+	return [
+		...new Set(
+			[withThinking, shortWithThinking, shortId, shortId.length > 16 ? `${shortId.slice(0, 15)}…` : shortId].filter(
+				Boolean,
+			),
+		),
 	];
-
-	return [...new Set(options.filter(Boolean))];
 };
 
-export const pickModelAndBarWidth = (
-	models: readonly string[],
-	width: number,
-): Readonly<{ modelText: string; barWidth: number }> => {
-	const minBarWidth = Math.min(12, Math.max(6, Math.floor(width * 0.55)));
+export const parseGitStatus = (output: string): GitState | null => {
+	let branch: string | null = null;
+	let detachedOid: string | null = null;
+	let ahead = 0;
+	let behind = 0;
+	let staged = 0;
+	let unstaged = 0;
+	let untracked = 0;
+	let sawStatus = false;
 
-	for (const option of models) {
-		const gap = option.length > 0 ? 1 : 0;
-		const nextBarWidth = width - plainWidth(option) - gap;
-		if (nextBarWidth >= minBarWidth) {
-			return { modelText: option, barWidth: nextBarWidth };
+	for (const line of output.split("\n")) {
+		if (!line) continue;
+		sawStatus = true;
+		if (line.startsWith("# branch.head ")) {
+			const head = line.slice("# branch.head ".length).trim();
+			branch = head && head !== "(detached)" ? head : null;
+			continue;
 		}
+		if (line.startsWith("# branch.oid ")) {
+			const oid = line.slice("# branch.oid ".length).trim();
+			detachedOid = oid && oid !== "(initial)" ? oid.slice(0, 7) : null;
+			continue;
+		}
+		if (line.startsWith("# branch.ab ")) {
+			const match = line.match(/^# branch\.ab \+(\d+) -(\d+)$/);
+			if (match) {
+				ahead = Number.parseInt(match[1] ?? "0", 10);
+				behind = Number.parseInt(match[2] ?? "0", 10);
+			}
+			continue;
+		}
+		if (line.startsWith("? ")) {
+			untracked++;
+			continue;
+		}
+		if (line.startsWith("1 ") || line.startsWith("2 ")) {
+			const status = line.slice(2, 4);
+			if ((status[0] ?? ".") !== ".") staged++;
+			if ((status[1] ?? ".") !== ".") unstaged++;
+			continue;
+		}
+		if (line.startsWith("u ")) unstaged++;
 	}
 
-	return { modelText: "", barWidth: width };
+	return sawStatus ? { branch, detachedOid, ahead, behind, staged, unstaged, untracked } : null;
+};
+
+export const gitLabelOptions = (git: GitState | null): readonly string[] => {
+	if (!git) return [];
+	const head = git.branch ?? (git.detachedOid ? `@${git.detachedOid}` : "");
+	if (!head) return [];
+
+	const changes = [
+		git.staged > 0 ? `+${git.staged}` : "",
+		git.unstaged > 0 ? `*${git.unstaged}` : "",
+		git.untracked > 0 ? `?${git.untracked}` : "",
+	].filter(Boolean);
+	const sync = [git.ahead > 0 ? `↑${git.ahead}` : "", git.behind > 0 ? `↓${git.behind}` : ""].filter(Boolean);
+	const branch = `⎇ ${head}`;
+	const dirty = changes.length > 0 ? `${branch} ●` : branch;
+
+	return [
+		...new Set(
+			[[branch, ...changes, ...sync].join(" "), [branch, ...changes].join(" "), dirty, branch].filter(Boolean),
+		),
+	];
+};
+
+export const pickEditorBorderLabels = (
+	modelLabels: readonly string[],
+	gitLabels: readonly string[],
+	width: number,
+): Readonly<{ modelLabel: string; gitLabel: string }> => {
+	const fits = (modelLabel: string, gitLabel: string): boolean => {
+		const leftWidth = modelLabel ? plainWidth(modelLabel) + 3 : 1;
+		const rightWidth = gitLabel ? plainWidth(gitLabel) + 4 : 1;
+		return 2 + leftWidth + rightWidth + 3 <= width;
+	};
+
+	for (const modelLabel of modelLabels) {
+		for (const gitLabel of gitLabels) {
+			if (fits(modelLabel, gitLabel)) return { modelLabel, gitLabel };
+		}
+	}
+	for (const modelLabel of modelLabels) {
+		if (fits(modelLabel, "")) return { modelLabel, gitLabel: "" };
+	}
+
+	return { modelLabel: "", gitLabel: "" };
+};
+
+export const renderLabeledBorder = (
+	width: number,
+	leftCorner: string,
+	rightCorner: string,
+	leftLabel: string,
+	rightLabel: string,
+	border: (text: string) => string,
+): string => {
+	if (width <= 0) return "";
+	if (width === 1) return border("─");
+
+	const left = leftLabel ? `${border("─")} ${leftLabel} ` : border("─");
+	const right = rightLabel ? ` ${rightLabel} ${border("──")}` : border("─");
+	const fillWidth = Math.max(0, width - 2 - plainWidth(left) - plainWidth(right));
+
+	return `${border(leftCorner)}${left}${border("─".repeat(fillWidth))}${right}${border(rightCorner)}`;
 };
 
 export const renderChromeLine = (
 	snapshot: ContextSnapshot,
 	usage: SessionUsage,
 	width: number,
-	model: ModelInfo,
-	thinkingLevel: string,
-	providerCount: number,
 	dim: (text: string) => string,
 	animationFrame = 0,
 	activity: LaneActivity = "idle",
 ): string => {
+	if (width <= 0) return "";
+	if (width <= 2) return fitStyledText(dim("·"), width);
+
+	const contentWidth = width - 2;
 	if (snapshot.contextWindow <= 0) {
-		const modelText = formatModel(model, thinkingLevel, providerCount);
-		const left = dim("ctx unavailable");
-		const gap = Math.max(1, width - plainWidth(stripAnsi(left)) - plainWidth(modelText));
-		return fitStyledText(`${left}${" ".repeat(gap)}${dim(modelText)}`, width);
+		const unavailable = dim("ctx unavailable");
+		return ` ${" ".repeat(Math.max(0, contentWidth - plainWidth(unavailable)))}${fitStyledText(unavailable, contentWidth)} `;
 	}
 
 	const percent = (snapshot.usedTokens / snapshot.contextWindow) * 100;
-	const models = modelOptions(model, thinkingLevel, providerCount);
-	const { modelText, barWidth } = pickModelAndBarWidth(models, width);
-	const minimumLaneWidth = Math.min(12, Math.max(4, Math.floor(barWidth * 0.4)));
-	const metricWidth = Math.max(0, barWidth - minimumLaneWidth - 1);
+	const minimumLaneWidth = Math.min(12, Math.max(4, Math.floor(contentWidth * 0.35)));
+	const metricWidth = Math.max(0, contentWidth - minimumLaneWidth - 2);
 	const metricText = pickFirstFitting(freeMetricOptions(snapshot, usage), metricWidth);
-	const metricGap = metricText.length > 0 ? 1 : 0;
-	const availableLaneWidth = barWidth - plainWidth(metricText) - metricGap;
+	const minimumGap = metricText.length > 0 ? 2 : 0;
+	const availableLaneWidth = Math.max(0, contentWidth - plainWidth(metricText) - minimumGap);
 	const laneWidth = Math.min(PACMAN_LANE_MAX_WIDTH, availableLaneWidth);
-	const flexibleGap = availableLaneWidth - laneWidth + metricGap;
+	const flexibleGap = contentWidth - laneWidth - plainWidth(metricText);
 	const lane = renderPacmanLane(snapshot, laneWidth, animationFrame, activity);
 	const metrics = styleFreeMetrics(metricText, percent);
-	const status = `${lane}${" ".repeat(flexibleGap)}${metrics}`;
 
-	if (modelText.length === 0) return status;
-
-	return `${status} ${dim(modelText)}`;
+	return ` ${lane}${" ".repeat(Math.max(0, flexibleGap))}${metrics} `;
 };

@@ -1,22 +1,23 @@
 # pi-context-bar
 
-Single-line context chrome for pi: Pac-Man context lane + segment mix + CH% + cost + model.
+Rounded editor + single-line context chrome for pi: model/Git border + Pac-Man lane + dominant mix + CH% + cost.
 
 ## Goal
 
-One quiet row under the editor. No multi-line footer. Structure via bar; health via few numbers.
+Rounded input shell plus one quiet health row below editor. No multi-line footer. Environment in border; health in lane + numbers.
 
 ## Rules
 
-- Keep chrome height = 1 always
+- Keep health chrome height = 1 always; rounded editor may wrap naturally with input
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
-- Free metrics: `%` · approximate segment `mix~` · `CH` · optional `$` — never path / ↑↓ / R / W
+- Editor bottom border: model/thinking left; local Git branch/status right; never path or provider quota
+- Health metrics: `%` · approximate dominant `≈ S/P/A/T/X` · `CH` · optional `$`
 - Classic palette: cream pellets, yellow solid Nerd Font Pac-Man, phase-colored ghost
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets
-- No background color blocks; segment mix lives in metrics with only `S/P/A/T/X` labels colored
-- Cap lane width on ultra-wide terminals; preserve flexible gap before right-side metrics
+- No background color blocks; only visible dominant segment labels colored
+- Cap lane width on ultra-wide terminals; metrics align to editor inner right edge
 - Animate Pac-Man mouth only while agent runs; clear timer on end/shutdown
-- CH remains metrics accent; segment colors stay limited to one-letter metric labels
+- CH remains metrics accent; Git stays quiet and local-only
 - Functional style, no `any`, immutable snapshots
 - Pure logic in `lib/chrome.ts`; keep `index.ts` thin
 

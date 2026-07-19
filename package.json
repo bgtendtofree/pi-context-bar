@@ -1,7 +1,7 @@
 {
 	"name": "pi-context-bar",
 	"version": "0.4.0",
-	"description": "Animated single-line Pac-Man context lane for Pi: usage, cache hit, cost, and model.",
+	"description": "Rounded Pi editor with Pac-Man context health, dominant mix, cache hit, cost, and Git state.",
 	"type": "module",
 	"license": "MIT",
 	"packageManager": "bun@1.3.14",
@@ -44,7 +44,8 @@
 		"ci": "bun run quality && bun run typecheck && bun run test:coverage && bun run smoke && bun run package:check && bun run smoke:package"
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": "*"
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.4",

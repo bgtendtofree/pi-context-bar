@@ -1,32 +1,36 @@
 # pi-context-bar
 
-Single-line context chrome for [pi](https://pi.dev).
+Rounded editor + single-line context chrome for [pi](https://pi.dev).
 
-One quiet row under the editor: Pac-Man context lane, usage %, approximate segment mix, cache hit, optional cost, model.
+Model and Git metadata live in the editor border; one quiet row below carries Pac-Man context health.
 
 ```
-          󰮯 • • • • •   45.2% · mix~ S8k/P11k/A38k/T21k/X12k · CH92.3% · $0.042  opus · high
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ›                                                                            │
+╰─ gpt-5.6-sol · medium ──────────────────────────────────── ⎇ main ?1 ─────────╯
+  󰮯 • • • • •                         15.7%   ≈ X74 A19 S6   CH98%  $1.61
 ```
 
-Pac-Man moves left → right as context fills. Eaten pellets become empty space; cream pellets ahead are remaining capacity. Segment analytics move beside the numeric metrics as `mix~` because their allocation is estimated: system (`S`), prompt (`P`), assistant (`A`), thinking (`T`), and tools (`X`). While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle.
+Pac-Man moves left → right as context fills. Eaten pellets become empty space; cream pellets ahead are remaining capacity. Approximate segment analytics show only the three dominant shares: system (`S`), prompt (`P`), assistant (`A`), thinking (`T`), and tools (`X`). While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle.
 
 ## Why
 
 `nano-context` has a great segmented bar, but its custom footer drops default pi stats (especially **cache hit `CH%`**) and stacks 3 chrome lines total.
 
-`pi-context-bar` turns context into a compact Pac-Man lane, restores `CH%` / cost / model, and collapses everything into **one line**. Default footer is replaced with an empty footer, and the redundant built-in streaming working row is hidden while the extension is active.
+`pi-context-bar` turns context into a compact Pac-Man lane, restores `CH%` / cost, and separates stable environment metadata from live health. Default footer is replaced with an empty footer, model/Git move into the rounded editor border, and the redundant built-in streaming working row is hidden while the extension is active.
 
 ## Layout
 
 | Zone | Content |
 |------|---------|
+| Editor border left | model · thinking |
+| Editor border right | Git branch plus staged `+`, unstaged `*`, untracked `?`, ahead `↑`, behind `↓` |
 | Pac-Man lane | empty consumed space → phase ghost while running → yellow Pac-Man → cream remaining pellets |
-| Metrics | `%` · approximate `mix~ S/P/A/T/X` · `CH` · optional `$` (no path, no ↑↓RW) |
-| Far right | model · thinking (provider if multi) |
+| Right-aligned metrics | `%` · approximate dominant `≈ S/P/A/T/X` · `CH` · optional `$` |
 
-Segment labels use classic ghost colors: red system, pink prompt, cyan assistant, orange thinking, blue tools. Only the one-letter labels are colored; values stay dim and no background blocks are used.
+Segment labels use classic ghost colors: red system, pink prompt, cyan assistant, orange thinking, blue tools. Only visible one-letter labels are colored; values stay dim and no background blocks are used. Git is local-only and omitted outside repositories.
 
-Width cascade drops cost and segment mix before core `%` + `CH`, then shortens model details. Ultra-wide terminals cap the lane at 96 columns and keep a quiet flexible gap before right-aligned metrics.
+Width cascade compresses Git details, segment mix, cost, and model details while preserving model, branch, `%`, and `CH` longest. Ultra-wide terminals cap the lane at 96 columns and keep a flexible gap before metrics aligned to the editor's inner right edge.
 
 ## Font requirement
 

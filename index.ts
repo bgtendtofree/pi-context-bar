@@ -1,13 +1,28 @@
-import { buildSessionContext, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	buildSessionContext,
+	CustomEditor,
+	type ExtensionAPI,
+	type ExtensionContext,
+	type KeybindingsManager,
+} from "@earendil-works/pi-coding-agent";
+import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import {
 	accumulateSessionUsage,
 	type ContextSnapshot,
+	editorModelOptions,
 	emptyContextSegments,
+	type GitState,
+	gitLabelOptions,
 	type LaneActivity,
 	type ModelInfo,
 	makeContextSnapshot,
+	parseGitStatus,
+	pickEditorBorderLabels,
 	renderChromeLine,
+	renderLabeledBorder,
 	type SessionUsageEntry,
+	stripAnsi,
 } from "./lib/chrome.ts";
 
 const WIDGET_KEY = "context-bar";
@@ -21,12 +36,12 @@ let latestContextSnapshot: ContextSnapshot = {
 	contextWindow: 0,
 	usageIsEstimated: false,
 };
+let latestGitState: GitState | null = null;
 let animationFrame = 0;
 let animationTimer: ReturnType<typeof setInterval> | undefined;
 let laneActivity: LaneActivity = "idle";
 let activeTui: RenderRequester | undefined;
-// ctx captured at widget registration. Its getters stay live for the whole session
-// and only go stale after session_shutdown, which clears this reference.
+// ctx captured at widget/editor registration. Its getters stay live for the session.
 let boundCtx: ExtensionContext | undefined;
 
 const stopPacmanAnimation = (): void => {
@@ -46,7 +61,6 @@ const startPacmanAnimation = (): void => {
 
 const sessionMessages = (ctx: ExtensionContext): readonly unknown[] => {
 	const context = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId());
-
 	return context.messages as readonly unknown[];
 };
 
@@ -54,7 +68,6 @@ const snapshotFromContext = (ctx: ExtensionContext, messages: readonly unknown[]
 	const usage = ctx.getContextUsage();
 	const measuredTokens = typeof usage?.tokens === "number" && usage.tokens > 0 ? usage.tokens : undefined;
 	const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
-
 	return makeContextSnapshot(messages, ctx.getSystemPrompt(), measuredTokens, contextWindow);
 };
 
@@ -66,23 +79,15 @@ const usageFromContext = (ctx: ExtensionContext) => {
 const modelFromContext = (ctx: ExtensionContext): ModelInfo => {
 	const model = ctx.model;
 	if (!model) return null;
-
-	return {
-		id: model.id,
-		provider: model.provider,
-		reasoning: Boolean(model.reasoning),
-	};
+	return { id: model.id, provider: model.provider, reasoning: Boolean(model.reasoning) };
 };
 
-/** Recompute the context snapshot. Cheap to call on data-change events; no UI re-registration. */
 const refreshSnapshot = (ctx: ExtensionContext, messages?: readonly unknown[]): void => {
 	if (!ctx.hasUI) return;
 	latestContextSnapshot = snapshotFromContext(ctx, messages ?? sessionMessages(ctx));
 };
 
-const requestRender = (): void => {
-	activeTui?.requestRender();
-};
+const requestRender = (): void => activeTui?.requestRender();
 
 const changeLaneActivity = (next: LaneActivity): boolean => {
 	if (laneActivity === next) return false;
@@ -90,49 +95,136 @@ const changeLaneActivity = (next: LaneActivity): boolean => {
 	return true;
 };
 
-/**
- * Register footer + widget once per session. The footer only exists to capture the
- * provider count as a render side effect; the widget reads model/thinking/usage live
- * from ctx, so neither needs re-binding on per-turn events.
- */
+const refreshGit = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> => {
+	const result = await pi
+		.exec("git", ["status", "--porcelain=v2", "--branch"], { cwd: ctx.cwd, timeout: 1500 })
+		.catch(() => undefined);
+	if (boundCtx !== ctx) return;
+	latestGitState = result?.code === 0 ? parseGitStatus(result.stdout) : null;
+	requestRender();
+};
+
+const isHorizontalBorder = (text: string): boolean => {
+	const plain = stripAnsi(text);
+	return plain.length > 0 && plain.replace(/─/g, "") === "";
+};
+
+const styleModelLabel = (label: string, ctx: ExtensionContext): string => {
+	const separator = label.lastIndexOf(" · ");
+	if (separator < 0) return ctx.ui.theme.fg(label === "no-model" ? "muted" : "accent", label);
+	return (
+		ctx.ui.theme.fg("accent", label.slice(0, separator)) +
+		ctx.ui.theme.fg("dim", " · ") +
+		ctx.ui.theme.fg("dim", label.slice(separator + 3))
+	);
+};
+
+const styleGitLabel = (label: string, git: GitState | null, ctx: ExtensionContext): string => {
+	if (!label) return "";
+	const dirty = Boolean(git && git.staged + git.unstaged + git.untracked > 0);
+	return label
+		.split(" ")
+		.map((part, index) => {
+			if (index === 0) return ctx.ui.theme.fg("dim", part);
+			if (index === 1) return ctx.ui.theme.fg(dirty ? "warning" : "success", part);
+			if (part.startsWith("+")) return ctx.ui.theme.fg("success", part);
+			if (part.startsWith("*") || part === "●") return ctx.ui.theme.fg("warning", part);
+			if (part.startsWith("?")) return ctx.ui.theme.fg("muted", part);
+			if (part.startsWith("↑")) return ctx.ui.theme.fg("success", part);
+			if (part.startsWith("↓")) return ctx.ui.theme.fg("error", part);
+			return ctx.ui.theme.fg("dim", part);
+		})
+		.join(" ");
+};
+
+const registerRoundedEditor = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
+	if (ctx.mode !== "tui") return;
+
+	class ContextBarEditor extends CustomEditor {
+		constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
+			super(tui, theme, keybindings, { paddingX: 0 });
+			activeTui = tui;
+		}
+
+		override render(width: number): string[] {
+			if (width < 6) return super.render(width);
+
+			const innerWidth = width - 2;
+			const lines = super.render(innerWidth - 2);
+			if (lines.length < 2) return lines;
+
+			const borderColor = (text: string) => this.borderColor(text);
+			const prompt = `${ctx.ui.theme.fg("accent", "›")} `;
+			const wrap = (line: string, left: string, right: string, prefix: string): string => {
+				const borderLike = stripAnsi(line).endsWith("─");
+				const content = borderLike ? line : prefix + line;
+				const gap = Math.max(0, innerWidth - visibleWidth(content));
+				const fill = borderLike ? borderColor("─".repeat(gap)) : " ".repeat(gap);
+				return borderColor(left) + content + fill + borderColor(right);
+			};
+
+			const bottomIndex = lines.findLastIndex((line, index) => index > 0 && isHorizontalBorder(line));
+			const endOfEditor = bottomIndex === -1 ? lines.length : bottomIndex;
+			const body = lines.slice(1, endOfEditor);
+			const extra = bottomIndex === -1 ? [] : lines.slice(bottomIndex + 1);
+			const result = [renderLabeledBorder(width, "╭", "╮", "", "", borderColor)];
+
+			for (const [index, line] of body.entries()) {
+				result.push(wrap(line, "│", "│", index === 0 ? prompt : "  "));
+			}
+			for (const line of extra) result.push(wrap(line, "│", "│", "  "));
+
+			const modelLabels = editorModelOptions(modelFromContext(ctx), pi.getThinkingLevel());
+			const gitLabels = gitLabelOptions(latestGitState);
+			const picked = pickEditorBorderLabels(modelLabels, gitLabels, width);
+			result.push(
+				renderLabeledBorder(
+					width,
+					"╰",
+					"╯",
+					styleModelLabel(picked.modelLabel, ctx),
+					styleGitLabel(picked.gitLabel, latestGitState, ctx),
+					borderColor,
+				),
+			);
+			return result;
+		}
+	}
+
+	ctx.ui.setEditorComponent((tui, theme, keybindings) => new ContextBarEditor(tui, theme, keybindings));
+};
+
 const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
 	boundCtx = ctx;
 	refreshSnapshot(ctx);
+	void refreshGit(pi, ctx);
 
-	let providerCount = 1;
-
-	// The lane is the sole working signal; keep streaming chrome to one row.
 	if (ctx.mode === "tui") ctx.ui.setWorkingVisible(false);
+	registerRoundedEditor(pi, ctx);
 
-	// Empty footer kills the default 2-line chrome; its render updates providerCount.
-	ctx.ui.setFooter((_tui, _theme, footerData) => ({
-		render: () => {
-			providerCount = footerData.getAvailableProviderCount();
-			return [];
-		},
-		invalidate: () => {},
-	}));
+	// Empty footer kills default chrome; branch callback keeps Git metadata reactive.
+	ctx.ui.setFooter((_tui, _theme, footerData) => {
+		const unsubscribe = footerData.onBranchChange(() => void refreshGit(pi, ctx));
+		return {
+			render: () => [],
+			invalidate: () => {},
+			dispose: unsubscribe,
+		};
+	});
 
 	ctx.ui.setWidget(
 		WIDGET_KEY,
 		(tui, theme) => {
 			activeTui = tui;
 			const dim = (text: string) => theme.fg("dim", text);
-
 			return {
 				render: (width: number) => {
 					if (!boundCtx) return [];
-					const usage = usageFromContext(boundCtx);
-					const model = modelFromContext(boundCtx);
-					const thinkingLevel = pi.getThinkingLevel();
 					const line = renderChromeLine(
 						latestContextSnapshot,
-						usage,
+						usageFromContext(boundCtx),
 						width,
-						model,
-						thinkingLevel,
-						providerCount,
 						dim,
 						animationFrame,
 						laneActivity,
@@ -168,7 +260,6 @@ export default function zContext(pi: ExtensionAPI): void {
 				: type === "text_start" || type === "text_delta" || type === "toolcall_start" || type === "toolcall_delta"
 					? "assistant"
 					: undefined;
-
 		if (nextActivity && changeLaneActivity(nextActivity)) requestRender();
 	});
 
@@ -176,16 +267,15 @@ export default function zContext(pi: ExtensionAPI): void {
 		if (changeLaneActivity("tools")) requestRender();
 	});
 
+	pi.on("turn_end", (_event, ctx) => void refreshGit(pi, ctx));
+
 	pi.on("agent_end", (_event, ctx) => {
 		changeLaneActivity("idle");
 		stopPacmanAnimation();
-		// agent_end.messages contains only messages produced by this agent loop.
-		// Rebuild from session history so segment analytics keep the full context mix.
 		refreshSnapshot(ctx);
 		requestRender();
 	});
 
-	// Model + thinking level are read live in render; snapshot segments are unaffected.
 	pi.on("model_select", () => requestRender());
 	pi.on("thinking_level_select", () => requestRender());
 
@@ -195,15 +285,19 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 	pi.on("session_tree", (_event, ctx) => {
 		refreshSnapshot(ctx);
-		requestRender();
+		void refreshGit(pi, ctx);
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		laneActivity = "idle";
+		latestGitState = null;
 		stopPacmanAnimation();
 		activeTui = undefined;
 		boundCtx = undefined;
-		if (ctx.mode === "tui") ctx.ui.setWorkingVisible(true);
+		if (ctx.mode === "tui") {
+			ctx.ui.setWorkingVisible(true);
+			ctx.ui.setEditorComponent(undefined);
+		}
 		ctx.ui.setWidget(WIDGET_KEY, undefined, { placement: "belowEditor" });
 		ctx.ui.setFooter(undefined);
 	});

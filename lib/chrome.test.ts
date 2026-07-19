@@ -6,6 +6,8 @@ import {
 	allocateProportionally,
 	type ContextSnapshot,
 	cacheHitRate,
+	dominantSegments,
+	editorModelOptions,
 	emptyContextSegments,
 	estimateContentTokens,
 	estimateTextTokens,
@@ -14,23 +16,25 @@ import {
 	FREE_SEGMENT_TEXT_HOT,
 	fitStyledText,
 	foreground,
-	formatModel,
+	formatCost,
 	formatTokens,
 	freeMetricOptions,
 	freeTextColor,
 	GHOST_GLYPH,
+	gitLabelOptions,
 	IMAGE_TOKEN_ESTIMATE,
 	LANE_ACTIVITY_TEXT,
 	makeContextSnapshot,
-	modelOptions,
 	PACMAN_FRAMES,
 	PACMAN_GLYPH,
 	PACMAN_LANE_MAX_WIDTH,
 	PELLET_GLYPH,
+	parseGitStatus,
+	pickEditorBorderLabels,
 	pickFirstFitting,
-	pickModelAndBarWidth,
 	plainWidth,
 	renderChromeLine,
+	renderLabeledBorder,
 	renderPacmanLane,
 	type SessionUsage,
 	scaleSegmentsToUsage,
@@ -306,14 +310,14 @@ describe("freeMetricOptions cascade", () => {
 		cacheHitRate: 92.3,
 	});
 	const snap = snapshot({
-		segments: { system: 8000, prompt: 11_000, assistant: 38_000, thinking: 21_000, tools: 12_000 },
-		usedTokens: 90_000,
-		contextWindow: 200_000,
+		segments: { system: 3200, prompt: 75, assistant: 11_000, thinking: 701, tools: 43_000 },
+		usedTokens: 57_976,
+		contextWindow: 372_000,
 	});
 
-	test("widest is % · approximate mix · CH · $", () => {
+	test("widest is right-grouped usage, dominant mix, CH, and cost", () => {
 		const options = freeMetricOptions(snap, full);
-		assert.equal(options[0], "45.0% · mix~ S8.0k/P11k/A38k/T21k/X12k · CH92.3% · $0.042");
+		assert.equal(options[0], "15.6%   ≈ X74 A19 S6   CH92%  $0.042");
 		assert.ok(!options[0].includes("↑"));
 		assert.ok(!options[0].includes("90k/200k"));
 		assert.ok(!options[0].includes("R"));
@@ -364,26 +368,43 @@ describe("freeTextColor thresholds", () => {
 });
 
 describe("segment analytics and metric styling", () => {
-	test("segmentMixText reports approximate token allocation", () => {
+	const dominantSnapshot = snapshot({
+		segments: { system: 3200, prompt: 75, assistant: 11_000, thinking: 701, tools: 43_000 },
+		usedTokens: 57_976,
+	});
+
+	test("dominant mix shows top three rounded shares", () => {
 		assert.equal(segmentMixText(snapshot()), "");
-		assert.equal(
-			segmentMixText(
-				snapshot({
-					segments: { system: 8000, prompt: 11_000, assistant: 38_000, thinking: 21_000, tools: 12_000 },
-					usedTokens: 90_000,
-				}),
-			),
-			"mix~ S8.0k/P11k/A38k/T21k/X12k",
+		assert.deepEqual(dominantSegments(dominantSnapshot, 0), []);
+		assert.equal(segmentMixText(dominantSnapshot), "≈ X74 A19 S6");
+		assert.deepEqual(
+			dominantSegments(dominantSnapshot).map(({ label, percent }) => [label, percent]),
+			[
+				["X", 74],
+				["A", 19],
+				["S", 6],
+			],
 		);
 	});
 
-	test("styleFreeMetrics accents segment labels, CH, and usage", () => {
-		const plain = "45.2% · mix~ S8.0k/P11k/A38k/T21k/X12k · CH92% · $0.04";
-		const styled = styleFreeMetrics(plain, 45);
-		assert.ok(styled.includes("CH92%"));
-		assert.ok(styled.includes("$0.04"));
-		for (const segment of USED_SEGMENTS) assert.ok(styled.includes(foreground(segment.color, segment.label)));
+	test("cost precision stays quiet", () => {
+		assert.equal(formatCost(0), "");
+		assert.equal(formatCost(0.042), "$0.042");
+		assert.equal(formatCost(1.61), "$1.61");
+	});
+
+	test("styleFreeMetrics accents visible segment labels, CH, and usage", () => {
+		const plain = "15.7%   ≈ X74 A19 S6   CH98%  $1.61";
+		const styled = styleFreeMetrics(plain, 15.7);
+		assert.ok(styled.includes("CH98%"));
+		assert.ok(styled.includes("$1.61"));
+		for (const label of ["X", "A", "S"]) {
+			const segment = USED_SEGMENTS.find((candidate) => candidate.label === label);
+			assert.ok(segment && styled.includes(foreground(segment.color, label)));
+		}
 		assert.equal(stripAnsi(styled), plain);
+		assert.equal(stripAnsi(styleFreeMetrics("≈ Z9   note", 10)), "≈    note");
+		assert.equal(styleFreeMetrics("", 10), "");
 	});
 });
 
@@ -476,102 +497,128 @@ describe("Pac-Man lane", () => {
 	});
 });
 
-describe("model options", () => {
-	test("no model", () => {
-		assert.equal(formatModel(null, "high", 1), "no-model");
-		assert.deepEqual(modelOptions(null, "high", 1), ["no-model", "?"]);
-	});
-
-	test("with reasoning and multi provider", () => {
+describe("editor border metadata", () => {
+	test("model options keep model before thinking", () => {
+		assert.deepEqual(editorModelOptions(null, "high"), ["no-model", "?"]);
 		const model = { id: "anthropic/claude-opus", provider: "anthropic", reasoning: true };
-		assert.ok(formatModel(model, "high", 2).includes("(anthropic)"));
-		assert.ok(formatModel(model, "high", 2).includes("· high"));
-		const options = modelOptions(model, "high", 2);
-		assert.ok(options[0]?.includes("anthropic"));
+		const options = editorModelOptions(model, "high");
+		assert.equal(options[0], "anthropic/claude-opus · high");
+		assert.ok(options.includes("claude-opus · high"));
 		assert.ok(options.includes("claude-opus"));
-		assert.equal(options.at(-1), "·");
+		assert.deepEqual(editorModelOptions({ id: "gpt-4o", provider: "openai", reasoning: false }, "high"), ["gpt-4o"]);
+		assert.ok(
+			editorModelOptions({ id: "provider/a-very-long-model-name", provider: "p", reasoning: false }, "off").some(
+				(option) => option.endsWith("…"),
+			),
+		);
 	});
 
-	test("short id without slash", () => {
-		const model = { id: "gpt-4o", provider: "openai", reasoning: false };
-		const options = modelOptions(model, "off", 1);
-		assert.equal(options[0], "gpt-4o");
-		assert.ok(!options.includes("(openai) gpt-4o"));
+	test("parses porcelain v2 Git status", () => {
+		const git = parseGitStatus(
+			[
+				"# branch.oid 4c9909b45af61b3e5fcd75b8196555911bd327dd",
+				"# branch.head main",
+				"# branch.ab +2 -1",
+				"1 M. N... 100644 100644 100644 abc abc staged.ts",
+				"1 .M N... 100644 100644 100644 abc abc changed.ts",
+				"? new.ts",
+			].join("\n"),
+		);
+		assert.deepEqual(git, {
+			branch: "main",
+			detachedOid: "4c9909b",
+			ahead: 2,
+			behind: 1,
+			staged: 1,
+			unstaged: 1,
+			untracked: 1,
+		});
+		assert.equal(gitLabelOptions(git)[0], "⎇ main +1 *1 ?1 ↑2 ↓1");
 	});
 
-	test("pickModelAndBarWidth reserves bar", () => {
-		const { modelText, barWidth } = pickModelAndBarWidth(["very-long-model-name", "m", "·"], 20);
-		assert.ok(modelText.length > 0);
-		assert.ok(barWidth + plainWidth(modelText) <= 20);
-		assert.ok(barWidth >= 6);
+	test("supports clean, detached, initial, and unusual Git states", () => {
+		const clean = parseGitStatus("# branch.oid abcdef123\n# branch.head main\n");
+		assert.deepEqual(gitLabelOptions(clean), ["⎇ main"]);
+		const detached = parseGitStatus("# branch.oid abcdef123\n# branch.head (detached)\n");
+		assert.deepEqual(gitLabelOptions(detached), ["⎇ @abcdef1"]);
+		const unusual = parseGitStatus(
+			"# branch.oid (initial)\n# branch.head (detached)\n# branch.ab malformed\n2 .. rest\nu UU rest\nignored\n",
+		);
+		assert.equal(unusual?.unstaged, 1);
+		assert.deepEqual(gitLabelOptions(unusual), []);
+		assert.deepEqual(gitLabelOptions(null), []);
+		assert.equal(parseGitStatus(""), null);
 	});
 
-	test("pickModelAndBarWidth drops model when too narrow", () => {
-		const { modelText, barWidth } = pickModelAndBarWidth(["abcdefghijklmnop"], 8);
-		assert.equal(modelText, "");
-		assert.equal(barWidth, 8);
+	test("picks fitting labels and renders exact-width rounded border", () => {
+		const picked = pickEditorBorderLabels(["gpt-5.6-sol · medium", "gpt-5.6-sol"], ["⎇ main ?1", "⎇ main"], 48);
+		assert.deepEqual(picked, { modelLabel: "gpt-5.6-sol · medium", gitLabel: "⎇ main ?1" });
+		const border = renderLabeledBorder(48, "╰", "╯", picked.modelLabel, picked.gitLabel, (text) => text);
+		assert.equal(plainWidth(border), 48);
+		assert.ok(border.startsWith("╰─ gpt-5.6-sol · medium "));
+		assert.ok(border.endsWith(" ⎇ main ?1 ──╯"));
+		assert.equal(
+			renderLabeledBorder(1, "╰", "╯", "", "", (text) => text),
+			"─",
+		);
+		assert.equal(
+			renderLabeledBorder(0, "╰", "╯", "", "", (text) => text),
+			"",
+		);
+		assert.equal(plainWidth(renderLabeledBorder(12, "╰", "╯", "", "", (text) => text)), 12);
+		assert.deepEqual(pickEditorBorderLabels(["model"], ["⎇ branch"], 14), {
+			modelLabel: "model",
+			gitLabel: "",
+		});
+		assert.deepEqual(pickEditorBorderLabels(["long-model"], ["⎇ branch"], 5), {
+			modelLabel: "",
+			gitLabel: "",
+		});
 	});
 });
 
 describe("renderChromeLine", () => {
 	const dim = (text: string) => text;
 
-	test("no context window shows fallback", () => {
-		const line = renderChromeLine(
-			snapshot({ contextWindow: 0 }),
-			usage(),
-			40,
-			{ id: "opus", provider: "anthropic", reasoning: false },
-			"off",
-			1,
-			dim,
-		);
+	test("no context window shows right-aligned fallback", () => {
+		assert.equal(renderChromeLine(snapshot(), usage(), 0, dim), "");
+		assert.equal(renderChromeLine(snapshot(), usage(), 1, dim), "·");
+		const line = renderChromeLine(snapshot({ contextWindow: 0 }), usage(), 40, dim);
 		assert.ok(line.includes("ctx unavailable"));
-		assert.ok(line.includes("opus"));
+		assert.equal(plainWidth(line), 40);
+		assert.equal(line.startsWith(" "), true);
+		assert.equal(line.endsWith(" "), true);
 	});
 
-	test("normal line includes free metrics and model", () => {
-		const segments = {
-			...emptyContextSegments(),
-			system: 100,
-			prompt: 200,
-			assistant: 300,
-			tools: 100,
-		};
+	test("normal line keeps lane left and dominant metrics right", () => {
+		const segments = { system: 3200, prompt: 75, assistant: 11_000, thinking: 701, tools: 43_000 };
 		const line = renderChromeLine(
-			snapshot({
-				segments,
-				usedTokens: 700,
-				contextWindow: 2000,
-			}),
-			usage({ cacheHitRate: 92.3, cost: 0.042, input: 100, cacheRead: 900 }),
+			snapshot({ segments, usedTokens: 57_976, contextWindow: 372_000 }),
+			usage({ cacheHitRate: 97.9, cost: 1.61, input: 100, cacheRead: 900 }),
 			100,
-			{ id: "opus", provider: "anthropic", reasoning: true },
-			"high",
-			1,
 			dim,
 			0,
 			"assistant",
 		);
 		const plain = stripAnsi(line);
-		assert.match(plain, /CH/);
-		assert.ok(plain.includes("mix~"));
-		assert.ok(plain.includes("opus"));
-		assert.ok(!plain.includes("↑"));
-		assert.doesNotMatch(plain, /\bR\d/);
+		assert.ok(plain.includes("15.6%   ≈ X74 A19 S6   CH98%  $1.61"));
+		assert.ok(!plain.includes("mix~"));
 		assert.equal(plainWidth(plain), 100);
+		assert.equal(plain.startsWith(" "), true);
+		assert.equal(plain.endsWith("$1.61 "), true);
 		assert.ok(plain.includes(PACMAN_GLYPH));
 		assert.ok(plain.includes(GHOST_GLYPH));
 		assert.equal(line.includes("\x1b[48;"), false);
 	});
 
-	test("caps lane on ultra-wide terminals and keeps metrics right", () => {
-		const line = renderChromeLine(snapshot(), usage({ cacheHitRate: 90 }), 240, null, "off", 1, dim);
+	test("caps lane on ultra-wide terminals and keeps metrics at inner right edge", () => {
+		const line = renderChromeLine(snapshot(), usage({ cacheHitRate: 90 }), 240, dim);
 		const plain = stripAnsi(line);
 
 		assert.equal(plainWidth(plain), 240);
 		assert.equal(plain.split(PELLET_GLYPH).length - 1, PACMAN_LANE_MAX_WIDTH / 2 - 1);
 		assert.ok((plain.indexOf("0.0%") ?? 0) > PACMAN_LANE_MAX_WIDTH);
+		assert.equal(plain.endsWith("CH90% "), true);
 	});
 
 	test("USED_SEGMENTS keys stable", () => {

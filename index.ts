@@ -3,6 +3,7 @@ import {
 	accumulateSessionUsage,
 	type ContextSnapshot,
 	emptyContextSegments,
+	type LaneActivity,
 	type ModelInfo,
 	makeContextSnapshot,
 	renderChromeLine,
@@ -22,6 +23,7 @@ let latestContextSnapshot: ContextSnapshot = {
 };
 let animationFrame = 0;
 let animationTimer: ReturnType<typeof setInterval> | undefined;
+let laneActivity: LaneActivity = "idle";
 let activeTui: RenderRequester | undefined;
 // ctx captured at widget registration. Its getters stay live for the whole session
 // and only go stale after session_shutdown, which clears this reference.
@@ -82,6 +84,12 @@ const requestRender = (): void => {
 	activeTui?.requestRender();
 };
 
+const changeLaneActivity = (next: LaneActivity): boolean => {
+	if (laneActivity === next) return false;
+	laneActivity = next;
+	return true;
+};
+
 /**
  * Register footer + widget once per session. The footer only exists to capture the
  * provider count as a render side effect; the widget reads model/thinking/usage live
@@ -93,6 +101,9 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	refreshSnapshot(ctx);
 
 	let providerCount = 1;
+
+	// The lane is the sole working signal; keep streaming chrome to one row.
+	if (ctx.mode === "tui") ctx.ui.setWorkingVisible(false);
 
 	// Empty footer kills the default 2-line chrome; its render updates providerCount.
 	ctx.ui.setFooter((_tui, _theme, footerData) => ({
@@ -124,6 +135,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 						providerCount,
 						dim,
 						animationFrame,
+						laneActivity,
 					);
 					return [line];
 				},
@@ -138,15 +150,34 @@ export default function zContext(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => registerChrome(pi, ctx));
 
 	pi.on("context", (event, ctx) => {
+		if (laneActivity !== "idle") changeLaneActivity("thinking");
 		refreshSnapshot(ctx, event.messages as readonly unknown[]);
 		requestRender();
 	});
 
 	pi.on("agent_start", (_event, ctx) => {
+		changeLaneActivity("working");
 		if (ctx.mode === "tui") startPacmanAnimation();
 	});
 
+	pi.on("message_update", (event) => {
+		const type = event.assistantMessageEvent.type;
+		const nextActivity =
+			type === "thinking_start" || type === "thinking_delta"
+				? "thinking"
+				: type === "text_start" || type === "text_delta" || type === "toolcall_start" || type === "toolcall_delta"
+					? "assistant"
+					: undefined;
+
+		if (nextActivity && changeLaneActivity(nextActivity)) requestRender();
+	});
+
+	pi.on("tool_execution_start", () => {
+		if (changeLaneActivity("tools")) requestRender();
+	});
+
 	pi.on("agent_end", (_event, ctx) => {
+		changeLaneActivity("idle");
 		stopPacmanAnimation();
 		// agent_end.messages contains only messages produced by this agent loop.
 		// Rebuild from session history so segment colors keep the full context mix.
@@ -168,9 +199,11 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
+		laneActivity = "idle";
 		stopPacmanAnimation();
 		activeTui = undefined;
 		boundCtx = undefined;
+		if (ctx.mode === "tui") ctx.ui.setWorkingVisible(true);
 		ctx.ui.setWidget(WIDGET_KEY, undefined, { placement: "belowEditor" });
 		ctx.ui.setFooter(undefined);
 	});

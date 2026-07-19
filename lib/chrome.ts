@@ -10,9 +10,19 @@ export const PELLET_TEXT = "#FFB8AE";
 export const TRAIL_FALLBACK_TEXT = "#6B7280";
 export const PACMAN_FRAMES = ["󰮯", "●"] as const;
 export const PACMAN_GLYPH = PACMAN_FRAMES[0];
+export const GHOST_GLYPH = "ᗣ";
 export const PELLET_GLYPH = "•";
 export const TRAIL_GLYPH = "·";
 export const PACMAN_LANE_MAX_WIDTH = 96;
+
+export const LANE_ACTIVITY_TEXT = {
+	working: "#FF0000",
+	thinking: "#FFB852",
+	assistant: "#00FFFF",
+	tools: "#5B5BFF",
+} as const;
+
+export type LaneActivity = "idle" | keyof typeof LANE_ACTIVITY_TEXT;
 export const FREE_SEGMENT_TEXT = "#6B7280";
 export const FREE_SEGMENT_TEXT_HOT = "#B45309";
 export const FREE_SEGMENT_TEXT_FULL = "#B91C1C";
@@ -334,11 +344,49 @@ export const styleFreeMetrics = (plain: string, percent: number): string => {
 const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>
 	foreground(color, `${glyph}${" ".repeat(cellWidth - 1)}`.repeat(Math.max(0, count)));
 
+const renderTrailWithGhost = (
+	trailWidths: readonly number[],
+	fallbackCount: number,
+	ghostCellIndex: number | undefined,
+	ghostColor: string | undefined,
+	cellWidth: number,
+): string => {
+	let cellOffset = 0;
+	let trail = "";
+
+	const appendCells = (color: string, count: number): void => {
+		const ghostOffset = ghostCellIndex === undefined ? -1 : ghostCellIndex - cellOffset;
+		if (!ghostColor || ghostOffset < 0 || ghostOffset >= count) {
+			trail += coloredCells(color, TRAIL_GLYPH, count, cellWidth);
+			cellOffset += count;
+			return;
+		}
+
+		trail += coloredCells(color, TRAIL_GLYPH, ghostOffset, cellWidth);
+		trail += coloredCells(ghostColor, GHOST_GLYPH, 1, cellWidth);
+		trail += coloredCells(color, TRAIL_GLYPH, count - ghostOffset - 1, cellWidth);
+		cellOffset += count;
+	};
+
+	for (const [index, segment] of USED_SEGMENTS.entries()) {
+		appendCells(segment.color, trailWidths[index] ?? 0);
+	}
+	appendCells(TRAIL_FALLBACK_TEXT, fallbackCount);
+
+	return trail;
+};
+
 /**
  * Fixed-width lane. Pac-Man moves left → right as context fills.
- * Ghost-colored trail stays behind; cream pellets remain ahead.
+ * Ghost-colored trail stays behind; cream pellets remain ahead. While the agent
+ * runs, a phase-colored ghost chases just behind the context boundary.
  */
-export const renderPacmanLane = (snapshot: ContextSnapshot, width: number, animationFrame = 0): string => {
+export const renderPacmanLane = (
+	snapshot: ContextSnapshot,
+	width: number,
+	animationFrame = 0,
+	activity: LaneActivity = "idle",
+): string => {
 	if (width <= 0) return "";
 
 	const frameIndex = Math.abs(Math.trunc(animationFrame)) % PACMAN_FRAMES.length;
@@ -358,15 +406,22 @@ export const renderPacmanLane = (snapshot: ContextSnapshot, width: number, anima
 	const hiddenPelletCells = isClosedFrame && pelletCellCount > 0 ? 1 : 0;
 	const visiblePelletCells = pelletCellCount - hiddenPelletCells;
 	const pacman = coloredCells(PACMAN_TEXT, pacmanGlyph, 1, cellWidth);
-	const segmentedTrail = USED_SEGMENTS.map((segment, index) =>
-		coloredCells(segment.color, TRAIL_GLYPH, trailWidths[index] ?? 0, cellWidth),
-	).join("");
-	const fallbackTrail = coloredCells(TRAIL_FALLBACK_TEXT, TRAIL_GLYPH, trailCellCount - allocatedTrailCells, cellWidth);
+	const ghostColor = activity === "idle" ? undefined : LANE_ACTIVITY_TEXT[activity];
+	const preferredGhostDistance = Math.floor(Math.abs(Math.trunc(animationFrame)) / 2) % 2 === 0 ? 2 : 3;
+	const ghostDistance = Math.min(preferredGhostDistance, trailCellCount);
+	const ghostCellIndex = ghostColor && trailCellCount >= 2 ? trailCellCount - ghostDistance : undefined;
+	const trail = renderTrailWithGhost(
+		trailWidths,
+		trailCellCount - allocatedTrailCells,
+		ghostCellIndex,
+		ghostColor,
+		cellWidth,
+	);
 	const hiddenPellet = " ".repeat(hiddenPelletCells * cellWidth);
 	const pellets = coloredCells(PELLET_TEXT, PELLET_GLYPH, visiblePelletCells, cellWidth);
 	const remainder = " ".repeat(width - cellCount * cellWidth);
 
-	return `${segmentedTrail}${fallbackTrail}${pacman}${hiddenPellet}${pellets}${remainder}`;
+	return `${trail}${pacman}${hiddenPellet}${pellets}${remainder}`;
 };
 
 export const formatModel = (model: ModelInfo, thinkingLevel: string, providerCount: number): string => {
@@ -428,6 +483,7 @@ export const renderChromeLine = (
 	providerCount: number,
 	dim: (text: string) => string,
 	animationFrame = 0,
+	activity: LaneActivity = "idle",
 ): string => {
 	if (snapshot.contextWindow <= 0) {
 		const modelText = formatModel(model, thinkingLevel, providerCount);
@@ -446,7 +502,7 @@ export const renderChromeLine = (
 	const availableLaneWidth = barWidth - plainWidth(metricText) - metricGap;
 	const laneWidth = Math.min(PACMAN_LANE_MAX_WIDTH, availableLaneWidth);
 	const flexibleGap = availableLaneWidth - laneWidth + metricGap;
-	const lane = renderPacmanLane(snapshot, laneWidth, animationFrame);
+	const lane = renderPacmanLane(snapshot, laneWidth, animationFrame, activity);
 	const metrics = styleFreeMetrics(metricText, percent);
 	const status = `${lane}${" ".repeat(flexibleGap)}${metrics}`;
 

@@ -18,7 +18,9 @@ import {
 	formatTokens,
 	freeMetricOptions,
 	freeTextColor,
+	GHOST_GLYPH,
 	IMAGE_TOKEN_ESTIMATE,
+	LANE_ACTIVITY_TEXT,
 	makeContextSnapshot,
 	modelOptions,
 	PACMAN_FRAMES,
@@ -411,6 +413,46 @@ describe("Pac-Man lane", () => {
 		}
 	});
 
+	test("shows a phase-colored ghost only while the agent runs", () => {
+		const activeSnapshot = snapshot({
+			segments: { ...emptyContextSegments(), assistant: 100 },
+			usedTokens: 100,
+			contextWindow: 100,
+		});
+		const idle = renderPacmanLane(activeSnapshot, 18, 0, "idle");
+		assert.equal(stripAnsi(idle).includes(GHOST_GLYPH), false);
+
+		const activities = [
+			["working", LANE_ACTIVITY_TEXT.working],
+			["thinking", LANE_ACTIVITY_TEXT.thinking],
+			["assistant", LANE_ACTIVITY_TEXT.assistant],
+			["tools", LANE_ACTIVITY_TEXT.tools],
+		] as const;
+
+		for (const [activity, color] of activities) {
+			const lane = renderPacmanLane(activeSnapshot, 18, 0, activity);
+			assert.ok(lane.includes(foreground(color, `${GHOST_GLYPH} `)));
+			assert.equal(plainWidth(lane), 18);
+			assert.equal(stripAnsi(lane).split(TRAIL_GLYPH).length - 1, 7);
+		}
+	});
+
+	test("moves the ghost between two chase distances without changing width", () => {
+		const activeSnapshot = snapshot({ usedTokens: 100, contextWindow: 100 });
+		const close = stripAnsi(renderPacmanLane(activeSnapshot, 18, 0, "working"));
+		const far = stripAnsi(renderPacmanLane(activeSnapshot, 18, 2, "working"));
+
+		assert.ok(close.indexOf(GHOST_GLYPH) > far.indexOf(GHOST_GLYPH));
+		assert.equal(plainWidth(close), 18);
+		assert.equal(plainWidth(far), 18);
+	});
+
+	test("omits the ghost when consumed trail is too short", () => {
+		const lane = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 25, contextWindow: 100 }), 10, 0, "tools"));
+		assert.equal(lane.includes(GHOST_GLYPH), false);
+		assert.equal(plainWidth(lane), 10);
+	});
+
 	test("handles tiny widths and missing segment estimates", () => {
 		assert.equal(renderPacmanLane(snapshot(), 0), "");
 		assert.equal(stripAnsi(renderPacmanLane(snapshot(), 1)), PACMAN_GLYPH);
@@ -505,6 +547,8 @@ describe("renderChromeLine", () => {
 			"high",
 			1,
 			dim,
+			0,
+			"assistant",
 		);
 		const plain = stripAnsi(line);
 		assert.match(plain, /CH/);
@@ -513,6 +557,7 @@ describe("renderChromeLine", () => {
 		assert.doesNotMatch(plain, /\bR\d/);
 		assert.equal(plainWidth(plain), 100);
 		assert.ok(plain.includes(PACMAN_GLYPH));
+		assert.ok(plain.includes(GHOST_GLYPH));
 		assert.equal(line.includes("\x1b[48;"), false);
 	});
 

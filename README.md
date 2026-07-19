@@ -8,19 +8,19 @@ One quiet row under the editor: Pac-Man context lane, usage %, cache hit, option
 · · · · · 󰮯 • • • • • • •   45.2% · CH92.3% · $0.042  opus · high
 ```
 
-Pac-Man moves left → right as context fills. Ghost-colored small dots behind it show consumed system, prompt, assistant, thinking, and tool proportions; cream pellets ahead are remaining capacity. Its mouth animates while the agent runs, then rests open when idle. Solid Pac-Man glyph requires a Nerd Font.
+Pac-Man moves left → right as context fills. Ghost-colored small dots behind it show consumed system, prompt, assistant, thinking, and tool proportions; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle. Solid Pac-Man glyph requires a Nerd Font.
 
 ## Why
 
 `nano-context` has a great segmented bar, but its custom footer drops default pi stats (especially **cache hit `CH%`**) and stacks 3 chrome lines total.
 
-`pi-context-bar` turns context into a compact Pac-Man lane, restores `CH%` / cost / model, and collapses everything into **one line**. Default footer is replaced with an empty footer so chrome never doubles up.
+`pi-context-bar` turns context into a compact Pac-Man lane, restores `CH%` / cost / model, and collapses everything into **one line**. Default footer is replaced with an empty footer, and the redundant built-in streaming working row is hidden while the extension is active.
 
 ## Layout
 
 | Zone | Content |
 |------|---------|
-| Pac-Man lane | ghost-colored consumed trail → yellow Pac-Man → cream remaining pellets |
+| Pac-Man lane | ghost-colored consumed trail → phase ghost while running → yellow Pac-Man → cream remaining pellets |
 | Metrics | `%` · `CH` · optional `$` (no path, no ↑↓RW) |
 | Far right | model · thinking (provider if multi) |
 

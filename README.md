@@ -8,10 +8,10 @@ Model and Git metadata live in the editor border; one quiet row below carries Pa
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ ›                                                                            │
 ╰─ gpt-5.6-sol · medium ──────────────────────────────────── ⎇ main ?1 ─────────╯
-  󰮯 • • • • •                         15.7%   ≈ X74 A19 S6   CH98%  $1.61
+  󰮯 • • • • •                  15.7%   ≈ tools 78%  reply 19%   CH98%  $1.61
 ```
 
-Pac-Man moves left → right as context fills. Eaten pellets become empty space; cream pellets ahead are remaining capacity. Approximate segment analytics show only the three dominant shares: system (`S`), prompt (`P`), assistant (`A`), thinking (`T`), and tools (`X`). While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle.
+Pac-Man moves left → right as context fills. Eaten pellets become empty space; cream pellets ahead are remaining capacity. Approximate segment analytics use readable names and show the top two shares; a third appears only when it reaches 10%. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle.
 
 ## Why
 
@@ -26,9 +26,9 @@ Pac-Man moves left → right as context fills. Eaten pellets become empty space;
 | Editor border left | model · thinking |
 | Editor border right | Git branch plus staged `+`, unstaged `*`, untracked `?`, ahead `↑`, behind `↓` |
 | Pac-Man lane | empty consumed space → phase ghost while running → yellow Pac-Man → cream remaining pellets |
-| Right-aligned metrics | `%` · approximate dominant `≈ S/P/A/T/X` · `CH` · optional `$` |
+| Right-aligned metrics | `%` · approximate dominant `≈ tools/reply/...` · `CH` · optional `$` |
 
-Segment labels use classic ghost colors: red system, pink prompt, cyan assistant, orange thinking, blue tools. Only visible one-letter labels are colored; values stay dim and no background blocks are used. Git is local-only and omitted outside repositories.
+Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pellets, and the active ghost keep classic arcade colors. Git branch stays dim, with color limited to meaningful dirty/sync markers. Git is local-only and omitted outside repositories.
 
 Width cascade compresses Git details, segment mix, cost, and model details while preserving model, branch, `%`, and `CH` longest. Ultra-wide terminals cap the lane at 96 columns and keep a flexible gap before metrics aligned to the editor's inner right edge.
 
@@ -60,7 +60,7 @@ bun run package:check  # verify published files
 bun run ci             # full CI pipeline
 ```
 
-Coverage targets pure chrome math in `lib/chrome.ts` (≥90% lines/functions/branches). Extension wiring in `index.ts` is excluded from the gate.
+Coverage targets all pure modules in `lib/` (≥90% lines/functions/branches). Extension wiring in `index.ts` and the Pi/TUI adapter in `ui/` are excluded from the gate.
 
 Smoke:
 

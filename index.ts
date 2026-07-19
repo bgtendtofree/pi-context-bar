@@ -1,29 +1,15 @@
-import {
-	buildSessionContext,
-	CustomEditor,
-	type ExtensionAPI,
-	type ExtensionContext,
-	type KeybindingsManager,
-} from "@earendil-works/pi-coding-agent";
-import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { buildSessionContext, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ModelInfo } from "./lib/border.ts";
+import { type ChromeStyles, type LaneActivity, renderChromeLine } from "./lib/chrome.ts";
 import {
 	accumulateSessionUsage,
 	type ContextSnapshot,
-	editorModelOptions,
 	emptyContextSegments,
-	type GitState,
-	gitLabelOptions,
-	type LaneActivity,
-	type ModelInfo,
 	makeContextSnapshot,
-	parseGitStatus,
-	pickEditorBorderLabels,
-	renderChromeLine,
-	renderLabeledBorder,
 	type SessionUsageEntry,
-	stripAnsi,
-} from "./lib/chrome.ts";
+} from "./lib/context.ts";
+import { type GitState, parseGitStatus } from "./lib/git.ts";
+import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
 const WIDGET_KEY = "context-bar";
 const PACMAN_ANIMATION_INTERVAL_MS = 110;
@@ -41,7 +27,6 @@ let animationFrame = 0;
 let animationTimer: ReturnType<typeof setInterval> | undefined;
 let laneActivity: LaneActivity = "idle";
 let activeTui: RenderRequester | undefined;
-// ctx captured at widget/editor registration. Its getters stay live for the session.
 let boundCtx: ExtensionContext | undefined;
 
 const stopPacmanAnimation = (): void => {
@@ -64,27 +49,20 @@ const sessionMessages = (ctx: ExtensionContext): readonly unknown[] => {
 	return context.messages as readonly unknown[];
 };
 
-const snapshotFromContext = (ctx: ExtensionContext, messages: readonly unknown[]): ContextSnapshot => {
+const refreshSnapshot = (ctx: ExtensionContext, messages = sessionMessages(ctx)): void => {
+	if (!ctx.hasUI) return;
 	const usage = ctx.getContextUsage();
 	const measuredTokens = typeof usage?.tokens === "number" && usage.tokens > 0 ? usage.tokens : undefined;
 	const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
-	return makeContextSnapshot(messages, ctx.getSystemPrompt(), measuredTokens, contextWindow);
+	latestContextSnapshot = makeContextSnapshot(messages, ctx.getSystemPrompt(), measuredTokens, contextWindow);
 };
 
-const usageFromContext = (ctx: ExtensionContext) => {
-	const entries = ctx.sessionManager.getEntries() as readonly SessionUsageEntry[];
-	return accumulateSessionUsage(entries);
-};
+const sessionUsage = (ctx: ExtensionContext) =>
+	accumulateSessionUsage(ctx.sessionManager.getEntries() as readonly SessionUsageEntry[]);
 
-const modelFromContext = (ctx: ExtensionContext): ModelInfo => {
+const currentModel = (ctx: ExtensionContext): ModelInfo => {
 	const model = ctx.model;
-	if (!model) return null;
-	return { id: model.id, provider: model.provider, reasoning: Boolean(model.reasoning) };
-};
-
-const refreshSnapshot = (ctx: ExtensionContext, messages?: readonly unknown[]): void => {
-	if (!ctx.hasUI) return;
-	latestContextSnapshot = snapshotFromContext(ctx, messages ?? sessionMessages(ctx));
+	return model ? { id: model.id, provider: model.provider, reasoning: Boolean(model.reasoning) } : null;
 };
 
 const requestRender = (): void => activeTui?.requestRender();
@@ -104,96 +82,6 @@ const refreshGit = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<void
 	requestRender();
 };
 
-const isHorizontalBorder = (text: string): boolean => {
-	const plain = stripAnsi(text);
-	return plain.length > 0 && plain.replace(/─/g, "") === "";
-};
-
-const styleModelLabel = (label: string, ctx: ExtensionContext): string => {
-	const separator = label.lastIndexOf(" · ");
-	if (separator < 0) return ctx.ui.theme.fg(label === "no-model" ? "muted" : "accent", label);
-	return (
-		ctx.ui.theme.fg("accent", label.slice(0, separator)) +
-		ctx.ui.theme.fg("dim", " · ") +
-		ctx.ui.theme.fg("dim", label.slice(separator + 3))
-	);
-};
-
-const styleGitLabel = (label: string, git: GitState | null, ctx: ExtensionContext): string => {
-	if (!label) return "";
-	const dirty = Boolean(git && git.staged + git.unstaged + git.untracked > 0);
-	return label
-		.split(" ")
-		.map((part, index) => {
-			if (index === 0) return ctx.ui.theme.fg("dim", part);
-			if (index === 1) return ctx.ui.theme.fg(dirty ? "warning" : "success", part);
-			if (part.startsWith("+")) return ctx.ui.theme.fg("success", part);
-			if (part.startsWith("*") || part === "●") return ctx.ui.theme.fg("warning", part);
-			if (part.startsWith("?")) return ctx.ui.theme.fg("muted", part);
-			if (part.startsWith("↑")) return ctx.ui.theme.fg("success", part);
-			if (part.startsWith("↓")) return ctx.ui.theme.fg("error", part);
-			return ctx.ui.theme.fg("dim", part);
-		})
-		.join(" ");
-};
-
-const registerRoundedEditor = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
-	if (ctx.mode !== "tui") return;
-
-	class ContextBarEditor extends CustomEditor {
-		constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
-			super(tui, theme, keybindings, { paddingX: 0 });
-			activeTui = tui;
-		}
-
-		override render(width: number): string[] {
-			if (width < 6) return super.render(width);
-
-			const innerWidth = width - 2;
-			const lines = super.render(innerWidth - 2);
-			if (lines.length < 2) return lines;
-
-			const borderColor = (text: string) => this.borderColor(text);
-			const prompt = `${ctx.ui.theme.fg("accent", "›")} `;
-			const wrap = (line: string, left: string, right: string, prefix: string): string => {
-				const borderLike = stripAnsi(line).endsWith("─");
-				const content = borderLike ? line : prefix + line;
-				const gap = Math.max(0, innerWidth - visibleWidth(content));
-				const fill = borderLike ? borderColor("─".repeat(gap)) : " ".repeat(gap);
-				return borderColor(left) + content + fill + borderColor(right);
-			};
-
-			const bottomIndex = lines.findLastIndex((line, index) => index > 0 && isHorizontalBorder(line));
-			const endOfEditor = bottomIndex === -1 ? lines.length : bottomIndex;
-			const body = lines.slice(1, endOfEditor);
-			const extra = bottomIndex === -1 ? [] : lines.slice(bottomIndex + 1);
-			const result = [renderLabeledBorder(width, "╭", "╮", "", "", borderColor)];
-
-			for (const [index, line] of body.entries()) {
-				result.push(wrap(line, "│", "│", index === 0 ? prompt : "  "));
-			}
-			for (const line of extra) result.push(wrap(line, "│", "│", "  "));
-
-			const modelLabels = editorModelOptions(modelFromContext(ctx), pi.getThinkingLevel());
-			const gitLabels = gitLabelOptions(latestGitState);
-			const picked = pickEditorBorderLabels(modelLabels, gitLabels, width);
-			result.push(
-				renderLabeledBorder(
-					width,
-					"╰",
-					"╯",
-					styleModelLabel(picked.modelLabel, ctx),
-					styleGitLabel(picked.gitLabel, latestGitState, ctx),
-					borderColor,
-				),
-			);
-			return result;
-		}
-	}
-
-	ctx.ui.setEditorComponent((tui, theme, keybindings) => new ContextBarEditor(tui, theme, keybindings));
-};
-
 const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
 	boundCtx = ctx;
@@ -201,36 +89,43 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	void refreshGit(pi, ctx);
 
 	if (ctx.mode === "tui") ctx.ui.setWorkingVisible(false);
-	registerRoundedEditor(pi, ctx);
+	registerRoundedEditor(ctx, {
+		getModel: () => currentModel(ctx),
+		getThinkingLevel: () => pi.getThinkingLevel(),
+		getGit: () => latestGitState,
+		onTui: (tui) => {
+			activeTui = tui;
+		},
+	});
 
-	// Empty footer kills default chrome; branch callback keeps Git metadata reactive.
 	ctx.ui.setFooter((_tui, _theme, footerData) => {
 		const unsubscribe = footerData.onBranchChange(() => void refreshGit(pi, ctx));
-		return {
-			render: () => [],
-			invalidate: () => {},
-			dispose: unsubscribe,
-		};
+		return { render: () => [], invalidate: () => {}, dispose: unsubscribe };
 	});
 
 	ctx.ui.setWidget(
 		WIDGET_KEY,
 		(tui, theme) => {
 			activeTui = tui;
-			const dim = (text: string) => theme.fg("dim", text);
+			const styles: ChromeStyles = {
+				dim: (text) => theme.fg("dim", text),
+				warning: (text) => theme.fg("warning", text),
+				error: (text) => theme.fg("error", text),
+			};
 			return {
-				render: (width: number) => {
-					if (!boundCtx) return [];
-					const line = renderChromeLine(
-						latestContextSnapshot,
-						usageFromContext(boundCtx),
-						width,
-						dim,
-						animationFrame,
-						laneActivity,
-					);
-					return [line];
-				},
+				render: (width: number) =>
+					boundCtx
+						? [
+								renderChromeLine(
+									latestContextSnapshot,
+									sessionUsage(boundCtx),
+									width,
+									styles,
+									animationFrame,
+									laneActivity,
+								),
+							]
+						: [],
 				invalidate: () => {},
 			};
 		},
@@ -254,19 +149,18 @@ export default function zContext(pi: ExtensionAPI): void {
 
 	pi.on("message_update", (event) => {
 		const type = event.assistantMessageEvent.type;
-		const nextActivity =
+		const next =
 			type === "thinking_start" || type === "thinking_delta"
 				? "thinking"
 				: type === "text_start" || type === "text_delta" || type === "toolcall_start" || type === "toolcall_delta"
 					? "assistant"
 					: undefined;
-		if (nextActivity && changeLaneActivity(nextActivity)) requestRender();
+		if (next && changeLaneActivity(next)) requestRender();
 	});
 
 	pi.on("tool_execution_start", () => {
 		if (changeLaneActivity("tools")) requestRender();
 	});
-
 	pi.on("turn_end", (_event, ctx) => void refreshGit(pi, ctx));
 
 	pi.on("agent_end", (_event, ctx) => {
@@ -276,9 +170,8 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 
-	pi.on("model_select", () => requestRender());
-	pi.on("thinking_level_select", () => requestRender());
-
+	pi.on("model_select", requestRender);
+	pi.on("thinking_level_select", requestRender);
 	pi.on("session_compact", (_event, ctx) => {
 		refreshSnapshot(ctx);
 		requestRender();

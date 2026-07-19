@@ -17,7 +17,12 @@
 	],
 	"files": [
 		"index.ts",
+		"lib/border.ts",
 		"lib/chrome.ts",
+		"lib/context.ts",
+		"lib/git.ts",
+		"lib/text.ts",
+		"ui/rounded-editor.ts",
 		"README.md",
 		"LICENSE"
 	],
@@ -36,7 +41,7 @@
 		"quality": "biome ci .",
 		"test": "node --test",
 		"test:watch": "node --test --watch",
-		"test:coverage": "rm -rf coverage && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include=lib/chrome.ts --test-coverage-lines=90 --test-coverage-functions=90 --test-coverage-branches=90 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info",
+		"test:coverage": "rm -rf coverage && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='lib/*.ts' --test-coverage-exclude='lib/*.test.ts' --test-coverage-lines=90 --test-coverage-functions=90 --test-coverage-branches=90 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info",
 		"smoke": "pi --offline --no-extensions -e . --list-models",
 		"smoke:package": "node scripts/smoke-package.mjs",
 		"package:check": "npm pack --dry-run",

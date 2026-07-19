@@ -23,6 +23,9 @@ let latestContextSnapshot: ContextSnapshot = {
 let animationFrame = 0;
 let animationTimer: ReturnType<typeof setInterval> | undefined;
 let activeTui: RenderRequester | undefined;
+// ctx captured at widget registration. Its getters stay live for the whole session
+// and only go stale after session_shutdown, which clears this reference.
+let boundCtx: ExtensionContext | undefined;
 
 const stopPacmanAnimation = (): void => {
 	if (animationTimer) clearInterval(animationTimer);
@@ -69,39 +72,48 @@ const modelFromContext = (ctx: ExtensionContext): ModelInfo => {
 	};
 };
 
-const updateUi = (
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	messages: readonly unknown[] = sessionMessages(ctx),
-): void => {
+/** Recompute the context snapshot. Cheap to call on data-change events; no UI re-registration. */
+const refreshSnapshot = (ctx: ExtensionContext, messages?: readonly unknown[]): void => {
 	if (!ctx.hasUI) return;
+	latestContextSnapshot = snapshotFromContext(ctx, messages ?? sessionMessages(ctx));
+};
 
-	latestContextSnapshot = snapshotFromContext(ctx, messages);
+const requestRender = (): void => {
+	activeTui?.requestRender();
+};
 
-	// Empty footer kills default 2-line chrome. Provider count is only available here.
+/**
+ * Register footer + widget once per session. The footer only exists to capture the
+ * provider count as a render side effect; the widget reads model/thinking/usage live
+ * from ctx, so neither needs re-binding on per-turn events.
+ */
+const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
+	if (!ctx.hasUI) return;
+	boundCtx = ctx;
+	refreshSnapshot(ctx);
+
 	let providerCount = 1;
 
-	ctx.ui.setFooter((_tui, _theme, footerData) => {
-		providerCount = footerData.getAvailableProviderCount();
-
-		return {
-			render: () => {
-				providerCount = footerData.getAvailableProviderCount();
-				return [];
-			},
-			invalidate: () => {},
-		};
-	});
+	// Empty footer kills the default 2-line chrome; its render updates providerCount.
+	ctx.ui.setFooter((_tui, _theme, footerData) => ({
+		render: () => {
+			providerCount = footerData.getAvailableProviderCount();
+			return [];
+		},
+		invalidate: () => {},
+	}));
 
 	ctx.ui.setWidget(
 		WIDGET_KEY,
 		(tui, theme) => {
 			activeTui = tui;
+			const dim = (text: string) => theme.fg("dim", text);
 
 			return {
 				render: (width: number) => {
-					const usage = usageFromContext(ctx);
-					const model = modelFromContext(ctx);
+					if (!boundCtx) return [];
+					const usage = usageFromContext(boundCtx);
+					const model = modelFromContext(boundCtx);
 					const thinkingLevel = pi.getThinkingLevel();
 					const line = renderChromeLine(
 						latestContextSnapshot,
@@ -110,7 +122,7 @@ const updateUi = (
 						model,
 						thinkingLevel,
 						providerCount,
-						(text) => theme.fg("dim", text),
+						dim,
 						animationFrame,
 					);
 					return [line];
@@ -123,33 +135,40 @@ const updateUi = (
 };
 
 export default function zContext(pi: ExtensionAPI): void {
-	const refreshFromSession = (ctx: ExtensionContext): void => {
-		updateUi(pi, ctx);
-	};
-
-	pi.on("session_start", (_event, ctx) => refreshFromSession(ctx));
+	pi.on("session_start", (_event, ctx) => registerChrome(pi, ctx));
 
 	pi.on("context", (event, ctx) => {
-		updateUi(pi, ctx, event.messages as readonly unknown[]);
+		refreshSnapshot(ctx, event.messages as readonly unknown[]);
+		requestRender();
 	});
 
 	pi.on("agent_start", (_event, ctx) => {
 		if (ctx.mode === "tui") startPacmanAnimation();
 	});
 
-	pi.on("agent_end", (_event, ctx) => {
+	pi.on("agent_end", (event, ctx) => {
 		stopPacmanAnimation();
-		activeTui?.requestRender();
-		refreshFromSession(ctx);
+		refreshSnapshot(ctx, event.messages as readonly unknown[]);
+		requestRender();
 	});
-	pi.on("model_select", (_event, ctx) => refreshFromSession(ctx));
-	pi.on("thinking_level_select", (_event, ctx) => refreshFromSession(ctx));
-	pi.on("session_compact", (_event, ctx) => refreshFromSession(ctx));
-	pi.on("session_tree", (_event, ctx) => refreshFromSession(ctx));
+
+	// Model + thinking level are read live in render; snapshot segments are unaffected.
+	pi.on("model_select", () => requestRender());
+	pi.on("thinking_level_select", () => requestRender());
+
+	pi.on("session_compact", (_event, ctx) => {
+		refreshSnapshot(ctx);
+		requestRender();
+	});
+	pi.on("session_tree", (_event, ctx) => {
+		refreshSnapshot(ctx);
+		requestRender();
+	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		stopPacmanAnimation();
 		activeTui = undefined;
+		boundCtx = undefined;
 		ctx.ui.setWidget(WIDGET_KEY, undefined, { placement: "belowEditor" });
 		ctx.ui.setFooter(undefined);
 	});

@@ -44,7 +44,7 @@ export type SessionUsage = Readonly<{
 	cacheRead: number;
 	cacheWrite: number;
 	cost: number;
-	/** Last assistant turn cache hit rate 0–100, when prompt tokens known. */
+	/** Cache hit rate 0–100 of the most recent assistant turn that reported prompt tokens. */
 	cacheHitRate: number | undefined;
 }>;
 
@@ -265,7 +265,10 @@ export const accumulateSessionUsage = (entries: readonly SessionUsageEntry[]): S
 		cacheRead += usage.cacheRead;
 		cacheWrite += usage.cacheWrite;
 		cost += usage.cost.total;
-		hitRate = cacheHitRate(usage);
+		// Keep the most recent turn that actually has prompt-token data. A trailing
+		// turn with zero prompt tokens (error/partial/no-usage) must not blank CH%.
+		const rate = cacheHitRate(usage);
+		if (rate !== undefined) hitRate = rate;
 	}
 
 	return { input, output, cacheRead, cacheWrite, cost, cacheHitRate: hitRate };

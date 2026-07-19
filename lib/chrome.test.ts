@@ -273,6 +273,25 @@ describe("cacheHitRate / accumulateSessionUsage", () => {
 		// last assistant: 80 / (20+80+0) = 80%
 		assert.equal(result.cacheHitRate, 80);
 	});
+
+	test("trailing no-usage assistant turn does not wipe CH%", () => {
+		const result = accumulateSessionUsage([
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					usage: assistantUsage({ input: 10, cacheRead: 90, cacheWrite: 0 }),
+				},
+			},
+			// Trailing assistant turn with zero prompt tokens (error/partial) must not blank CH%.
+			{
+				type: "message",
+				message: { role: "assistant", usage: assistantUsage() },
+			},
+		]);
+
+		assert.equal(result.cacheHitRate, 90);
+	});
 });
 
 describe("freeMetricOptions cascade", () => {

@@ -1,6 +1,6 @@
 # pi-context-bar
 
-Single-line context chrome for pi: segmented bar + CH% + cost + model.
+Single-line context chrome for pi: Pac-Man context lane + CH% + cost + model.
 
 ## Goal
 
@@ -11,8 +11,9 @@ One quiet row under the editor. No multi-line footer. Structure via bar; health 
 - Keep chrome height = 1 always
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
 - Free metrics: only `%` · `CH` · optional `$` — never path / ↑↓ / R / W
-- Monochrome slate ramp for segments; CH is the sole free-zone accent
-- Labels only when segment width ≥ `LABEL_MIN_WIDTH`
+- Classic palette: cream pellets, yellow Pac-Man, ghost-colored context trail
+- No background color blocks; segment mix appears only in small consumed-trail dots
+- CH remains metrics accent; Pac-Man/ghost colors belong only to lane
 - Functional style, no `any`, immutable snapshots
 - Pure logic in `lib/chrome.ts`; keep `index.ts` thin
 

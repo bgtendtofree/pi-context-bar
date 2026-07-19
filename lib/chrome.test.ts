@@ -3,11 +3,9 @@ import { describe, test } from "node:test";
 import {
 	type AssistantUsage,
 	accumulateSessionUsage,
-	allocateBarColumns,
 	allocateProportionally,
 	type ContextSnapshot,
 	cacheHitRate,
-	chooseLabel,
 	emptyContextSegments,
 	estimateContentTokens,
 	estimateTextTokens,
@@ -15,6 +13,7 @@ import {
 	FREE_SEGMENT_TEXT_FULL,
 	FREE_SEGMENT_TEXT_HOT,
 	fitStyledText,
+	foreground,
 	formatModel,
 	formatTokens,
 	freeMetricOptions,
@@ -22,18 +21,20 @@ import {
 	IMAGE_TOKEN_ESTIMATE,
 	makeContextSnapshot,
 	modelOptions,
+	PACMAN_GLYPH,
+	PELLET_GLYPH,
 	pickFirstFitting,
 	pickModelAndBarWidth,
 	plainWidth,
 	renderChromeLine,
-	renderFreeSegment,
-	renderUsedSegment,
+	renderPacmanLane,
 	type SessionUsage,
 	scaleSegmentsToUsage,
 	segmentSessionMessages,
 	segmentTotal,
 	stripAnsi,
 	styleFreeMetrics,
+	TRAIL_GLYPH,
 	truncatePlainText,
 	USED_SEGMENTS,
 } from "./chrome.ts";
@@ -125,13 +126,6 @@ describe("text helpers", () => {
 		assert.equal(estimateContentTokens(content), 1 + IMAGE_TOKEN_ESTIMATE);
 		assert.equal(estimateContentTokens("abcd"), 1);
 	});
-
-	test("chooseLabel picks longest fit", () => {
-		assert.equal(chooseLabel(["system", "sys", "s"], 6), "system");
-		assert.equal(chooseLabel(["system", "sys", "s"], 3), "sys");
-		assert.equal(chooseLabel(["system", "sys", "s"], 1), "s");
-		assert.equal(chooseLabel(["system", "sys", "s"], 0), "");
-	});
 });
 
 describe("segmentSessionMessages", () => {
@@ -190,29 +184,6 @@ describe("allocateProportionally", () => {
 		assert.equal(
 			cols.every((c) => c >= 1),
 			true,
-		);
-	});
-});
-
-describe("allocateBarColumns", () => {
-	test("gives min 1 col to nonzero used segments", () => {
-		const values = [10, 0, 10, 0, 0, 100];
-		const cols = allocateBarColumns(values, 10);
-		assert.equal(
-			cols.reduce((a, b) => a + b, 0),
-			10,
-		);
-		assert.ok((cols[0] ?? 0) >= 1);
-		assert.ok((cols[2] ?? 0) >= 1);
-		assert.equal(cols[1], 0);
-	});
-
-	test("falls back when width tiny", () => {
-		const values = [1, 1, 1, 1, 1, 1];
-		const cols = allocateBarColumns(values, 3);
-		assert.equal(
-			cols.reduce((a, b) => a + b, 0),
-			3,
 		);
 	});
 });
@@ -365,35 +336,63 @@ describe("freeTextColor thresholds", () => {
 	});
 });
 
-describe("style + render segments", () => {
+describe("metric styling", () => {
 	test("styleFreeMetrics accents only CH", () => {
 		const styled = styleFreeMetrics("45.2% · CH92% · $0.04", 45);
 		assert.ok(styled.includes("CH92%"));
 		assert.ok(styled.includes("$0.04"));
 		assert.equal(stripAnsi(styled), "45.2% · CH92% · $0.04");
 	});
+});
 
-	test("renderUsedSegment width and labels", () => {
-		assert.equal(renderUsedSegment(["sys", "s"], "#3D4F5F", 0), "");
-		const wide = renderUsedSegment(["sys", "s"], "#3D4F5F", 5);
-		assert.equal(stripAnsi(wide).length, 5);
-		assert.ok(stripAnsi(wide).includes("sys"));
-		// Narrow segments stay unlabeled color blocks.
-		const thin = renderUsedSegment(["sys", "s"], "#3D4F5F", 1);
-		assert.equal(stripAnsi(thin), " ");
-		const mid = renderUsedSegment(["sys", "s"], "#3D4F5F", 3);
-		assert.equal(stripAnsi(mid), "   ");
+describe("Pac-Man lane", () => {
+	test("moves right to left while pellets become trail", () => {
+		const segments = { ...emptyContextSegments(), system: 100 };
+		const empty = stripAnsi(renderPacmanLane(snapshot({ segments, usedTokens: 0, contextWindow: 100 }), 18));
+		const half = stripAnsi(renderPacmanLane(snapshot({ segments, usedTokens: 50, contextWindow: 100 }), 18));
+		const full = stripAnsi(renderPacmanLane(snapshot({ segments, usedTokens: 100, contextWindow: 100 }), 18));
+
+		assert.equal(plainWidth(empty), 18);
+		assert.equal(plainWidth(half), 18);
+		assert.equal(plainWidth(full), 18);
+		assert.equal(empty.split(PELLET_GLYPH).length - 1, 8);
+		assert.equal(half.split(PELLET_GLYPH).length - 1, 4);
+		assert.equal(half.split(TRAIL_GLYPH).length - 1, 4);
+		assert.equal(full.startsWith(PACMAN_GLYPH), true);
+		assert.equal(full.includes(PELLET_GLYPH), false);
+		assert.equal(full.split(TRAIL_GLYPH).length - 1, 8);
 	});
 
-	test("renderFreeSegment left-aligns metrics without fill bar", () => {
-		assert.equal(renderFreeSegment(0, ["x"], 10), "");
-		const empty = renderFreeSegment(8, ["way-too-long-to-fit-here"], 10);
-		assert.equal(stripAnsi(empty), "        ");
-		const filled = renderFreeSegment(20, ["45% · CH92", "45%", ""], 45);
-		const plain = stripAnsi(filled);
-		assert.ok(plain.includes("45% · CH92"));
-		assert.equal(plain.length, 20);
-		assert.equal(plain.trimStart().startsWith("45%"), true);
+	test("colors consumed trail by segment with classic ghost palette", () => {
+		const segments = {
+			system: 1,
+			prompt: 1,
+			assistant: 1,
+			thinking: 1,
+			tools: 1,
+		};
+		const lane = renderPacmanLane(snapshot({ segments, usedTokens: 100, contextWindow: 100 }), 22);
+
+		for (const segment of USED_SEGMENTS) {
+			assert.ok(lane.includes(foreground(segment.color, `${TRAIL_GLYPH} `.repeat(2))));
+		}
+	});
+
+	test("handles tiny widths and missing segment estimates", () => {
+		assert.equal(renderPacmanLane(snapshot(), 0), "");
+		assert.equal(stripAnsi(renderPacmanLane(snapshot(), 1)), PACMAN_GLYPH);
+
+		const fallback = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 100, contextWindow: 100 }), 10));
+		assert.equal(plainWidth(fallback), 10);
+		assert.equal(fallback.split(TRAIL_GLYPH).length - 1, 4);
+
+		const unknown = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 0, contextWindow: 0 }), 10));
+		assert.equal(unknown.split(PELLET_GLYPH).length - 1, 4);
+
+		const overfull = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 200, contextWindow: 100 }), 10));
+		assert.equal(overfull.startsWith(PACMAN_GLYPH), true);
+		const negative = stripAnsi(renderPacmanLane(snapshot({ usedTokens: -10, contextWindow: 100 }), 10));
+		assert.equal(negative.split(PELLET_GLYPH).length - 1, 4);
 	});
 });
 
@@ -477,7 +476,9 @@ describe("renderChromeLine", () => {
 		assert.ok(plain.includes("opus"));
 		assert.ok(!plain.includes("↑"));
 		assert.doesNotMatch(plain, /\bR\d/);
-		assert.ok(plainWidth(plain) <= 100);
+		assert.equal(plainWidth(plain), 100);
+		assert.ok(plain.includes(PACMAN_GLYPH));
+		assert.equal(line.includes("\x1b[48;"), false);
 	});
 
 	test("USED_SEGMENTS keys stable", () => {

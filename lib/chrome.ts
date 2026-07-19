@@ -4,30 +4,25 @@ export const CHARACTERS_PER_TOKEN = 4;
 export const IMAGE_TOKEN_ESTIMATE = 1200;
 const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
 
-/**
- * Monochrome cool-slate ramp for used segments (dark → light = early → late).
- * One accent (cache hit). Free zone is quiet — no loud multi-hue chrome.
- */
-export const USED_SEGMENT_TEXT = "#0E1218";
-/** Free zone: no fill block; metrics sit on terminal bg. */
-export const FREE_SEGMENT_FILL = "";
+/** Classic Pac-Man palette: cream pellets, yellow hero, ghost-colored context trail. */
+export const PACMAN_TEXT = "#FFFF00";
+export const PELLET_TEXT = "#FFB8AE";
+export const TRAIL_FALLBACK_TEXT = "#6B7280";
+export const PACMAN_GLYPH = "ᗤ";
+export const PELLET_GLYPH = "•";
+export const TRAIL_GLYPH = "·";
 export const FREE_SEGMENT_TEXT = "#6B7280";
 export const FREE_SEGMENT_TEXT_HOT = "#B45309";
 export const FREE_SEGMENT_TEXT_FULL = "#B91C1C";
-/** Sole accent in the free metrics. */
-export const CACHE_HIT_TEXT = "#2DD4BF";
-/** Cost stays muted — secondary to % and CH. */
+export const CACHE_HIT_TEXT = "#00FFFF";
 export const COST_TEXT = "#6B7280";
 
-/** Min columns before a used segment shows its short label. Wider → full label. */
-export const LABEL_MIN_WIDTH = 4;
-
 export const USED_SEGMENTS = [
-	{ key: "system", color: "#3D4F5F", labels: ["system", "sys", "s"] },
-	{ key: "prompt", color: "#4F6578", labels: ["prompt", "pr", "p"] },
-	{ key: "assistant", color: "#6A8499", labels: ["assistant", "ast", "a"] },
-	{ key: "thinking", color: "#8AA0B2", labels: ["think", "th", "t"] },
-	{ key: "tools", color: "#A8B9C7", labels: ["tools", "tl", "x"] },
+	{ key: "system", color: "#FF0000" },
+	{ key: "prompt", color: "#FFB8FF" },
+	{ key: "assistant", color: "#00FFFF" },
+	{ key: "thinking", color: "#FFB852" },
+	{ key: "tools", color: "#5B5BFF" },
 ] as const;
 
 export type ContextSegmentKey = (typeof USED_SEGMENTS)[number]["key"];
@@ -111,28 +106,13 @@ export const formatTokens = (count: number): string => {
 	return `${Math.round(value / 1000000)}M`;
 };
 
-export const ansiColor = (mode: 38 | 48, hex: string, text: string): string => {
+export const foreground = (hex: string, text: string): string => {
 	const value = Number.parseInt(hex.replace(/^#/, ""), 16);
 	const red = (value >> 16) & 0xff;
 	const green = (value >> 8) & 0xff;
 	const blue = value & 0xff;
-	const reset = mode === 38 ? 39 : 49;
 
-	return `\x1b[${mode};2;${red};${green};${blue}m${text}\x1b[${reset}m`;
-};
-
-export const foreground = (hex: string, text: string): string => ansiColor(38, hex, text);
-
-export const background = (hex: string, text: string): string => ansiColor(48, hex, text);
-
-export const centeredText = (text: string, width: number): string => {
-	const textWidth = plainWidth(text);
-	if (textWidth > width) return " ".repeat(width);
-
-	const left = Math.floor((width - textWidth) / 2);
-	const right = width - textWidth - left;
-
-	return `${" ".repeat(left)}${text}${" ".repeat(right)}`;
+	return `\x1b[38;2;${red};${green};${blue}m${text}\x1b[39m`;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object";
@@ -289,24 +269,6 @@ export const accumulateSessionUsage = (entries: readonly SessionUsageEntry[]): S
 	return { input, output, cacheRead, cacheWrite, cost, cacheHitRate: hitRate };
 };
 
-export const chooseLabel = (labels: readonly string[], width: number): string => {
-	for (const label of labels) {
-		if (plainWidth(label) <= width) return label;
-	}
-
-	return "";
-};
-
-export const renderUsedSegment = (labels: readonly string[], color: string, width: number): string => {
-	if (width <= 0) return "";
-
-	// Prefer pure color blocks; labels only when segment is wide enough.
-	const label = width >= LABEL_MIN_WIDTH ? chooseLabel(labels, width) : "";
-	const text = label.length > 0 ? foreground(USED_SEGMENT_TEXT, centeredText(label, width)) : " ".repeat(width);
-
-	return background(color, text);
-};
-
 export const freeTextColor = (percent: number): string => {
 	if (percent > 90) return FREE_SEGMENT_TEXT_FULL;
 	if (percent > 70) return FREE_SEGMENT_TEXT_HOT;
@@ -364,43 +326,35 @@ export const styleFreeMetrics = (plain: string, percent: number): string => {
 	return styled.join(foreground(FREE_SEGMENT_TEXT, " · "));
 };
 
-export const renderFreeSegment = (width: number, metricOptions: readonly string[], percent: number): string => {
+const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>
+	foreground(color, `${glyph}${" ".repeat(cellWidth - 1)}`.repeat(Math.max(0, count)));
+
+/**
+ * Fixed-width lane. Pac-Man moves right → left as context fills.
+ * Cream pellets remain ahead; ghost-colored small dots show consumed segment mix behind.
+ */
+export const renderPacmanLane = (snapshot: ContextSnapshot, width: number): string => {
 	if (width <= 0) return "";
+	if (width === 1) return foreground(PACMAN_TEXT, PACMAN_GLYPH);
 
-	const chosen = pickFirstFitting(metricOptions, width);
+	const cellWidth = 2;
+	const cellCount = Math.max(1, Math.floor(width / cellWidth));
+	const ratio = snapshot.contextWindow > 0 ? Math.min(1, Math.max(0, snapshot.usedTokens / snapshot.contextWindow)) : 0;
+	const trailCellCount = Math.round(ratio * Math.max(0, cellCount - 1));
+	const pelletCellCount = Math.max(0, cellCount - trailCellCount - 1);
+	const segmentValues = USED_SEGMENTS.map((segment) => snapshot.segments[segment.key]);
+	const trailWidths = allocateProportionally(segmentValues, trailCellCount);
+	const allocatedTrailCells = trailWidths.reduce((sum, value) => sum + value, 0);
 
-	if (chosen.length === 0) {
-		return " ".repeat(width);
-	}
+	const pellets = coloredCells(PELLET_TEXT, PELLET_GLYPH, pelletCellCount, cellWidth);
+	const pacman = coloredCells(PACMAN_TEXT, PACMAN_GLYPH, 1, cellWidth);
+	const segmentedTrail = USED_SEGMENTS.map((segment, index) =>
+		coloredCells(segment.color, TRAIL_GLYPH, trailWidths[index] ?? 0, cellWidth),
+	).join("");
+	const fallbackTrail = coloredCells(TRAIL_FALLBACK_TEXT, TRAIL_GLYPH, trailCellCount - allocatedTrailCells, cellWidth);
+	const remainder = " ".repeat(width - cellCount * cellWidth);
 
-	// Left-align metrics in free zone (reads as trailing status, not a second bar).
-	const metrics = styleFreeMetrics(chosen, percent);
-	const pad = Math.max(0, width - plainWidth(chosen));
-	const leftPad = pad > 0 ? " " : "";
-	const rightPad = " ".repeat(Math.max(0, pad - (leftPad ? 1 : 0)));
-
-	return `${leftPad}${metrics}${rightPad}`;
-};
-
-export const allocateBarColumns = (values: readonly number[], width: number): readonly number[] => {
-	const usedCount = USED_SEGMENTS.length;
-	const visibleUsedSegments = USED_SEGMENTS.map((_, index) => index).filter((index) => (values[index] ?? 0) > 0);
-
-	if (visibleUsedSegments.length === 0 || visibleUsedSegments.length >= width) {
-		return allocateProportionally(values, width);
-	}
-
-	// Only enforce min-1 on used segments; free zone (last slot) may be zero.
-	const minimumColumns = Array.from({ length: values.length }, () => 0);
-
-	for (const index of visibleUsedSegments) {
-		if (index < usedCount) minimumColumns[index] = 1;
-	}
-
-	const minTotal = visibleUsedSegments.length;
-	const remainingColumns = allocateProportionally(values, width - minTotal);
-
-	return minimumColumns.map((minimum, index) => minimum + (remainingColumns[index] ?? 0));
+	return `${pellets}${pacman}${segmentedTrail}${fallbackTrail}${remainder}`;
 };
 
 export const formatModel = (model: ModelInfo, thinkingLevel: string, providerCount: number): string => {
@@ -469,25 +423,19 @@ export const renderChromeLine = (
 		return fitStyledText(`${left}${" ".repeat(gap)}${dim(modelText)}`, width);
 	}
 
-	const percent = snapshot.contextWindow > 0 ? (snapshot.usedTokens / snapshot.contextWindow) * 100 : 0;
-
+	const percent = (snapshot.usedTokens / snapshot.contextWindow) * 100;
 	const models = modelOptions(model, thinkingLevel, providerCount);
 	const { modelText, barWidth } = pickModelAndBarWidth(models, width);
+	const minimumLaneWidth = Math.min(12, Math.max(4, Math.floor(barWidth * 0.4)));
+	const metricWidth = Math.max(0, barWidth - minimumLaneWidth - 1);
+	const metricText = pickFirstFitting(freeMetricOptions(snapshot, usage), metricWidth);
+	const metricGap = metricText.length > 0 ? 1 : 0;
+	const laneWidth = barWidth - plainWidth(metricText) - metricGap;
+	const lane = renderPacmanLane(snapshot, laneWidth);
+	const metrics = styleFreeMetrics(metricText, percent);
+	const status = `${lane}${" ".repeat(metricGap)}${metrics}`;
 
-	const freeTokens = Math.max(0, snapshot.contextWindow - snapshot.usedTokens);
-	const values = [...USED_SEGMENTS.map((segment) => snapshot.segments[segment.key]), freeTokens];
-	const columns = allocateBarColumns(values, barWidth);
+	if (modelText.length === 0) return status;
 
-	const freeWidth = columns[USED_SEGMENTS.length] ?? 0;
-	const metrics = freeMetricOptions(snapshot, usage);
-
-	const usedSegments = USED_SEGMENTS.map((segment, index) =>
-		renderUsedSegment(segment.labels, segment.color, columns[index] ?? 0),
-	).join("");
-	const free = renderFreeSegment(freeWidth, metrics, percent);
-	const bar = `${usedSegments}${free}`;
-
-	if (modelText.length === 0) return bar;
-
-	return `${bar} ${dim(modelText)}`;
+	return `${status} ${dim(modelText)}`;
 };

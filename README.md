@@ -2,29 +2,31 @@
 
 Single-line context chrome for [pi](https://pi.dev).
 
-One quiet row under the editor: monochrome segment bar, usage %, cache hit, optional cost, model.
+One quiet row under the editor: Pac-Man context lane, usage %, cache hit, optional cost, model.
 
 ```
-[░░░░▒▒▓▓··]  45.2% · CH92.3% · $0.042     opus · high
+• • • • • ᗤ · · · · · · ·   45.2% · CH92.3% · $0.042  opus · high
 ```
+
+Pac-Man moves right → left as context fills. Cream pellets are remaining capacity; ghost-colored small dots behind Pac-Man show consumed system, prompt, assistant, thinking, and tool proportions.
 
 ## Why
 
 `nano-context` has a great segmented bar, but its custom footer drops default pi stats (especially **cache hit `CH%`**) and stacks 3 chrome lines total.
 
-`pi-context-bar` keeps the bar idea, restores `CH%` / cost / model, and collapses everything into **one line**. Default footer is replaced with an empty footer so chrome never doubles up.
+`pi-context-bar` turns context into a compact Pac-Man lane, restores `CH%` / cost / model, and collapses everything into **one line**. Default footer is replaced with an empty footer so chrome never doubles up.
 
 ## Layout
 
 | Zone | Content |
 |------|---------|
-| Used blocks | cool-slate ramp: system → prompt → assistant → think → tools |
-| Free zone | `%` · `CH` · optional `$` (no path, no ↑↓RW) |
+| Pac-Man lane | cream remaining pellets ← yellow Pac-Man ← ghost-colored consumed trail |
+| Metrics | `%` · `CH` · optional `$` (no path, no ↑↓RW) |
 | Far right | model · thinking (provider if multi) |
 
-Design: one hue for structure, **one accent for CH**, threshold color only on `%`. Labels appear only on wide segments.
+Consumed trail uses classic arcade colors: red system, pink prompt, cyan assistant, orange thinking, blue tools. Small foreground dots keep color quiet; no background blocks.
 
-Width cascade: cost → thinking → short model. Blocks + `%` + `CH` stay longest.
+Width cascade: cost → thinking → short model. Pac-Man lane + `%` + `CH` stay longest.
 
 ## Install
 

@@ -1,6 +1,6 @@
 # pi-context-bar
 
-Single-line context chrome for pi: Pac-Man context lane + CH% + cost + model.
+Single-line context chrome for pi: Pac-Man context lane + segment mix + CH% + cost + model.
 
 ## Goal
 
@@ -10,13 +10,13 @@ One quiet row under the editor. No multi-line footer. Structure via bar; health 
 
 - Keep chrome height = 1 always
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
-- Free metrics: only `%` · `CH` · optional `$` — never path / ↑↓ / R / W
-- Classic palette: cream pellets, yellow solid Nerd Font Pac-Man, ghost-colored context trail
-- Lane runs left → right: consumed trail, Pac-Man boundary, remaining pellets
-- No background color blocks; segment mix appears only in small consumed-trail dots
+- Free metrics: `%` · approximate segment `mix~` · `CH` · optional `$` — never path / ↑↓ / R / W
+- Classic palette: cream pellets, yellow solid Nerd Font Pac-Man, phase-colored ghost
+- Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets
+- No background color blocks; segment mix lives in metrics with only `S/P/A/T/X` labels colored
 - Cap lane width on ultra-wide terminals; preserve flexible gap before right-side metrics
 - Animate Pac-Man mouth only while agent runs; clear timer on end/shutdown
-- CH remains metrics accent; Pac-Man/ghost colors belong only to lane
+- CH remains metrics accent; segment colors stay limited to one-letter metric labels
 - Functional style, no `any`, immutable snapshots
 - Pure logic in `lib/chrome.ts`; keep `index.ts` thin
 

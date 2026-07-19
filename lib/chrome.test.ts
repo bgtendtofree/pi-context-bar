@@ -34,11 +34,11 @@ import {
 	renderPacmanLane,
 	type SessionUsage,
 	scaleSegmentsToUsage,
+	segmentMixText,
 	segmentSessionMessages,
 	segmentTotal,
 	stripAnsi,
 	styleFreeMetrics,
-	TRAIL_GLYPH,
 	truncatePlainText,
 	USED_SEGMENTS,
 } from "./chrome.ts";
@@ -305,11 +305,15 @@ describe("freeMetricOptions cascade", () => {
 		cost: 0.042,
 		cacheHitRate: 92.3,
 	});
-	const snap = snapshot({ usedTokens: 90_000, contextWindow: 200_000 });
+	const snap = snapshot({
+		segments: { system: 8000, prompt: 11_000, assistant: 38_000, thinking: 21_000, tools: 12_000 },
+		usedTokens: 90_000,
+		contextWindow: 200_000,
+	});
 
-	test("widest is % · CH · $", () => {
+	test("widest is % · approximate mix · CH · $", () => {
 		const options = freeMetricOptions(snap, full);
-		assert.equal(options[0], "45.0% · CH92.3% · $0.042");
+		assert.equal(options[0], "45.0% · mix~ S8.0k/P11k/A38k/T21k/X12k · CH92.3% · $0.042");
 		assert.ok(!options[0].includes("↑"));
 		assert.ok(!options[0].includes("90k/200k"));
 		assert.ok(!options[0].includes("R"));
@@ -359,17 +363,32 @@ describe("freeTextColor thresholds", () => {
 	});
 });
 
-describe("metric styling", () => {
-	test("styleFreeMetrics accents only CH", () => {
-		const styled = styleFreeMetrics("45.2% · CH92% · $0.04", 45);
+describe("segment analytics and metric styling", () => {
+	test("segmentMixText reports approximate token allocation", () => {
+		assert.equal(segmentMixText(snapshot()), "");
+		assert.equal(
+			segmentMixText(
+				snapshot({
+					segments: { system: 8000, prompt: 11_000, assistant: 38_000, thinking: 21_000, tools: 12_000 },
+					usedTokens: 90_000,
+				}),
+			),
+			"mix~ S8.0k/P11k/A38k/T21k/X12k",
+		);
+	});
+
+	test("styleFreeMetrics accents segment labels, CH, and usage", () => {
+		const plain = "45.2% · mix~ S8.0k/P11k/A38k/T21k/X12k · CH92% · $0.04";
+		const styled = styleFreeMetrics(plain, 45);
 		assert.ok(styled.includes("CH92%"));
 		assert.ok(styled.includes("$0.04"));
-		assert.equal(stripAnsi(styled), "45.2% · CH92% · $0.04");
+		for (const segment of USED_SEGMENTS) assert.ok(styled.includes(foreground(segment.color, segment.label)));
+		assert.equal(stripAnsi(styled), plain);
 	});
 });
 
 describe("Pac-Man lane", () => {
-	test("moves left to right while pellets become trail", () => {
+	test("moves left to right while eaten pellets become empty space", () => {
 		const segments = { ...emptyContextSegments(), system: 100 };
 		const empty = stripAnsi(renderPacmanLane(snapshot({ segments, usedTokens: 0, contextWindow: 100 }), 18));
 		const half = stripAnsi(renderPacmanLane(snapshot({ segments, usedTokens: 50, contextWindow: 100 }), 18));
@@ -380,37 +399,21 @@ describe("Pac-Man lane", () => {
 		assert.equal(plainWidth(full), 18);
 		assert.equal(empty.split(PELLET_GLYPH).length - 1, 8);
 		assert.equal(half.split(PELLET_GLYPH).length - 1, 4);
-		assert.equal(half.split(TRAIL_GLYPH).length - 1, 4);
+		assert.equal(half.indexOf(PACMAN_GLYPH), 8);
 		assert.equal(empty.startsWith(PACMAN_GLYPH), true);
 		assert.equal(full.trimEnd().endsWith(PACMAN_GLYPH), true);
 		assert.equal(full.includes(PELLET_GLYPH), false);
-		assert.equal(full.split(TRAIL_GLYPH).length - 1, 8);
 	});
 
-	test("alternates open and closed animation frames", () => {
+	test("alternates mouth frames without resurrecting a pellet", () => {
 		const open = stripAnsi(renderPacmanLane(snapshot(), 10, 0));
 		const closed = stripAnsi(renderPacmanLane(snapshot(), 10, 1));
 
 		assert.ok(open.includes(PACMAN_FRAMES[0]));
 		assert.ok(closed.includes(PACMAN_FRAMES[1]));
 		assert.equal(open.split(PELLET_GLYPH).length - 1, 4);
-		assert.equal(closed.split(PELLET_GLYPH).length - 1, 3);
+		assert.equal(closed.split(PELLET_GLYPH).length - 1, 4);
 		assert.equal(plainWidth(open), plainWidth(closed));
-	});
-
-	test("colors consumed trail by segment with classic ghost palette", () => {
-		const segments = {
-			system: 1,
-			prompt: 1,
-			assistant: 1,
-			thinking: 1,
-			tools: 1,
-		};
-		const lane = renderPacmanLane(snapshot({ segments, usedTokens: 100, contextWindow: 100 }), 22);
-
-		for (const segment of USED_SEGMENTS) {
-			assert.ok(lane.includes(foreground(segment.color, `${TRAIL_GLYPH} `.repeat(2))));
-		}
 	});
 
 	test("shows a phase-colored ghost only while the agent runs", () => {
@@ -433,7 +436,7 @@ describe("Pac-Man lane", () => {
 			const lane = renderPacmanLane(activeSnapshot, 18, 0, activity);
 			assert.ok(lane.includes(foreground(color, `${GHOST_GLYPH} `)));
 			assert.equal(plainWidth(lane), 18);
-			assert.equal(stripAnsi(lane).split(TRAIL_GLYPH).length - 1, 7);
+			assert.equal(stripAnsi(lane).split(PELLET_GLYPH).length - 1, 0);
 		}
 	});
 
@@ -459,7 +462,7 @@ describe("Pac-Man lane", () => {
 
 		const fallback = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 100, contextWindow: 100 }), 10));
 		assert.equal(plainWidth(fallback), 10);
-		assert.equal(fallback.split(TRAIL_GLYPH).length - 1, 4);
+		assert.equal(fallback.trimEnd().endsWith(PACMAN_GLYPH), true);
 
 		const unknown = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 0, contextWindow: 0 }), 10));
 		assert.equal(unknown.startsWith(PACMAN_GLYPH), true);
@@ -552,6 +555,7 @@ describe("renderChromeLine", () => {
 		);
 		const plain = stripAnsi(line);
 		assert.match(plain, /CH/);
+		assert.ok(plain.includes("mix~"));
 		assert.ok(plain.includes("opus"));
 		assert.ok(!plain.includes("↑"));
 		assert.doesNotMatch(plain, /\bR\d/);

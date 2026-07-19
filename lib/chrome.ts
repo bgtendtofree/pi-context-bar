@@ -4,15 +4,13 @@ export const CHARACTERS_PER_TOKEN = 4;
 export const IMAGE_TOKEN_ESTIMATE = 1200;
 const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
 
-/** Classic Pac-Man palette: cream pellets, yellow hero, ghost-colored context trail. */
+/** Classic Pac-Man palette: cream pellets, yellow hero, phase-colored ghost. */
 export const PACMAN_TEXT = "#FFFF00";
 export const PELLET_TEXT = "#FFB8AE";
-export const TRAIL_FALLBACK_TEXT = "#6B7280";
 export const PACMAN_FRAMES = ["󰮯", "●"] as const;
 export const PACMAN_GLYPH = PACMAN_FRAMES[0];
 export const GHOST_GLYPH = "󰊠";
 export const PELLET_GLYPH = "•";
-export const TRAIL_GLYPH = "·";
 export const PACMAN_LANE_MAX_WIDTH = 96;
 
 export const LANE_ACTIVITY_TEXT = {
@@ -30,11 +28,11 @@ export const CACHE_HIT_TEXT = "#00FFFF";
 export const COST_TEXT = "#6B7280";
 
 export const USED_SEGMENTS = [
-	{ key: "system", color: "#FF0000" },
-	{ key: "prompt", color: "#FFB8FF" },
-	{ key: "assistant", color: "#00FFFF" },
-	{ key: "thinking", color: "#FFB852" },
-	{ key: "tools", color: "#5B5BFF" },
+	{ key: "system", label: "S", color: "#FF0000" },
+	{ key: "prompt", label: "P", color: "#FFB8FF" },
+	{ key: "assistant", label: "A", color: "#00FFFF" },
+	{ key: "thinking", label: "T", color: "#FFB852" },
+	{ key: "tools", label: "X", color: "#5B5BFF" },
 ] as const;
 
 export type ContextSegmentKey = (typeof USED_SEGMENTS)[number]["key"];
@@ -290,14 +288,26 @@ export const freeTextColor = (percent: number): string => {
 	return FREE_SEGMENT_TEXT;
 };
 
+export const segmentMixText = (snapshot: ContextSnapshot): string => {
+	if (snapshot.usedTokens <= 0 || segmentTotal(snapshot.segments) <= 0) return "";
+
+	const segments = USED_SEGMENTS.map(
+		(segment) => `${segment.label}${formatTokens(snapshot.segments[segment.key])}`,
+	).join("/");
+
+	// Segment allocation is estimated from message content even when total usage is measured.
+	return `mix~ ${segments}`;
+};
+
 /**
  * Free-zone metric options, widest → tightest.
- * Keep only health signals: % · CH · optional $. No ↑↓RW / absolute totals.
+ * Context usage + approximate segment mix sit beside CH and optional cost.
  */
 export const freeMetricOptions = (snapshot: ContextSnapshot, usage: SessionUsage): readonly string[] => {
 	const prefix = snapshot.usageIsEstimated ? "~" : "";
 	const percent =
 		snapshot.contextWindow > 0 ? `${prefix}${((snapshot.usedTokens / snapshot.contextWindow) * 100).toFixed(1)}%` : "";
+	const mix = segmentMixText(snapshot);
 	const ch = usage.cacheHitRate !== undefined ? `CH${usage.cacheHitRate.toFixed(1)}%` : "";
 	const chShort = usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "";
 	const cost = usage.cost > 0 ? `$${usage.cost.toFixed(3)}` : "";
@@ -306,9 +316,13 @@ export const freeMetricOptions = (snapshot: ContextSnapshot, usage: SessionUsage
 	const join = (...parts: string[]) => parts.filter(Boolean).join(" · ");
 
 	return [
+		join(percent, mix, ch, cost),
+		join(percent, mix, chShort, costShort),
+		join(percent, mix, chShort),
 		join(percent, ch, cost),
 		join(percent, chShort, costShort),
 		join(percent, chShort),
+		join(percent, mix),
 		join(percent, ch ? "CH" : ""),
 		percent,
 		chShort,
@@ -324,13 +338,29 @@ export const pickFirstFitting = (options: readonly string[], width: number): str
 	return "";
 };
 
+const styleSegmentMix = (text: string): string => {
+	let styled = foreground(FREE_SEGMENT_TEXT, "mix~ ");
+	const values = text.slice("mix~ ".length).split("/");
+
+	for (const [index, value] of values.entries()) {
+		const segment = USED_SEGMENTS[index];
+		if (!segment) continue;
+		if (index > 0) styled += foreground(FREE_SEGMENT_TEXT, "/");
+		styled += foreground(segment.color, segment.label);
+		styled += foreground(FREE_SEGMENT_TEXT, value.slice(segment.label.length));
+	}
+
+	return styled;
+};
+
 export const styleFreeMetrics = (plain: string, percent: number): string => {
 	if (plain.length === 0) return "";
 
 	const color = freeTextColor(percent);
-	// Split on middle-dot separators so "45% · CH92% · $0.04" styles cleanly.
+	// Split on middle-dot separators so each metric family keeps one quiet accent.
 	const tokens = plain.split(" · ");
 	const styled = tokens.map((token) => {
+		if (token.startsWith("mix~ ")) return styleSegmentMix(token);
 		if (token.startsWith("CH")) return foreground(CACHE_HIT_TEXT, token);
 		if (token.startsWith("$")) return foreground(COST_TEXT, token);
 		// Only the usage % uses hot/full threshold colors.
@@ -344,42 +374,25 @@ export const styleFreeMetrics = (plain: string, percent: number): string => {
 const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>
 	foreground(color, `${glyph}${" ".repeat(cellWidth - 1)}`.repeat(Math.max(0, count)));
 
-const renderTrailWithGhost = (
-	trailWidths: readonly number[],
-	fallbackCount: number,
+const renderConsumedZone = (
+	cellCount: number,
 	ghostCellIndex: number | undefined,
 	ghostColor: string | undefined,
 	cellWidth: number,
 ): string => {
-	let cellOffset = 0;
-	let trail = "";
-
-	const appendCells = (color: string, count: number): void => {
-		const ghostOffset = ghostCellIndex === undefined ? -1 : ghostCellIndex - cellOffset;
-		if (!ghostColor || ghostOffset < 0 || ghostOffset >= count) {
-			trail += coloredCells(color, TRAIL_GLYPH, count, cellWidth);
-			cellOffset += count;
-			return;
-		}
-
-		trail += coloredCells(color, TRAIL_GLYPH, ghostOffset, cellWidth);
-		trail += coloredCells(ghostColor, GHOST_GLYPH, 1, cellWidth);
-		trail += coloredCells(color, TRAIL_GLYPH, count - ghostOffset - 1, cellWidth);
-		cellOffset += count;
-	};
-
-	for (const [index, segment] of USED_SEGMENTS.entries()) {
-		appendCells(segment.color, trailWidths[index] ?? 0);
+	if (!ghostColor || ghostCellIndex === undefined || ghostCellIndex < 0 || ghostCellIndex >= cellCount) {
+		return " ".repeat(cellCount * cellWidth);
 	}
-	appendCells(TRAIL_FALLBACK_TEXT, fallbackCount);
 
-	return trail;
+	return `${" ".repeat(ghostCellIndex * cellWidth)}${coloredCells(ghostColor, GHOST_GLYPH, 1, cellWidth)}${" ".repeat(
+		(cellCount - ghostCellIndex - 1) * cellWidth,
+	)}`;
 };
 
 /**
  * Fixed-width lane. Pac-Man moves left → right as context fills.
- * Ghost-colored trail stays behind; cream pellets remain ahead. While the agent
- * runs, a phase-colored ghost chases just behind the context boundary.
+ * Eaten pellets become empty space; cream pellets remain ahead. While the agent
+ * runs, a phase-colored ghost chases just behind the truthful context boundary.
  */
 export const renderPacmanLane = (
 	snapshot: ContextSnapshot,
@@ -396,32 +409,18 @@ export const renderPacmanLane = (
 	const cellWidth = 2;
 	const cellCount = Math.max(1, Math.floor(width / cellWidth));
 	const ratio = snapshot.contextWindow > 0 ? Math.min(1, Math.max(0, snapshot.usedTokens / snapshot.contextWindow)) : 0;
-	const trailCellCount = Math.round(ratio * Math.max(0, cellCount - 1));
-	const pelletCellCount = Math.max(0, cellCount - trailCellCount - 1);
-	const segmentValues = USED_SEGMENTS.map((segment) => snapshot.segments[segment.key]);
-	const trailWidths = allocateProportionally(segmentValues, trailCellCount);
-	const allocatedTrailCells = trailWidths.reduce((sum, value) => sum + value, 0);
-
-	const isClosedFrame = pacmanGlyph === "●";
-	const hiddenPelletCells = isClosedFrame && pelletCellCount > 0 ? 1 : 0;
-	const visiblePelletCells = pelletCellCount - hiddenPelletCells;
+	const consumedCellCount = Math.round(ratio * Math.max(0, cellCount - 1));
+	const pelletCellCount = Math.max(0, cellCount - consumedCellCount - 1);
 	const pacman = coloredCells(PACMAN_TEXT, pacmanGlyph, 1, cellWidth);
 	const ghostColor = activity === "idle" ? undefined : LANE_ACTIVITY_TEXT[activity];
 	const preferredGhostDistance = Math.floor(Math.abs(Math.trunc(animationFrame)) / 2) % 2 === 0 ? 2 : 3;
-	const ghostDistance = Math.min(preferredGhostDistance, trailCellCount);
-	const ghostCellIndex = ghostColor && trailCellCount >= 2 ? trailCellCount - ghostDistance : undefined;
-	const trail = renderTrailWithGhost(
-		trailWidths,
-		trailCellCount - allocatedTrailCells,
-		ghostCellIndex,
-		ghostColor,
-		cellWidth,
-	);
-	const hiddenPellet = " ".repeat(hiddenPelletCells * cellWidth);
-	const pellets = coloredCells(PELLET_TEXT, PELLET_GLYPH, visiblePelletCells, cellWidth);
+	const ghostDistance = Math.min(preferredGhostDistance, consumedCellCount);
+	const ghostCellIndex = ghostColor && consumedCellCount >= 2 ? consumedCellCount - ghostDistance : undefined;
+	const consumed = renderConsumedZone(consumedCellCount, ghostCellIndex, ghostColor, cellWidth);
+	const pellets = coloredCells(PELLET_TEXT, PELLET_GLYPH, pelletCellCount, cellWidth);
 	const remainder = " ".repeat(width - cellCount * cellWidth);
 
-	return `${trail}${pacman}${hiddenPellet}${pellets}${remainder}`;
+	return `${consumed}${pacman}${pellets}${remainder}`;
 };
 
 export const formatModel = (model: ModelInfo, thinkingLevel: string, providerCount: number): string => {

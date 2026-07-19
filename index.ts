@@ -180,7 +180,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		changeLaneActivity("idle");
 		stopPacmanAnimation();
 		// agent_end.messages contains only messages produced by this agent loop.
-		// Rebuild from session history so segment colors keep the full context mix.
+		// Rebuild from session history so segment analytics keep the full context mix.
 		refreshSnapshot(ctx);
 		requestRender();
 	});

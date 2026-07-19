@@ -2,13 +2,13 @@
 
 Single-line context chrome for [pi](https://pi.dev).
 
-One quiet row under the editor: Pac-Man context lane, usage %, cache hit, optional cost, model.
+One quiet row under the editor: Pac-Man context lane, usage %, approximate segment mix, cache hit, optional cost, model.
 
 ```
-· · · · · 󰮯 • • • • • • •   45.2% · CH92.3% · $0.042  opus · high
+          󰮯 • • • • •   45.2% · mix~ S8k/P11k/A38k/T21k/X12k · CH92.3% · $0.042  opus · high
 ```
 
-Pac-Man moves left → right as context fills. Ghost-colored small dots behind it show consumed system, prompt, assistant, thinking, and tool proportions; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle.
+Pac-Man moves left → right as context fills. Eaten pellets become empty space; cream pellets ahead are remaining capacity. Segment analytics move beside the numeric metrics as `mix~` because their allocation is estimated: system (`S`), prompt (`P`), assistant (`A`), thinking (`T`), and tools (`X`). While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle.
 
 ## Why
 
@@ -20,13 +20,13 @@ Pac-Man moves left → right as context fills. Ghost-colored small dots behind i
 
 | Zone | Content |
 |------|---------|
-| Pac-Man lane | ghost-colored consumed trail → phase ghost while running → yellow Pac-Man → cream remaining pellets |
-| Metrics | `%` · `CH` · optional `$` (no path, no ↑↓RW) |
+| Pac-Man lane | empty consumed space → phase ghost while running → yellow Pac-Man → cream remaining pellets |
+| Metrics | `%` · approximate `mix~ S/P/A/T/X` · `CH` · optional `$` (no path, no ↑↓RW) |
 | Far right | model · thinking (provider if multi) |
 
-Consumed trail uses classic arcade colors: red system, pink prompt, cyan assistant, orange thinking, blue tools. Small foreground dots keep color quiet; no background blocks.
+Segment labels use classic ghost colors: red system, pink prompt, cyan assistant, orange thinking, blue tools. Only the one-letter labels are colored; values stay dim and no background blocks are used.
 
-Width cascade: cost → thinking → short model. Pac-Man lane + `%` + `CH` stay longest. Ultra-wide terminals cap the lane at 96 columns and keep a quiet flexible gap before right-aligned metrics.
+Width cascade drops cost and segment mix before core `%` + `CH`, then shortens model details. Ultra-wide terminals cap the lane at 96 columns and keep a quiet flexible gap before right-aligned metrics.
 
 ## Font requirement
 

@@ -1,17 +1,29 @@
 /** ANSI-safe text helpers used by pure chrome layout modules. */
 
+import { visibleWidth } from "@earendil-works/pi-tui";
+
 const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
 
 export const stripAnsi = (text: string): string => text.replace(ANSI_PATTERN, "");
 
-export const plainWidth = (text: string): number => Array.from(stripAnsi(text)).length;
+export const plainWidth = (text: string): number => visibleWidth(text);
+
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 export const truncatePlainText = (text: string, width: number): string => {
 	if (width <= 0) return "";
-	const characters = Array.from(text);
-	if (characters.length <= width) return text;
+	if (plainWidth(text) <= width) return text;
 	if (width === 1) return "…";
-	return `${characters.slice(0, width - 1).join("")}…`;
+
+	let result = "";
+	let resultWidth = 0;
+	for (const { segment } of graphemeSegmenter.segment(text)) {
+		const segmentWidth = visibleWidth(segment);
+		if (resultWidth + segmentWidth > width - 1) break;
+		result += segment;
+		resultWidth += segmentWidth;
+	}
+	return `${result}…`;
 };
 
 export const fitStyledText = (text: string, width: number): string =>

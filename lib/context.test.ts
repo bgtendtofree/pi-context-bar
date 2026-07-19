@@ -42,7 +42,9 @@ describe("formatTokens and estimation", () => {
 		assert.equal(estimateTextTokens("abcde"), 2);
 		assert.equal(estimateTextTokens(""), 0);
 		assert.equal(estimateContentTokens([{ type: "text", text: "abcd" }, { type: "image" }]), 1 + IMAGE_TOKEN_ESTIMATE);
+		assert.equal(estimateContentTokens([{ type: "text", text: "ab" }, null, { type: "text", text: "cde" }]), 2);
 		assert.equal(estimateContentTokens("abcd"), 1);
+		assert.equal(estimateContentTokens({ type: "text", text: "ignored" }), 0);
 	});
 });
 

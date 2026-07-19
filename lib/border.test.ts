@@ -48,4 +48,12 @@ describe("rounded editor border", () => {
 		);
 		assert.equal(plainWidth(renderLabeledBorder(12, "╰", "╯", "", "", (text) => text)), 12);
 	});
+
+	test("fits labels by terminal columns", () => {
+		assert.deepEqual(pickEditorBorderLabels(["模型"], ["⎇ 分支"], 18), {
+			modelLabel: "模型",
+			gitLabel: "",
+		});
+		assert.equal(plainWidth(renderLabeledBorder(14, "╰", "╯", "模型", "", (text) => text)), 14);
+	});
 });

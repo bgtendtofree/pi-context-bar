@@ -2,7 +2,7 @@ import { CustomEditor, type ExtensionContext, type KeybindingsManager } from "@e
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { editorModelOptions, type ModelInfo, pickEditorBorderLabels, renderLabeledBorder } from "../lib/border.ts";
-import { type GitState, gitLabelOptions } from "../lib/git.ts";
+import { type GitState, gitLabelOptions, gitLabelTone } from "../lib/git.ts";
 import { stripAnsi } from "../lib/text.ts";
 
 export type RoundedEditorOptions = Readonly<{
@@ -31,13 +31,7 @@ const styleGitLabel = (label: string, ctx: ExtensionContext): string => {
 	if (!label) return "";
 	return label
 		.split(" ")
-		.map((part, index) => {
-			if (index <= 1) return ctx.ui.theme.fg("dim", part);
-			if (part.startsWith("+")) return ctx.ui.theme.fg("success", part);
-			if (part.startsWith("*") || part === "●") return ctx.ui.theme.fg("warning", part);
-			if (part.startsWith("↓")) return ctx.ui.theme.fg("error", part);
-			return ctx.ui.theme.fg("muted", part);
-		})
+		.map((part, index) => ctx.ui.theme.fg(gitLabelTone(part, index), part))
 		.join(" ");
 };
 

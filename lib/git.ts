@@ -57,6 +57,28 @@ export const parseGitStatus = (output: string): GitState | null => {
 	return sawStatus ? { branch, detachedOid, ahead, behind, staged, unstaged, untracked } : null;
 };
 
+export const sameGitState = (left: GitState | null, right: GitState | null): boolean =>
+	left === right ||
+	(left !== null &&
+		right !== null &&
+		left.branch === right.branch &&
+		left.detachedOid === right.detachedOid &&
+		left.ahead === right.ahead &&
+		left.behind === right.behind &&
+		left.staged === right.staged &&
+		left.unstaged === right.unstaged &&
+		left.untracked === right.untracked);
+
+export type GitLabelTone = "dim" | "muted" | "success" | "warning" | "error";
+
+export const gitLabelTone = (part: string, index: number): GitLabelTone => {
+	if (index <= 1) return "dim";
+	if (part.startsWith("+") || part.startsWith("↑")) return "success";
+	if (part.startsWith("*") || part.startsWith("?") || part === "●") return "warning";
+	if (part.startsWith("↓")) return "error";
+	return "muted";
+};
+
 export const gitLabelOptions = (git: GitState | null): readonly string[] => {
 	if (!git) return [];
 	const head = git.branch ?? (git.detachedOid ? `@${git.detachedOid}` : "");

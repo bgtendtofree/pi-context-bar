@@ -69,20 +69,19 @@ export const estimateTextTokens = (text: string): number => Math.ceil(text.lengt
 
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object";
 
-const contentRecords = (content: unknown): readonly Record<string, unknown>[] =>
-	Array.isArray(content) ? content.filter(isRecord) : [];
+export const estimateContentTokens = (content: unknown): number => {
+	if (typeof content === "string") return estimateTextTokens(content);
+	if (!Array.isArray(content)) return 0;
 
-const textFromContent = (content: unknown): string => {
-	if (typeof content === "string") return content;
-	return contentRecords(content)
-		.map((part) => (part.type === "text" && typeof part.text === "string" ? part.text : ""))
-		.join("");
+	let textLength = 0;
+	let images = 0;
+	for (const part of content) {
+		if (!isRecord(part)) continue;
+		if (part.type === "text" && typeof part.text === "string") textLength += part.text.length;
+		if (part.type === "image") images++;
+	}
+	return Math.ceil(textLength / CHARACTERS_PER_TOKEN) + images * IMAGE_TOKEN_ESTIMATE;
 };
-
-const imageCount = (content: unknown): number => contentRecords(content).filter((part) => part.type === "image").length;
-
-export const estimateContentTokens = (content: unknown): number =>
-	estimateTextTokens(textFromContent(content)) + imageCount(content) * IMAGE_TOKEN_ESTIMATE;
 
 const estimateToolCallTokens = (part: Record<string, unknown>): number => {
 	const name = typeof part.name === "string" ? part.name : "";
@@ -91,7 +90,9 @@ const estimateToolCallTokens = (part: Record<string, unknown>): number => {
 };
 
 const addAssistantTokens = (segments: WritableContextSegments, content: unknown): void => {
-	for (const part of contentRecords(content)) {
+	if (!Array.isArray(content)) return;
+	for (const part of content) {
+		if (!isRecord(part)) continue;
 		if (part.type === "text" && typeof part.text === "string") {
 			segments.assistant += estimateTextTokens(part.text);
 		}

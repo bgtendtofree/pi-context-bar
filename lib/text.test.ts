@@ -6,7 +6,8 @@ describe("ANSI text helpers", () => {
 	test("strips styling and measures plain width", () => {
 		assert.equal(stripAnsi("\x1b[38;2;1;2;3mhi\x1b[39m"), "hi");
 		assert.equal(plainWidth("\x1b[31mab\x1b[39m"), 2);
-		assert.equal(plainWidth("你"), 1);
+		assert.equal(plainWidth("你"), 2);
+		assert.equal(plainWidth("e\u0301"), 1);
 	});
 
 	test("truncates plain and styled text", () => {
@@ -14,6 +15,8 @@ describe("ANSI text helpers", () => {
 		assert.equal(truncatePlainText("hello", 0), "");
 		assert.equal(truncatePlainText("hello", 1), "…");
 		assert.equal(truncatePlainText("hello", 3), "he…");
+		assert.equal(truncatePlainText("你好世界", 5), "你好…");
+		assert.equal(truncatePlainText("e\u0301clair", 3), "e\u0301c…");
 		const styled = "\x1b[31mhello\x1b[39m";
 		assert.equal(fitStyledText(styled, 10), styled);
 		assert.equal(fitStyledText(styled, 3), "he…");

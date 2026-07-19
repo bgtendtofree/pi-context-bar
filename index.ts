@@ -146,9 +146,11 @@ export default function zContext(pi: ExtensionAPI): void {
 		if (ctx.mode === "tui") startPacmanAnimation();
 	});
 
-	pi.on("agent_end", (event, ctx) => {
+	pi.on("agent_end", (_event, ctx) => {
 		stopPacmanAnimation();
-		refreshSnapshot(ctx, event.messages as readonly unknown[]);
+		// agent_end.messages contains only messages produced by this agent loop.
+		// Rebuild from session history so segment colors keep the full context mix.
+		refreshSnapshot(ctx);
 		requestRender();
 	});
 

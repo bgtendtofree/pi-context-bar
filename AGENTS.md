@@ -11,8 +11,11 @@ One quiet row under the editor. No multi-line footer. Structure via bar; health 
 - Keep chrome height = 1 always
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
 - Free metrics: only `%` · `CH` · optional `$` — never path / ↑↓ / R / W
-- Classic palette: cream pellets, yellow Pac-Man, ghost-colored context trail
+- Classic palette: cream pellets, yellow solid Nerd Font Pac-Man, ghost-colored context trail
+- Lane runs left → right: consumed trail, Pac-Man boundary, remaining pellets
 - No background color blocks; segment mix appears only in small consumed-trail dots
+- Cap lane width on ultra-wide terminals; preserve flexible gap before right-side metrics
+- Animate Pac-Man mouth only while agent runs; clear timer on end/shutdown
 - CH remains metrics accent; Pac-Man/ghost colors belong only to lane
 - Functional style, no `any`, immutable snapshots
 - Pure logic in `lib/chrome.ts`; keep `index.ts` thin

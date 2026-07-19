@@ -21,7 +21,9 @@ import {
 	IMAGE_TOKEN_ESTIMATE,
 	makeContextSnapshot,
 	modelOptions,
+	PACMAN_FRAMES,
 	PACMAN_GLYPH,
+	PACMAN_LANE_MAX_WIDTH,
 	PELLET_GLYPH,
 	pickFirstFitting,
 	pickModelAndBarWidth,
@@ -346,7 +348,7 @@ describe("metric styling", () => {
 });
 
 describe("Pac-Man lane", () => {
-	test("moves right to left while pellets become trail", () => {
+	test("moves left to right while pellets become trail", () => {
 		const segments = { ...emptyContextSegments(), system: 100 };
 		const empty = stripAnsi(renderPacmanLane(snapshot({ segments, usedTokens: 0, contextWindow: 100 }), 18));
 		const half = stripAnsi(renderPacmanLane(snapshot({ segments, usedTokens: 50, contextWindow: 100 }), 18));
@@ -358,9 +360,21 @@ describe("Pac-Man lane", () => {
 		assert.equal(empty.split(PELLET_GLYPH).length - 1, 8);
 		assert.equal(half.split(PELLET_GLYPH).length - 1, 4);
 		assert.equal(half.split(TRAIL_GLYPH).length - 1, 4);
-		assert.equal(full.startsWith(PACMAN_GLYPH), true);
+		assert.equal(empty.startsWith(PACMAN_GLYPH), true);
+		assert.equal(full.trimEnd().endsWith(PACMAN_GLYPH), true);
 		assert.equal(full.includes(PELLET_GLYPH), false);
 		assert.equal(full.split(TRAIL_GLYPH).length - 1, 8);
+	});
+
+	test("alternates open and closed animation frames", () => {
+		const open = stripAnsi(renderPacmanLane(snapshot(), 10, 0));
+		const closed = stripAnsi(renderPacmanLane(snapshot(), 10, 1));
+
+		assert.ok(open.includes(PACMAN_FRAMES[0]));
+		assert.ok(closed.includes(PACMAN_FRAMES[1]));
+		assert.equal(open.split(PELLET_GLYPH).length - 1, 4);
+		assert.equal(closed.split(PELLET_GLYPH).length - 1, 3);
+		assert.equal(plainWidth(open), plainWidth(closed));
 	});
 
 	test("colors consumed trail by segment with classic ghost palette", () => {
@@ -387,11 +401,13 @@ describe("Pac-Man lane", () => {
 		assert.equal(fallback.split(TRAIL_GLYPH).length - 1, 4);
 
 		const unknown = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 0, contextWindow: 0 }), 10));
+		assert.equal(unknown.startsWith(PACMAN_GLYPH), true);
 		assert.equal(unknown.split(PELLET_GLYPH).length - 1, 4);
 
 		const overfull = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 200, contextWindow: 100 }), 10));
-		assert.equal(overfull.startsWith(PACMAN_GLYPH), true);
+		assert.equal(overfull.trimEnd().endsWith(PACMAN_GLYPH), true);
 		const negative = stripAnsi(renderPacmanLane(snapshot({ usedTokens: -10, contextWindow: 100 }), 10));
+		assert.equal(negative.startsWith(PACMAN_GLYPH), true);
 		assert.equal(negative.split(PELLET_GLYPH).length - 1, 4);
 	});
 });
@@ -479,6 +495,15 @@ describe("renderChromeLine", () => {
 		assert.equal(plainWidth(plain), 100);
 		assert.ok(plain.includes(PACMAN_GLYPH));
 		assert.equal(line.includes("\x1b[48;"), false);
+	});
+
+	test("caps lane on ultra-wide terminals and keeps metrics right", () => {
+		const line = renderChromeLine(snapshot(), usage({ cacheHitRate: 90 }), 240, null, "off", 1, dim);
+		const plain = stripAnsi(line);
+
+		assert.equal(plainWidth(plain), 240);
+		assert.equal(plain.split(PELLET_GLYPH).length - 1, PACMAN_LANE_MAX_WIDTH / 2 - 1);
+		assert.ok((plain.indexOf("0.0%") ?? 0) > PACMAN_LANE_MAX_WIDTH);
 	});
 
 	test("USED_SEGMENTS keys stable", () => {

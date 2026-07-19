@@ -8,9 +8,11 @@ const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
 export const PACMAN_TEXT = "#FFFF00";
 export const PELLET_TEXT = "#FFB8AE";
 export const TRAIL_FALLBACK_TEXT = "#6B7280";
-export const PACMAN_GLYPH = "ᗤ";
+export const PACMAN_FRAMES = ["󰮯", "●"] as const;
+export const PACMAN_GLYPH = PACMAN_FRAMES[0];
 export const PELLET_GLYPH = "•";
 export const TRAIL_GLYPH = "·";
+export const PACMAN_LANE_MAX_WIDTH = 96;
 export const FREE_SEGMENT_TEXT = "#6B7280";
 export const FREE_SEGMENT_TEXT_HOT = "#B45309";
 export const FREE_SEGMENT_TEXT_FULL = "#B91C1C";
@@ -330,12 +332,15 @@ const coloredCells = (color: string, glyph: string, count: number, cellWidth: nu
 	foreground(color, `${glyph}${" ".repeat(cellWidth - 1)}`.repeat(Math.max(0, count)));
 
 /**
- * Fixed-width lane. Pac-Man moves right → left as context fills.
- * Cream pellets remain ahead; ghost-colored small dots show consumed segment mix behind.
+ * Fixed-width lane. Pac-Man moves left → right as context fills.
+ * Ghost-colored trail stays behind; cream pellets remain ahead.
  */
-export const renderPacmanLane = (snapshot: ContextSnapshot, width: number): string => {
+export const renderPacmanLane = (snapshot: ContextSnapshot, width: number, animationFrame = 0): string => {
 	if (width <= 0) return "";
-	if (width === 1) return foreground(PACMAN_TEXT, PACMAN_GLYPH);
+
+	const frameIndex = Math.abs(Math.trunc(animationFrame)) % PACMAN_FRAMES.length;
+	const pacmanGlyph = PACMAN_FRAMES[frameIndex] ?? PACMAN_GLYPH;
+	if (width === 1) return foreground(PACMAN_TEXT, pacmanGlyph);
 
 	const cellWidth = 2;
 	const cellCount = Math.max(1, Math.floor(width / cellWidth));
@@ -346,15 +351,19 @@ export const renderPacmanLane = (snapshot: ContextSnapshot, width: number): stri
 	const trailWidths = allocateProportionally(segmentValues, trailCellCount);
 	const allocatedTrailCells = trailWidths.reduce((sum, value) => sum + value, 0);
 
-	const pellets = coloredCells(PELLET_TEXT, PELLET_GLYPH, pelletCellCount, cellWidth);
-	const pacman = coloredCells(PACMAN_TEXT, PACMAN_GLYPH, 1, cellWidth);
+	const isClosedFrame = pacmanGlyph === "●";
+	const hiddenPelletCells = isClosedFrame && pelletCellCount > 0 ? 1 : 0;
+	const visiblePelletCells = pelletCellCount - hiddenPelletCells;
+	const pacman = coloredCells(PACMAN_TEXT, pacmanGlyph, 1, cellWidth);
 	const segmentedTrail = USED_SEGMENTS.map((segment, index) =>
 		coloredCells(segment.color, TRAIL_GLYPH, trailWidths[index] ?? 0, cellWidth),
 	).join("");
 	const fallbackTrail = coloredCells(TRAIL_FALLBACK_TEXT, TRAIL_GLYPH, trailCellCount - allocatedTrailCells, cellWidth);
+	const hiddenPellet = " ".repeat(hiddenPelletCells * cellWidth);
+	const pellets = coloredCells(PELLET_TEXT, PELLET_GLYPH, visiblePelletCells, cellWidth);
 	const remainder = " ".repeat(width - cellCount * cellWidth);
 
-	return `${pellets}${pacman}${segmentedTrail}${fallbackTrail}${remainder}`;
+	return `${segmentedTrail}${fallbackTrail}${pacman}${hiddenPellet}${pellets}${remainder}`;
 };
 
 export const formatModel = (model: ModelInfo, thinkingLevel: string, providerCount: number): string => {
@@ -415,6 +424,7 @@ export const renderChromeLine = (
 	thinkingLevel: string,
 	providerCount: number,
 	dim: (text: string) => string,
+	animationFrame = 0,
 ): string => {
 	if (snapshot.contextWindow <= 0) {
 		const modelText = formatModel(model, thinkingLevel, providerCount);
@@ -430,10 +440,12 @@ export const renderChromeLine = (
 	const metricWidth = Math.max(0, barWidth - minimumLaneWidth - 1);
 	const metricText = pickFirstFitting(freeMetricOptions(snapshot, usage), metricWidth);
 	const metricGap = metricText.length > 0 ? 1 : 0;
-	const laneWidth = barWidth - plainWidth(metricText) - metricGap;
-	const lane = renderPacmanLane(snapshot, laneWidth);
+	const availableLaneWidth = barWidth - plainWidth(metricText) - metricGap;
+	const laneWidth = Math.min(PACMAN_LANE_MAX_WIDTH, availableLaneWidth);
+	const flexibleGap = availableLaneWidth - laneWidth + metricGap;
+	const lane = renderPacmanLane(snapshot, laneWidth, animationFrame);
 	const metrics = styleFreeMetrics(metricText, percent);
-	const status = `${lane}${" ".repeat(metricGap)}${metrics}`;
+	const status = `${lane}${" ".repeat(flexibleGap)}${metrics}`;
 
 	if (modelText.length === 0) return status;
 

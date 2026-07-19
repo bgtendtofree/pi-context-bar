@@ -5,10 +5,10 @@ Single-line context chrome for [pi](https://pi.dev).
 One quiet row under the editor: Pac-Man context lane, usage %, cache hit, optional cost, model.
 
 ```
-• • • • • ᗤ · · · · · · ·   45.2% · CH92.3% · $0.042  opus · high
+· · · · · 󰮯 • • • • • • •   45.2% · CH92.3% · $0.042  opus · high
 ```
 
-Pac-Man moves right → left as context fills. Cream pellets are remaining capacity; ghost-colored small dots behind Pac-Man show consumed system, prompt, assistant, thinking, and tool proportions.
+Pac-Man moves left → right as context fills. Ghost-colored small dots behind it show consumed system, prompt, assistant, thinking, and tool proportions; cream pellets ahead are remaining capacity. Its mouth animates while the agent runs, then rests open when idle. Solid Pac-Man glyph requires a Nerd Font.
 
 ## Why
 
@@ -20,13 +20,13 @@ Pac-Man moves right → left as context fills. Cream pellets are remaining capac
 
 | Zone | Content |
 |------|---------|
-| Pac-Man lane | cream remaining pellets ← yellow Pac-Man ← ghost-colored consumed trail |
+| Pac-Man lane | ghost-colored consumed trail → yellow Pac-Man → cream remaining pellets |
 | Metrics | `%` · `CH` · optional `$` (no path, no ↑↓RW) |
 | Far right | model · thinking (provider if multi) |
 
 Consumed trail uses classic arcade colors: red system, pink prompt, cyan assistant, orange thinking, blue tools. Small foreground dots keep color quiet; no background blocks.
 
-Width cascade: cost → thinking → short model. Pac-Man lane + `%` + `CH` stay longest.
+Width cascade: cost → thinking → short model. Pac-Man lane + `%` + `CH` stay longest. Ultra-wide terminals cap the lane at 96 columns and keep a quiet flexible gap before right-aligned metrics.
 
 ## Install
 

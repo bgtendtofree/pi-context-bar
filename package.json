@@ -1,7 +1,7 @@
 {
 	"name": "pi-context-bar",
-	"version": "0.2.0",
-	"description": "Single-line Pac-Man context lane for Pi: usage, cache hit, cost, and model in one row.",
+	"version": "0.3.0",
+	"description": "Animated single-line Pac-Man context lane for Pi: usage, cache hit, cost, and model.",
 	"type": "module",
 	"license": "MIT",
 	"packageManager": "bun@1.3.14",

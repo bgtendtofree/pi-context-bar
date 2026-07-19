@@ -1,6 +1,6 @@
 {
 	"name": "pi-context-bar",
-	"version": "0.3.2",
+	"version": "0.4.0",
 	"description": "Animated single-line Pac-Man context lane for Pi: usage, cache hit, cost, and model.",
 	"type": "module",
 	"license": "MIT",

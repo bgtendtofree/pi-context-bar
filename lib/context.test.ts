@@ -3,13 +3,11 @@ import { describe, test } from "node:test";
 import {
 	type AssistantUsage,
 	accumulateSessionUsage,
-	allocateProportionally,
 	CONTEXT_SEGMENTS,
 	cacheHitRate,
 	emptyContextSegments,
 	estimateContentTokens,
 	estimateTextTokens,
-	formatTokens,
 	IMAGE_TOKEN_ESTIMATE,
 	makeContextSnapshot,
 	scaleSegmentsToUsage,
@@ -26,17 +24,7 @@ const assistantUsage = (partial: Partial<AssistantUsage> = {}): AssistantUsage =
 	...partial,
 });
 
-describe("formatTokens and estimation", () => {
-	test("formats token ranges", () => {
-		assert.equal(formatTokens(-5), "0");
-		assert.equal(formatTokens(999), "999");
-		assert.equal(formatTokens(1500), "1.5k");
-		assert.equal(formatTokens(9999), "10.0k");
-		assert.equal(formatTokens(123_456), "123k");
-		assert.equal(formatTokens(2_500_000), "2.5M");
-		assert.equal(formatTokens(10_000_000), "10M");
-	});
-
+describe("estimation", () => {
 	test("estimates text and image content", () => {
 		assert.equal(estimateTextTokens("abcd"), 1);
 		assert.equal(estimateTextTokens("abcde"), 2);
@@ -86,28 +74,12 @@ describe("context segmentation", () => {
 	});
 });
 
-describe("proportional allocation", () => {
-	test("allocates all columns with fair remainders", () => {
-		const columns = allocateProportionally([1, 1, 1], 5);
-		assert.equal(
-			columns.reduce((sum, value) => sum + value, 0),
-			5,
-		);
-		assert.equal(
-			columns.every((value) => value >= 1),
-			true,
-		);
-	});
-
-	test("handles empty totals and columns", () => {
-		assert.deepEqual(allocateProportionally([1, 2], 0), [0, 0]);
-		assert.deepEqual(allocateProportionally([0, 0], 5), [0, 0]);
-	});
-
+describe("scale segments to usage", () => {
 	test("scales segment estimates to measured usage", () => {
 		const raw = { ...emptyContextSegments(), system: 10, prompt: 30 };
 		const scaled = scaleSegmentsToUsage(raw, 100);
-		assert.equal(segmentTotal(scaled), 100);
+		assert.equal(scaled.system, 25);
+		assert.equal(scaled.prompt, 75);
 		assert.ok(scaled.prompt > scaled.system);
 		assert.deepEqual(scaleSegmentsToUsage(emptyContextSegments(), 100), emptyContextSegments());
 		assert.deepEqual(scaleSegmentsToUsage({ ...emptyContextSegments(), prompt: 5 }, 0), {
@@ -123,7 +95,8 @@ describe("context snapshots", () => {
 		assert.equal(snapshot.usedTokens, 1000);
 		assert.equal(snapshot.usageIsEstimated, false);
 		assert.equal(snapshot.contextWindow, 200_000);
-		assert.equal(segmentTotal(snapshot.segments), 1000);
+		assert.ok(snapshot.segments.prompt > 0);
+		assert.ok(segmentTotal(snapshot.segments) > 0);
 	});
 
 	test("falls back to estimate", () => {
@@ -140,7 +113,7 @@ describe("session usage", () => {
 		assert.equal(cacheHitRate(assistantUsage({ input: 5, cacheWrite: 5 })), 0);
 	});
 
-	test("accumulates assistant entries and keeps latest valid CH", () => {
+	test("accumulates assistant cost and keeps latest valid CH", () => {
 		const result = accumulateSessionUsage([
 			{ type: "message", message: { role: "user", usage: assistantUsage({ input: 999 }) } },
 			{
@@ -159,9 +132,6 @@ describe("session usage", () => {
 			},
 			{ type: "message", message: { role: "assistant", usage: assistantUsage() } },
 		]);
-		assert.equal(result.input, 30);
-		assert.equal(result.output, 10);
-		assert.equal(result.cacheRead, 170);
 		assert.ok(Math.abs(result.cost - 0.03) < 1e-10);
 		assert.equal(result.cacheHitRate, 80);
 	});

@@ -21,10 +21,6 @@ import { type ContextSnapshot, emptyContextSegments, type SessionUsage } from ".
 import { foreground, plainWidth, stripAnsi } from "./text.ts";
 
 const usage = (partial: Partial<SessionUsage> = {}): SessionUsage => ({
-	input: 0,
-	output: 0,
-	cacheRead: 0,
-	cacheWrite: 0,
 	cost: 0,
 	cacheHitRate: undefined,
 	...partial,

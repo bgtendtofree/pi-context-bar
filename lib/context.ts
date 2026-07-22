@@ -23,10 +23,6 @@ export type ContextSnapshot = Readonly<{
 }>;
 
 export type SessionUsage = Readonly<{
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
 	cost: number;
 	/** Cache hit rate 0–100 of the most recent assistant turn that reported prompt tokens. */
 	cacheHitRate: number | undefined;
@@ -55,15 +51,6 @@ export const emptyContextSegments = (): WritableContextSegments => ({
 	thinking: 0,
 	tools: 0,
 });
-
-export const formatTokens = (count: number): string => {
-	const value = Math.max(0, Math.round(count));
-	if (value < 1000) return String(value);
-	if (value < 10000) return `${(value / 1000).toFixed(1)}k`;
-	if (value < 1000000) return `${Math.round(value / 1000)}k`;
-	if (value < 10000000) return `${(value / 1000000).toFixed(1)}M`;
-	return `${Math.round(value / 1000000)}M`;
-};
 
 export const estimateTextTokens = (text: string): number => Math.ceil(text.length / CHARACTERS_PER_TOKEN);
 
@@ -118,40 +105,15 @@ export const segmentSessionMessages = (messages: readonly unknown[], systemPromp
 export const segmentTotal = (segments: ContextSegments): number =>
 	CONTEXT_SEGMENTS.reduce((total, segment) => total + segments[segment.key], 0);
 
-export const allocateProportionally = (values: readonly number[], columns: number): readonly number[] => {
-	if (columns <= 0) return values.map(() => 0);
-	const total = values.reduce((sum, value) => sum + value, 0);
-	if (total <= 0) return values.map(() => 0);
-
-	const rawColumns = values.map((value) => (value / total) * columns);
-	const allocatedColumns = rawColumns.map(Math.floor);
-	let remainingColumns = columns - allocatedColumns.reduce((sum, value) => sum + value, 0);
-	const largestRemainders = rawColumns
-		.map((value, index) => ({ index, remainder: value - Math.floor(value) }))
-		.sort((left, right) => right.remainder - left.remainder);
-
-	for (let index = 0; index < largestRemainders.length && remainingColumns > 0; index++, remainingColumns--) {
-		const slot = largestRemainders[index];
-		if (!slot) break;
-		allocatedColumns[slot.index] = (allocatedColumns[slot.index] ?? 0) + 1;
-	}
-	return allocatedColumns;
-};
-
-export const segmentsFromValues = (values: readonly number[]): ContextSegments => {
-	const segments = emptyContextSegments();
-	for (const [index, segment] of CONTEXT_SEGMENTS.entries()) segments[segment.key] = values[index] ?? 0;
-	return segments;
-};
-
+/** Scale segment estimates to measured usage. Round is enough — mix UI only needs ratios. */
 export const scaleSegmentsToUsage = (segments: ContextSegments, usedTokens: number): ContextSegments => {
-	if (usedTokens <= 0 || segmentTotal(segments) <= 0) return segments;
-	return segmentsFromValues(
-		allocateProportionally(
-			CONTEXT_SEGMENTS.map((segment) => segments[segment.key]),
-			Math.round(usedTokens),
-		),
-	);
+	const total = segmentTotal(segments);
+	if (usedTokens <= 0 || total <= 0) return segments;
+	const scaled = emptyContextSegments();
+	for (const segment of CONTEXT_SEGMENTS) {
+		scaled[segment.key] = Math.round((segments[segment.key] / total) * usedTokens);
+	}
+	return scaled;
 };
 
 export const makeContextSnapshot = (
@@ -177,23 +139,15 @@ export const cacheHitRate = (usage: AssistantUsage): number | undefined => {
 };
 
 export const accumulateSessionUsage = (entries: readonly SessionUsageEntry[]): SessionUsage => {
-	let input = 0;
-	let output = 0;
-	let cacheRead = 0;
-	let cacheWrite = 0;
 	let cost = 0;
 	let hitRate: number | undefined;
 
 	for (const entry of entries) {
 		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
 		const usage = entry.message.usage;
-		input += usage.input;
-		output += usage.output;
-		cacheRead += usage.cacheRead;
-		cacheWrite += usage.cacheWrite;
 		cost += usage.cost.total;
 		const rate = cacheHitRate(usage);
 		if (rate !== undefined) hitRate = rate;
 	}
-	return { input, output, cacheRead, cacheWrite, cost, cacheHitRate: hitRate };
+	return { cost, cacheHitRate: hitRate };
 };

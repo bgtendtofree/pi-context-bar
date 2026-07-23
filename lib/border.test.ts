@@ -6,14 +6,14 @@ import { plainWidth } from "./text.ts";
 describe("editor model labels", () => {
 	test("keeps model before optional thinking", () => {
 		assert.deepEqual(editorModelOptions(null, "high"), ["no-model", "?"]);
-		const options = editorModelOptions({ id: "anthropic/claude-opus", provider: "anthropic", reasoning: true }, "high");
+		const options = editorModelOptions({ id: "anthropic/claude-opus", reasoning: true }, "high");
 		assert.equal(options[0], "anthropic/claude-opus · high");
 		assert.ok(options.includes("claude-opus · high"));
 		assert.ok(options.includes("claude-opus"));
-		assert.deepEqual(editorModelOptions({ id: "gpt-4o", provider: "openai", reasoning: false }, "high"), ["gpt-4o"]);
+		assert.deepEqual(editorModelOptions({ id: "gpt-4o", reasoning: false }, "high"), ["gpt-4o"]);
 		assert.ok(
-			editorModelOptions({ id: "provider/a-very-long-model-name", provider: "p", reasoning: false }, "off").some(
-				(option) => option.endsWith("…"),
+			editorModelOptions({ id: "provider/a-very-long-model-name", reasoning: false }, "off").some((option) =>
+				option.endsWith("…"),
 			),
 		);
 	});

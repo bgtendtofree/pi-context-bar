@@ -76,7 +76,7 @@ const refreshSessionUsage = (ctx: ExtensionContext): void => {
 
 const currentModel = (ctx: ExtensionContext): ModelInfo => {
 	const model = ctx.model;
-	return model ? { id: model.id, provider: model.provider, reasoning: Boolean(model.reasoning) } : null;
+	return model ? { id: model.id, reasoning: Boolean(model.reasoning) } : null;
 };
 
 const requestRender = (): void => activeTui?.requestRender();

@@ -80,26 +80,16 @@ export const freeMetricOptions = (snapshot: ContextSnapshot, usage: SessionUsage
 	const mixShort = segmentMixText(snapshot, 1);
 	const ch = usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "";
 	const cost = formatCost(usage.cost);
-	const options = ch
-		? [
-				metricGroup(percent, mix, efficiencyGroup(ch, cost)),
-				metricGroup(percent, mix, ch),
-				metricGroup(percent, mixShort, ch),
-				metricGroup(percent, efficiencyGroup(ch, cost)),
-				metricGroup(percent, ch),
-				percent,
-				ch,
-				"",
-			]
-		: [
-				metricGroup(percent, mix, cost),
-				metricGroup(percent, mix),
-				metricGroup(percent, mixShort),
-				metricGroup(percent, cost),
-				percent,
-				cost,
-				"",
-			];
+	const options = [
+		metricGroup(percent, mix, efficiencyGroup(ch, cost)),
+		metricGroup(percent, mix, ch),
+		metricGroup(percent, mixShort, ch),
+		metricGroup(percent, efficiencyGroup(ch, cost)),
+		metricGroup(percent, ch),
+		percent,
+		ch || cost,
+		"",
+	];
 	return [...new Set(options)];
 };
 
@@ -212,5 +202,3 @@ export const renderChromeLine = (
 	const metrics = styleFreeMetrics(metricText, percent, usage.cacheHitRate, styles);
 	return ` ${lane}${" ".repeat(Math.max(0, flexibleGap))}${metrics} `;
 };
-
-export { fitStyledText, foreground, plainWidth, stripAnsi } from "./text.ts";

@@ -4,7 +4,6 @@ import { plainWidth } from "./text.ts";
 
 export type ModelInfo = Readonly<{
 	id: string;
-	provider: string;
 	reasoning: boolean;
 }> | null;
 

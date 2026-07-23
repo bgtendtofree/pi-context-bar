@@ -10,6 +10,13 @@ import {
 	type SessionUsageEntry,
 } from "./lib/context.ts";
 import { type GitState, parseGitStatus, sameGitState } from "./lib/git.ts";
+import {
+	completedTokenSpeed,
+	estimateDeltaTokens,
+	recordTokenSpeed,
+	type TokenSpeedSample,
+	type TokenSpeedSnapshot,
+} from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
 const WIDGET_KEY = "context-bar";
@@ -39,6 +46,12 @@ let gitPollingEnabled = false;
 let animationFrame = 0;
 let animationTimer: ReturnType<typeof setInterval> | undefined;
 let laneActivity: LaneActivity = "idle";
+let latestTokenSpeed: TokenSpeedSnapshot | null = null;
+let speedSamples: readonly TokenSpeedSample[] = [];
+let speedStreamStartedAt: number | undefined;
+let speedMessageStartedAt: number | undefined;
+let speedTurnOutputTokens = 0;
+let speedTurnActiveMs = 0;
 let activeTui: RenderRequester | undefined;
 let boundCtx: ExtensionContext | undefined;
 
@@ -85,6 +98,15 @@ const changeLaneActivity = (next: LaneActivity): boolean => {
 	if (laneActivity === next) return false;
 	laneActivity = next;
 	return true;
+};
+
+const resetTurnSpeed = (): void => {
+	latestTokenSpeed = null;
+	speedSamples = [];
+	speedStreamStartedAt = undefined;
+	speedMessageStartedAt = undefined;
+	speedTurnOutputTokens = 0;
+	speedTurnActiveMs = 0;
 };
 
 const runGitRefresh = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> => {
@@ -177,7 +199,17 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 			return {
 				render: (width: number) =>
 					boundCtx
-						? [renderChromeLine(latestContextSnapshot, latestSessionUsage, width, styles, animationFrame, laneActivity)]
+						? [
+								renderChromeLine(
+									latestContextSnapshot,
+									latestSessionUsage,
+									width,
+									styles,
+									animationFrame,
+									laneActivity,
+									latestTokenSpeed,
+								),
+							]
 						: [],
 				invalidate: () => {},
 			};
@@ -200,6 +232,18 @@ export default function zContext(pi: ExtensionAPI): void {
 		if (ctx.mode === "tui") startPacmanAnimation();
 	});
 
+	pi.on("turn_start", () => {
+		resetTurnSpeed();
+		requestRender();
+	});
+
+	pi.on("message_start", (event) => {
+		if (event.message.role !== "assistant") return;
+		speedSamples = [];
+		speedStreamStartedAt = undefined;
+		speedMessageStartedAt = undefined;
+	});
+
 	pi.on("message_update", (event) => {
 		const type = event.assistantMessageEvent.type;
 		const next =
@@ -209,6 +253,25 @@ export default function zContext(pi: ExtensionAPI): void {
 					? "assistant"
 					: undefined;
 		if (next && changeLaneActivity(next)) requestRender();
+
+		const delta =
+			type === "text_delta" || type === "thinking_delta" || type === "toolcall_delta"
+				? event.assistantMessageEvent.delta
+				: undefined;
+		if (!delta) return;
+		const now = performance.now();
+		speedStreamStartedAt ??= now;
+		speedMessageStartedAt ??= now;
+		const measured = recordTokenSpeed(speedSamples, now, speedStreamStartedAt, estimateDeltaTokens(delta));
+		speedSamples = measured.samples;
+		latestTokenSpeed = measured.snapshot;
+	});
+
+	pi.on("message_end", (event) => {
+		if (event.message.role !== "assistant") return;
+		if (speedMessageStartedAt !== undefined) speedTurnActiveMs += performance.now() - speedMessageStartedAt;
+		speedTurnOutputTokens += event.message.usage.output;
+		speedMessageStartedAt = undefined;
 	});
 
 	pi.on("tool_execution_start", () => {
@@ -220,6 +283,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		}
 	});
 	pi.on("turn_end", (_event, ctx) => {
+		latestTokenSpeed = completedTokenSpeed(speedTurnOutputTokens, speedTurnActiveMs) ?? latestTokenSpeed;
 		refreshSessionUsage(ctx);
 		requestRender();
 		scheduleGitRefresh(pi, ctx, 0);
@@ -255,6 +319,7 @@ export default function zContext(pi: ExtensionAPI): void {
 			cost: 0,
 			cacheHitRate: undefined,
 		};
+		resetTurnSpeed();
 		stopGitRefresh();
 		stopPacmanAnimation();
 		activeTui = undefined;

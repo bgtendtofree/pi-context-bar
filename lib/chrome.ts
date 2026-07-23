@@ -7,6 +7,7 @@ import {
 	type SessionUsage,
 	segmentTotal,
 } from "./context.ts";
+import { formatTokenSpeed, type TokenSpeedSnapshot } from "./speed.ts";
 import { fitStyledText, foreground, plainWidth } from "./text.ts";
 
 /** Classic arcade colors stay limited to game elements. */
@@ -69,25 +70,31 @@ export const formatCost = (cost: number): string => {
 };
 
 const metricGroup = (...parts: readonly string[]): string => parts.filter(Boolean).join("   ");
-const efficiencyGroup = (ch: string, cost: string): string => [ch, cost].filter(Boolean).join("  ");
+const efficiencyGroup = (...parts: readonly string[]): string => parts.filter(Boolean).join("  ");
 
 /** Metric options, widest → tightest. `%` and CH survive before mix and cost. */
-export const freeMetricOptions = (snapshot: ContextSnapshot, usage: SessionUsage): readonly string[] => {
+export const freeMetricOptions = (
+	snapshot: ContextSnapshot,
+	usage: SessionUsage,
+	speed: TokenSpeedSnapshot | null = null,
+): readonly string[] => {
 	const prefix = snapshot.usageIsEstimated ? "~" : "";
 	const percent =
 		snapshot.contextWindow > 0 ? `${prefix}${((snapshot.usedTokens / snapshot.contextWindow) * 100).toFixed(1)}%` : "";
 	const mix = segmentMixText(snapshot);
 	const mixShort = segmentMixText(snapshot, 1);
 	const ch = usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "";
+	const speedText = formatTokenSpeed(speed);
 	const cost = formatCost(usage.cost);
+	const core = efficiencyGroup(ch, speedText);
 	const options = [
-		metricGroup(percent, mix, efficiencyGroup(ch, cost)),
-		metricGroup(percent, mix, ch),
-		metricGroup(percent, mixShort, ch),
-		metricGroup(percent, efficiencyGroup(ch, cost)),
-		metricGroup(percent, ch),
+		metricGroup(percent, mix, efficiencyGroup(ch, speedText, cost)),
+		metricGroup(percent, mix, core),
+		metricGroup(percent, mixShort, core),
+		metricGroup(percent, efficiencyGroup(ch, speedText, cost)),
+		metricGroup(percent, core),
 		percent,
-		ch || cost,
+		core || cost,
 		"",
 	];
 	return [...new Set(options)];
@@ -179,6 +186,7 @@ export const renderChromeLine = (
 	styles: ChromeStyles,
 	animationFrame = 0,
 	activity: LaneActivity = "idle",
+	speed: TokenSpeedSnapshot | null = null,
 ): string => {
 	if (width <= 0) return "";
 	if (width <= 2) return fitStyledText(styles.dim("·"), width);
@@ -193,7 +201,7 @@ export const renderChromeLine = (
 	const percent = (snapshot.usedTokens / snapshot.contextWindow) * 100;
 	const minimumLaneWidth = Math.min(12, Math.max(4, Math.floor(contentWidth * 0.35)));
 	const metricWidth = Math.max(0, contentWidth - minimumLaneWidth - 2);
-	const metricText = pickFirstFitting(freeMetricOptions(snapshot, usage), metricWidth);
+	const metricText = pickFirstFitting(freeMetricOptions(snapshot, usage, speed), metricWidth);
 	const minimumGap = metricText.length > 0 ? 2 : 0;
 	const availableLaneWidth = Math.max(0, contentWidth - plainWidth(metricText) - minimumGap);
 	const laneWidth = Math.min(PACMAN_LANE_MAX_WIDTH, availableLaneWidth);

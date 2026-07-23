@@ -8,7 +8,7 @@ Model and Git metadata live in the editor border; one quiet row below carries Pa
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ ›                                                                            │
 ╰─ gpt-5.6-sol · medium ──────────────────────────────────── ⎇ main ?1 ─────────╯
-  󰮯 • • • • •                  15.7%   ≈ tools 78%  reply 19%   CH98%  $1.61
+  󰮯 • • • • •                  15.7%   ≈ tools 78%  reply 19%   CH98%  ~42.3t/s  $1.61
 ```
 
 Pac-Man moves left → right as context fills. Eaten pellets become empty space; cream pellets ahead are remaining capacity. Approximate segment analytics use readable names and show the top two shares; a third appears only when it reaches 10%. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle.
@@ -26,9 +26,11 @@ Pac-Man moves left → right as context fills. Eaten pellets become empty space;
 | Editor border left | model · thinking |
 | Editor border right | Git branch plus staged `+`, unstaged `*`, untracked `?`, ahead `↑`, behind `↓` |
 | Pac-Man lane | empty consumed space → phase ghost while running → yellow Pac-Man → cream remaining pellets |
-| Right-aligned metrics | `%` · approximate dominant `≈ tools/reply/...` · `CH` · optional `$` |
+| Right-aligned metrics | `%` · approximate dominant `≈ tools/reply/...` · `CH` · optional token speed `t/s` · optional `$` |
 
 Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pellets, and the active ghost keep classic arcade colors. Git branch stays dim, with color limited to meaningful dirty/sync markers. Git is local-only and omitted outside repositories.
+
+Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 
 Width cascade compresses Git details, segment mix, cost, and model details while preserving model, branch, `%`, and `CH` longest. Ultra-wide terminals cap the lane at 96 columns and keep a flexible gap before metrics aligned to the editor's inner right edge.
 

@@ -21,6 +21,7 @@
 		"lib/chrome.ts",
 		"lib/context.ts",
 		"lib/git.ts",
+		"lib/speed.ts",
 		"lib/text.ts",
 		"ui/rounded-editor.ts",
 		"README.md",

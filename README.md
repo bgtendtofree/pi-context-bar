@@ -51,15 +51,16 @@ Remove with `pi remove pi-context-bar`.
 ## Dev
 
 ```bash
-bun install
-bun run quality        # Biome CI check
-bun run typecheck      # TypeScript 7
-bun run test           # node:test
-bun run test:coverage  # Node coverage with 90% gates
-bun run smoke          # load package manifest in Pi 0.80.10
-bun run smoke:package  # npm production-install smoke
-bun run package:check  # verify published files
-bun run ci             # full CI pipeline
+mise install
+npm ci
+npm run quality        # Biome CI check
+npm run typecheck      # TypeScript 7
+npm test               # node:test
+npm run test:coverage  # Node coverage with 90% gates
+npm run smoke          # load package manifest in Pi 0.82.0
+npm run smoke:package  # npm production-install smoke
+npm run package:check  # verify published files
+npm run ci             # full CI pipeline
 ```
 
 Coverage targets all pure modules in `lib/` (≥90% lines/functions/branches). Extension wiring in `index.ts` and the Pi/TUI adapter in `ui/` are excluded from the gate.
@@ -72,10 +73,10 @@ pi --no-extensions -e ./index.ts --no-session --no-tools -p "Reply ok"
 
 ## Stack
 
-- Node.js 24 LTS, ES2024, TypeScript 7, Biome
+- Node.js 24.18.0 via mise, ES2024, TypeScript 7, Biome
 - Tests use built-in `node:test` and Node coverage
 - Loads as `.ts` via jiti (no build step)
-- Pi core packages stay `*` peers; CI tests exact Pi `0.80.10`
+- Pi core packages stay `*` peers; development and CI test exact Pi `0.82.0`
 
 ## License
 

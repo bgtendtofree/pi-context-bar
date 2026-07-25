@@ -4,7 +4,6 @@
 	"description": "Rounded Pi editor with Pac-Man context health, dominant mix, cache hit, cost, and Git state.",
 	"type": "module",
 	"license": "MIT",
-	"packageManager": "bun@1.3.14",
 	"engines": {
 		"node": ">=24"
 	},
@@ -33,7 +32,7 @@
 		]
 	},
 	"scripts": {
-		"typecheck": "bunx --bun tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json",
 		"lint": "biome lint .",
 		"format": "biome format --write .",
 		"format:check": "biome format .",
@@ -45,8 +44,8 @@
 		"smoke": "pi --offline --no-extensions -e . --list-models",
 		"smoke:package": "node scripts/smoke-package.mjs",
 		"package:check": "npm pack --dry-run",
-		"validate": "bun run quality && bun run typecheck && bun run test",
-		"ci": "bun run quality && bun run typecheck && bun run test:coverage && bun run smoke && bun run package:check && bun run smoke:package"
+		"validate": "npm run quality && npm run typecheck && npm test",
+		"ci": "npm run quality && npm run typecheck && npm run test:coverage && npm run smoke && npm run package:check && npm run smoke:package"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",
@@ -54,7 +53,8 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.4",
-		"@earendil-works/pi-coding-agent": "0.80.10",
+		"@earendil-works/pi-coding-agent": "0.82.0",
+		"@earendil-works/pi-tui": "0.82.0",
 		"@types/node": "^24.0.0",
 		"typescript": "7.0.2"
 	}

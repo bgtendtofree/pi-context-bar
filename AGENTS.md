@@ -35,8 +35,8 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 
 ## Stack
 
-Node.js 24 LTS runtime + ES2024 + Bun 1.3.14 + TypeScript 7 + Biome. Extension loads as `.ts` source.
+Node.js 24.18.0 via project mise config + ES2024 + npm + TypeScript 7 + Biome. Extension loads as `.ts` source.
 
 ## Tests
 
-`bun run test` uses `node:test`. `bun run test:coverage` enforces Node coverage thresholds. `bun run smoke` loads the package manifest in Pi; `bun run smoke:package` verifies an npm production install. Keep pure logic in `lib/`; do not grow untested math in `index.ts`.
+`npm test` uses `node:test`. `npm run test:coverage` enforces Node coverage thresholds. `npm run smoke` loads the package manifest in Pi; `npm run smoke:package` verifies an npm production install. Keep pure logic in `lib/`; do not grow untested math in `index.ts`.

@@ -17,14 +17,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-      - run: bun install --frozen-lockfile
-      - run: bun run ci
+      - uses: jdx/mise-action@v4
+      - run: npm ci
+      - run: npm run ci
 
   release:
     needs: verify

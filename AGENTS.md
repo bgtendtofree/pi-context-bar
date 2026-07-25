@@ -35,7 +35,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 
 ## Stack
 
-Node.js 24.18.0 via project mise config + ES2024 + npm + TypeScript 7 + Biome. Extension loads as `.ts` source.
+Node.js 24.18.0 via project mise config + ES2024 + npm + TypeScript 7 + Biome. Runtime source and tests use separate TypeScript configs. Extension loads as `.ts` source.
 
 ## Tests
 

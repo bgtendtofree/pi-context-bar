@@ -75,6 +75,7 @@ pi --no-extensions -e ./index.ts --no-session --no-tools -p "Reply ok"
 
 - Node.js 24.18.0 via mise, ES2024, TypeScript 7, Biome
 - Tests use built-in `node:test` and Node coverage
+- Runtime source and tests use separate TypeScript configs
 - Loads as `.ts` via jiti (no build step)
 - Pi core packages stay `*` peers; development and CI test exact Pi `0.82.0`
 

@@ -17,6 +17,14 @@ const isHorizontalBorder = (text: string): boolean => {
 	return plain.length > 0 && plain.replace(/─/g, "") === "";
 };
 
+export const splitEditorRender = (
+	lines: readonly string[],
+): Readonly<{ editor: readonly string[]; autocomplete: readonly string[] }> => {
+	const bottomIndex = lines.findLastIndex((line, index) => index > 0 && isHorizontalBorder(line));
+	if (bottomIndex === -1) return { editor: lines, autocomplete: [] };
+	return { editor: lines.slice(0, bottomIndex + 1), autocomplete: lines.slice(bottomIndex + 1) };
+};
+
 const styleModelLabel = (label: string, ctx: ExtensionContext): string => {
 	const separator = label.lastIndexOf(" · ");
 	if (separator < 0) return ctx.ui.theme.fg(label === "no-model" ? "muted" : "accent", label);
@@ -41,14 +49,16 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 	class ContextBarEditor extends CustomEditor {
 		constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
 			super(tui, theme, keybindings, { paddingX: 0 });
+			this.setAutocompleteMaxVisible(3);
 			options.onTui(tui);
 		}
 
 		override render(width: number): string[] {
 			if (width < 6) return super.render(width);
 			const innerWidth = width - 2;
-			const lines = super.render(innerWidth - 2);
-			if (lines.length < 2) return lines;
+			const rendered = super.render(innerWidth - 2);
+			if (rendered.length < 2) return rendered;
+			const { editor: lines, autocomplete } = splitEditorRender(rendered);
 
 			const borderColor = (text: string) => this.borderColor(text);
 			const prompt = `${ctx.ui.theme.fg("accent", "›")} `;
@@ -60,17 +70,12 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 				return borderColor(left) + content + fill + borderColor(right);
 			};
 
-			const bottomIndex = lines.findLastIndex((line, index) => index > 0 && isHorizontalBorder(line));
-			const endOfEditor = bottomIndex === -1 ? lines.length : bottomIndex;
-			const body = lines.slice(1, endOfEditor);
-			const extra = bottomIndex === -1 ? [] : lines.slice(bottomIndex + 1);
+			const body = lines.slice(1, -1);
 			const result = [renderLabeledBorder(width, "╭", "╮", "", "", borderColor)];
 
 			for (const [index, line] of body.entries()) {
 				result.push(wrap(line, "│", "│", index === 0 ? prompt : "  "));
 			}
-			for (const line of extra) result.push(wrap(line, "│", "│", "  "));
-
 			const picked = pickEditorBorderLabels(
 				editorModelOptions(options.getModel(), options.getThinkingLevel()),
 				gitLabelOptions(options.getGit()),
@@ -86,7 +91,8 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 					borderColor,
 				),
 			);
-			return result;
+			const popup = autocomplete.map((line) => `  ${line}${" ".repeat(Math.max(0, width - visibleWidth(line) - 2))}`);
+			return [...popup, ...result];
 		}
 	}
 

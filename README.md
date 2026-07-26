@@ -3,6 +3,7 @@
 Rounded editor + single-line context chrome for [pi](https://pi.dev).
 
 Model and Git metadata live in the editor border; one quiet row below carries Pac-Man context health.
+Slash-command autocomplete stays above the rounded editor instead of expanding inside it.
 
 ```
 ╭──────────────────────────────────────────────────────────────────────────────╮

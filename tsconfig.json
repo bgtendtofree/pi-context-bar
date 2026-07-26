@@ -20,5 +20,5 @@
 		"types": ["node"]
 	},
 	"include": ["index.ts", "lib/**/*.ts", "ui/**/*.ts"],
-	"exclude": ["coverage", "lib/**/*.test.ts"]
+	"exclude": ["coverage", "**/*.test.ts"]
 }

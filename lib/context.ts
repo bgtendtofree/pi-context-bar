@@ -1,5 +1,7 @@
 /** Native context snapshot and provider-reported session usage. */
 
+import type { SessionEntry, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
+
 export type ContextSnapshot = Readonly<{
 	usedTokens: number;
 	contextWindow: number;
@@ -11,28 +13,14 @@ export type SessionUsage = Readonly<{
 	cacheHitRate: number | undefined;
 }>;
 
-export type AssistantUsage = Readonly<{
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
-	cost: Readonly<{ total: number }>;
-}>;
-
-export type SessionUsageEntry = Readonly<{
-	type: string;
-	message: Readonly<{
-		role: string;
-		usage: AssistantUsage;
-	}>;
-}>;
+export type AssistantUsage = Extract<SessionMessageEntry["message"], { role: "assistant" }>["usage"];
 
 export const cacheHitRate = (usage: AssistantUsage): number | undefined => {
 	const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 	return promptTokens > 0 ? (usage.cacheRead / promptTokens) * 100 : undefined;
 };
 
-export const accumulateSessionUsage = (entries: readonly SessionUsageEntry[]): SessionUsage => {
+export const accumulateSessionUsage = (entries: readonly SessionEntry[]): SessionUsage => {
 	let cost = 0;
 	let hitRate: number | undefined;
 

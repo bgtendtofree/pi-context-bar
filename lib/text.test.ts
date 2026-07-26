@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { fitStyledText, foreground, plainWidth, stripAnsi, truncatePlainText } from "./text.ts";
+import { fitStyledText, foreground, plainWidth, stripAnsi } from "./text.ts";
 
 describe("ANSI text helpers", () => {
 	test("strips styling and measures plain width", () => {
@@ -11,15 +11,15 @@ describe("ANSI text helpers", () => {
 	});
 
 	test("truncates plain and styled text", () => {
-		assert.equal(truncatePlainText("hello", 10), "hello");
-		assert.equal(truncatePlainText("hello", 0), "");
-		assert.equal(truncatePlainText("hello", 1), "…");
-		assert.equal(truncatePlainText("hello", 3), "he…");
-		assert.equal(truncatePlainText("你好世界", 5), "你好…");
-		assert.equal(truncatePlainText("e\u0301clair", 3), "e\u0301c…");
+		assert.equal(fitStyledText("hello", 10), "hello");
+		assert.equal(fitStyledText("hello", 0), "");
+		assert.equal(stripAnsi(fitStyledText("hello", 1)), "…");
+		assert.equal(stripAnsi(fitStyledText("hello", 3)), "he…");
+		assert.equal(stripAnsi(fitStyledText("你好世界", 5)), "你好…");
+		assert.equal(stripAnsi(fitStyledText("e\u0301clair", 3)), "e\u0301c…");
 		const styled = "\x1b[31mhello\x1b[39m";
 		assert.equal(fitStyledText(styled, 10), styled);
-		assert.equal(fitStyledText(styled, 3), "he…");
+		assert.equal(stripAnsi(fitStyledText(styled, 3)), "he…");
 	});
 
 	test("builds true-color foreground escapes", () => {

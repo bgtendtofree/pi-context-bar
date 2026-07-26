@@ -22,11 +22,10 @@ export const recordTokenSpeed = (
 	now: number,
 	streamStartedAt: number,
 	tokens: number,
-	windowMs = TOKEN_SPEED_WINDOW_MS,
 ): Readonly<{ samples: readonly TokenSpeedSample[]; snapshot: TokenSpeedSnapshot }> => {
-	const cutoff = now - windowMs;
+	const cutoff = now - TOKEN_SPEED_WINDOW_MS;
 	const nextSamples = [...samples.filter((sample) => sample.time >= cutoff), { time: now, tokens }];
-	const elapsedMs = Math.min(windowMs, Math.max(0, now - streamStartedAt));
+	const elapsedMs = Math.min(TOKEN_SPEED_WINDOW_MS, Math.max(0, now - streamStartedAt));
 	const measuredMs = Math.max(TOKEN_SPEED_MIN_SAMPLE_MS, elapsedMs);
 	const windowTokens = nextSamples.reduce((total, sample) => total + sample.tokens, 0);
 	return {

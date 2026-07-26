@@ -1,12 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
 import { type ChromeStyles, type LaneActivity, renderChromeLine } from "./lib/chrome.ts";
-import {
-	accumulateSessionUsage,
-	type ContextSnapshot,
-	type SessionUsage,
-	type SessionUsageEntry,
-} from "./lib/context.ts";
+import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
 import { type GitState, parseGitStatus, sameGitState } from "./lib/git.ts";
 import {
 	completedTokenSpeed,
@@ -73,7 +68,7 @@ const refreshSnapshot = (ctx: ExtensionContext): void => {
 };
 
 const refreshSessionUsage = (ctx: ExtensionContext): void => {
-	latestSessionUsage = accumulateSessionUsage(ctx.sessionManager.getEntries() as readonly SessionUsageEntry[]);
+	latestSessionUsage = accumulateSessionUsage(ctx.sessionManager.getEntries());
 };
 
 const currentModel = (ctx: ExtensionContext): ModelInfo => {

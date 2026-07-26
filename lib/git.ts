@@ -1,5 +1,7 @@
 /** Pure parsing and compact display options for local Git status. */
 
+import { isDeepStrictEqual } from "node:util";
+
 export type GitState = Readonly<{
 	branch: string | null;
 	detachedOid: string | null;
@@ -57,17 +59,7 @@ export const parseGitStatus = (output: string): GitState | null => {
 	return sawStatus ? { branch, detachedOid, ahead, behind, staged, unstaged, untracked } : null;
 };
 
-export const sameGitState = (left: GitState | null, right: GitState | null): boolean =>
-	left === right ||
-	(left !== null &&
-		right !== null &&
-		left.branch === right.branch &&
-		left.detachedOid === right.detachedOid &&
-		left.ahead === right.ahead &&
-		left.behind === right.behind &&
-		left.staged === right.staged &&
-		left.unstaged === right.unstaged &&
-		left.untracked === right.untracked);
+export const sameGitState = (left: GitState | null, right: GitState | null): boolean => isDeepStrictEqual(left, right);
 
 export type GitLabelTone = "dim" | "muted" | "success" | "warning" | "error";
 

@@ -1,10 +1,9 @@
 /** Pure live and completed output-speed measurement. */
 
-import { CHARACTERS_PER_TOKEN } from "./context.ts";
-
 export const TOKEN_SPEED_WINDOW_MS = 1000;
 export const TOKEN_SPEED_MIN_SAMPLE_MS = 250;
 export const TOKEN_SPEED_MIN_FINAL_MS = 100;
+export const CHARACTERS_PER_TOKEN = 4;
 
 export type TokenSpeedSnapshot = Readonly<{
 	tokensPerSecond: number;

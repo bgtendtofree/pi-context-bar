@@ -1,11 +1,9 @@
-import { buildSessionContext, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
 import { type ChromeStyles, type LaneActivity, renderChromeLine } from "./lib/chrome.ts";
 import {
 	accumulateSessionUsage,
 	type ContextSnapshot,
-	emptyContextSegments,
-	makeContextSnapshot,
 	type SessionUsage,
 	type SessionUsageEntry,
 } from "./lib/context.ts";
@@ -27,10 +25,8 @@ const GIT_IDLE_POLL_MS = 2500;
 type RenderRequester = Readonly<{ requestRender: () => void }>;
 
 let latestContextSnapshot: ContextSnapshot = {
-	segments: emptyContextSegments(),
 	usedTokens: 0,
 	contextWindow: 0,
-	usageIsEstimated: false,
 };
 let latestGitState: GitState | null = null;
 let latestSessionUsage: SessionUsage = {
@@ -70,17 +66,10 @@ const startPacmanAnimation = (): void => {
 	activeTui?.requestRender();
 };
 
-const sessionMessages = (ctx: ExtensionContext): readonly unknown[] => {
-	const context = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId());
-	return context.messages as readonly unknown[];
-};
-
-const refreshSnapshot = (ctx: ExtensionContext, messages = sessionMessages(ctx)): void => {
+const refreshSnapshot = (ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
 	const usage = ctx.getContextUsage();
-	const measuredTokens = typeof usage?.tokens === "number" && usage.tokens > 0 ? usage.tokens : undefined;
-	const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
-	latestContextSnapshot = makeContextSnapshot(messages, ctx.getSystemPrompt(), measuredTokens, contextWindow);
+	latestContextSnapshot = { usedTokens: usage?.tokens ?? 0, contextWindow: usage?.contextWindow ?? 0 };
 };
 
 const refreshSessionUsage = (ctx: ExtensionContext): void => {
@@ -221,9 +210,9 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 export default function zContext(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => registerChrome(pi, ctx));
 
-	pi.on("context", (event, ctx) => {
+	pi.on("context", (_event, ctx) => {
 		if (laneActivity !== "idle") changeLaneActivity("thinking");
-		refreshSnapshot(ctx, event.messages as readonly unknown[]);
+		refreshSnapshot(ctx);
 		requestRender();
 	});
 

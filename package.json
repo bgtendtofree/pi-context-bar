@@ -1,7 +1,7 @@
 {
 	"name": "pi-context-bar",
 	"version": "0.1.0",
-	"description": "Rounded Pi editor with Pac-Man context health, dominant mix, cache hit, cost, and Git state.",
+	"description": "Rounded Pi editor with Pac-Man context health, cache hit, cost, and Git state.",
 	"type": "module",
 	"license": "MIT",
 	"engines": {

@@ -1,12 +1,6 @@
 /** Pure Pac-Man lane, health metric formatting, and one-line layout. */
 
-import {
-	CONTEXT_SEGMENTS,
-	type ContextSegmentKey,
-	type ContextSnapshot,
-	type SessionUsage,
-	segmentTotal,
-} from "./context.ts";
+import type { ContextSnapshot, SessionUsage } from "./context.ts";
 import { formatTokenSpeed, type TokenSpeedSnapshot } from "./speed.ts";
 import { fitStyledText, foreground, plainWidth } from "./text.ts";
 
@@ -34,36 +28,6 @@ export type ChromeStyles = Readonly<{
 	error: (text: string) => string;
 }>;
 
-export type DominantSegment = Readonly<{
-	key: ContextSegmentKey;
-	name: string;
-	percent: number;
-}>;
-
-export const dominantSegments = (snapshot: ContextSnapshot, limit = 3): readonly DominantSegment[] => {
-	const total = segmentTotal(snapshot.segments);
-	if (snapshot.usedTokens <= 0 || total <= 0 || limit <= 0) return [];
-
-	const ranked = CONTEXT_SEGMENTS.map((segment, index) => ({
-		key: segment.key,
-		name: segment.name,
-		percent: Math.round((snapshot.segments[segment.key] / total) * 100),
-		index,
-	}))
-		.filter((segment) => segment.percent > 0)
-		.sort((left, right) => right.percent - left.percent || left.index - right.index);
-	const visible = ranked.slice(0, Math.min(2, limit));
-	const third = ranked[2];
-	if (limit >= 3 && third && third.percent >= 10) visible.push(third);
-	return visible.map(({ key, name, percent }) => ({ key, name, percent }));
-};
-
-export const segmentMixText = (snapshot: ContextSnapshot, limit = 3): string => {
-	const segments = dominantSegments(snapshot, limit);
-	if (segments.length === 0) return "";
-	return `≈ ${segments.map((segment) => `${segment.name} ${segment.percent}%`).join("  ")}`;
-};
-
 export const formatCost = (cost: number): string => {
 	if (cost <= 0) return "";
 	return `$${cost >= 1 ? cost.toFixed(2) : cost.toFixed(3)}`;
@@ -72,25 +36,19 @@ export const formatCost = (cost: number): string => {
 const metricGroup = (...parts: readonly string[]): string => parts.filter(Boolean).join("   ");
 const efficiencyGroup = (...parts: readonly string[]): string => parts.filter(Boolean).join("  ");
 
-/** Metric options, widest → tightest. `%` and CH survive before mix and cost. */
+/** Metric options, widest → tightest. `%` and CH survive before cost. */
 export const freeMetricOptions = (
 	snapshot: ContextSnapshot,
 	usage: SessionUsage,
 	speed: TokenSpeedSnapshot | null = null,
 ): readonly string[] => {
-	const prefix = snapshot.usageIsEstimated ? "~" : "";
 	const percent =
-		snapshot.contextWindow > 0 ? `${prefix}${((snapshot.usedTokens / snapshot.contextWindow) * 100).toFixed(1)}%` : "";
-	const mix = segmentMixText(snapshot);
-	const mixShort = segmentMixText(snapshot, 1);
+		snapshot.contextWindow > 0 ? `${((snapshot.usedTokens / snapshot.contextWindow) * 100).toFixed(1)}%` : "";
 	const ch = usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "";
 	const speedText = formatTokenSpeed(speed);
 	const cost = formatCost(usage.cost);
 	const core = efficiencyGroup(ch, speedText);
 	const options = [
-		metricGroup(percent, mix, efficiencyGroup(ch, speedText, cost)),
-		metricGroup(percent, mix, core),
-		metricGroup(percent, mixShort, core),
 		metricGroup(percent, efficiencyGroup(ch, speedText, cost)),
 		metricGroup(percent, core),
 		percent,

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
 	type ChromeStyles,
-	dominantSegments,
 	formatCost,
 	freeMetricOptions,
 	GHOST_GLYPH,
@@ -14,10 +13,9 @@ import {
 	pickFirstFitting,
 	renderChromeLine,
 	renderPacmanLane,
-	segmentMixText,
 	styleFreeMetrics,
 } from "./chrome.ts";
-import { type ContextSnapshot, emptyContextSegments, type SessionUsage } from "./context.ts";
+import type { ContextSnapshot, SessionUsage } from "./context.ts";
 import type { TokenSpeedSnapshot } from "./speed.ts";
 import { foreground, plainWidth, stripAnsi } from "./text.ts";
 
@@ -28,10 +26,8 @@ const usage = (partial: Partial<SessionUsage> = {}): SessionUsage => ({
 });
 
 const snapshot = (partial: Partial<ContextSnapshot> = {}): ContextSnapshot => ({
-	segments: emptyContextSegments(),
 	usedTokens: 0,
 	contextWindow: 200_000,
-	usageIsEstimated: false,
 	...partial,
 });
 
@@ -48,33 +44,8 @@ const markedStyles: ChromeStyles = {
 };
 
 const dominantSnapshot = snapshot({
-	segments: { system: 3200, prompt: 75, assistant: 11_000, thinking: 701, tools: 43_000 },
 	usedTokens: 57_976,
 	contextWindow: 372_000,
-});
-
-describe("dominant context mix", () => {
-	test("uses readable top-two names and hides tiny third share", () => {
-		assert.equal(segmentMixText(snapshot()), "");
-		assert.deepEqual(dominantSegments(dominantSnapshot, 0), []);
-		assert.equal(segmentMixText(dominantSnapshot), "≈ tools 74%  reply 19%");
-		assert.deepEqual(
-			dominantSegments(dominantSnapshot).map(({ name, percent }) => [name, percent]),
-			[
-				["tools", 74],
-				["reply", 19],
-			],
-		);
-	});
-
-	test("includes a meaningful third share", () => {
-		const mixed = snapshot({
-			segments: { system: 20, prompt: 0, assistant: 30, thinking: 0, tools: 50 },
-			usedTokens: 100,
-		});
-		assert.equal(segmentMixText(mixed), "≈ tools 50%  reply 30%  system 20%");
-		assert.equal(segmentMixText(mixed, 1), "≈ tools 50%");
-	});
 });
 
 describe("health metric formatting", () => {
@@ -88,18 +59,15 @@ describe("health metric formatting", () => {
 
 	test("builds wide and narrow options", () => {
 		const options = freeMetricOptions(dominantSnapshot, full);
-		assert.equal(options[0], "15.6%   ≈ tools 74%  reply 19%   CH98%  $1.61");
+		assert.equal(options[0], "15.6%   CH98%  $1.61");
 		assert.equal(pickFirstFitting(options, 200), options[0]);
 		assert.ok(plainWidth(pickFirstFitting(options, 15)) <= 15);
 		assert.equal(pickFirstFitting(options, -1), "");
 	});
 
-	test("supports estimated usage and missing CH", () => {
-		const options = freeMetricOptions(
-			snapshot({ ...dominantSnapshot, usageIsEstimated: true }),
-			usage({ cost: 0.042 }),
-		);
-		assert.ok(options[0]?.startsWith("~15.6%"));
+	test("supports missing CH", () => {
+		const options = freeMetricOptions(dominantSnapshot, usage({ cost: 0.042 }));
+		assert.ok(options[0]?.startsWith("15.6%"));
 		assert.equal(
 			options.every((option) => !option.includes("CH")),
 			true,
@@ -109,17 +77,16 @@ describe("health metric formatting", () => {
 	test("adds quiet token speed without changing existing options", () => {
 		const speed: TokenSpeedSnapshot = { tokensPerSecond: 42.25, estimated: true };
 		const options = freeMetricOptions(dominantSnapshot, full, speed);
-		assert.equal(options[0], "15.6%   ≈ tools 74%  reply 19%   CH98%  ~42.3t/s  $1.61");
+		assert.equal(options[0], "15.6%   CH98%  ~42.3t/s  $1.61");
 		assert.ok(options.includes("CH98%  ~42.3t/s"));
 	});
 });
 
 describe("semantic metric styling", () => {
 	test("keeps healthy values quiet", () => {
-		const styled = styleFreeMetrics("51.3%   ≈ tools 78%  reply 19%   CH99%  $6.65", 51.3, 99, markedStyles);
+		const styled = styleFreeMetrics("51.3%   CH99%  $6.65", 51.3, 99, markedStyles);
 		assert.ok(styled.includes("<d>51.3%</d>"));
 		assert.ok(styled.includes("<d>CH99%</d>"));
-		assert.ok(styled.includes("<d>≈ tools 78%</d>"));
 		assert.ok(!styled.includes("<w>"));
 		assert.ok(!styled.includes("<e>"));
 	});
@@ -133,10 +100,9 @@ describe("semantic metric styling", () => {
 
 describe("Pac-Man lane", () => {
 	test("moves left to right while eaten pellets become empty space", () => {
-		const segments = { ...emptyContextSegments(), system: 100 };
-		const empty = stripAnsi(renderPacmanLane(snapshot({ segments, usedTokens: 0, contextWindow: 100 }), 18));
-		const half = stripAnsi(renderPacmanLane(snapshot({ segments, usedTokens: 50, contextWindow: 100 }), 18));
-		const full = stripAnsi(renderPacmanLane(snapshot({ segments, usedTokens: 100, contextWindow: 100 }), 18));
+		const empty = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 0, contextWindow: 100 }), 18));
+		const half = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 50, contextWindow: 100 }), 18));
+		const full = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 100, contextWindow: 100 }), 18));
 		assert.equal(plainWidth(empty), 18);
 		assert.equal(plainWidth(half), 18);
 		assert.equal(plainWidth(full), 18);
@@ -211,7 +177,7 @@ describe("health row layout", () => {
 			),
 		);
 		assert.equal(plainWidth(line), 100);
-		assert.ok(line.includes("15.6%   ≈ tools 74%  reply 19%   CH98%  $1.61"));
+		assert.ok(line.includes("15.6%   CH98%  $1.61"));
 		assert.ok(line.includes(PACMAN_GLYPH));
 		assert.ok(line.includes(GHOST_GLYPH));
 		assert.ok(line.endsWith("$1.61 "));

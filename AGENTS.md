@@ -39,4 +39,14 @@ Node.js 24.18.0 via project mise config + ES2024 + npm + TypeScript 7 + Biome. R
 
 ## Tests
 
+<!-- pi-ci-standard:validation:start -->
+## Validation
+
+CI contract for this repository (managed by pi-ci-standard — regenerate with `pi-ci init`):
+
+- Run `mise run check` while iterating; fix all failures before continuing.
+- Run `mise run ci` before declaring work complete; it must pass.
+- GitHub Actions runs project checks only through managed mise tasks. Never add language-specific check commands to workflows.
+<!-- pi-ci-standard:validation:end -->
+
 `npm test` uses `node:test`. `npm run test:coverage` enforces Node coverage thresholds. `npm run smoke` loads the package manifest in Pi; `npm run smoke:package` verifies an npm production install. Keep pure logic in `lib/`; do not grow untested math in `index.ts`.

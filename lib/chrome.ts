@@ -2,7 +2,7 @@
 
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
 import { formatTokenSpeed, type TokenSpeedSnapshot } from "./speed.ts";
-import { fitStyledText, foreground, plainWidth } from "./text.ts";
+import { foreground, plainWidth } from "./text.ts";
 
 /** Classic arcade colors stay limited to game elements. */
 export const PACMAN_TEXT = "#FFFF00";
@@ -14,7 +14,6 @@ export const PELLET_GLYPH = "•";
 export const POWER_PELLET_GLYPH = "o";
 /** Lane ratios matching the warning/error metric thresholds. */
 export const POWER_PELLET_RATIOS = [0.7, 0.9] as const;
-export const PACMAN_LANE_MAX_WIDTH = 96;
 
 export const LANE_ACTIVITY_TEXT = {
 	working: "#FF0000",
@@ -137,32 +136,18 @@ export const renderPacmanLane = (
 	return `${consumed}${pacman}${pellets}${remainder}`;
 };
 
-export const renderChromeLine = (
+/** Top-border strip: auto-fit lane filling the width, quiet speed at the right end. */
+export const renderLaneStrip = (
 	snapshot: ContextSnapshot,
-	usage: SessionUsage,
 	width: number,
 	styles: ChromeStyles,
 	animationFrame = 0,
 	activity: LaneActivity = "idle",
 	speed: TokenSpeedSnapshot | null = null,
 ): string => {
-	if (width <= 0) return "";
-	if (width <= 2) return fitStyledText(styles.dim("·"), width);
-
-	const contentWidth = width - 2;
-	if (snapshot.contextWindow <= 0) {
-		const unavailable = styles.dim("ctx unavailable");
-		const gap = " ".repeat(Math.max(0, contentWidth - plainWidth(unavailable)));
-		return ` ${gap}${fitStyledText(unavailable, contentWidth)} `;
-	}
-
-	const minimumLaneWidth = Math.min(12, Math.max(4, Math.floor(contentWidth * 0.35)));
-	const metricWidth = Math.max(0, contentWidth - minimumLaneWidth - 2);
-	const metrics = pickFirstFitting(freeMetricOptions(snapshot, usage, styles, speed), metricWidth);
-	const minimumGap = metrics.length > 0 ? 2 : 0;
-	const availableLaneWidth = Math.max(0, contentWidth - plainWidth(metrics) - minimumGap);
-	const laneWidth = Math.min(PACMAN_LANE_MAX_WIDTH, availableLaneWidth);
-	const flexibleGap = contentWidth - laneWidth - plainWidth(metrics);
+	if (width <= 2) return "";
+	const speedText = styled(formatTokenSpeed(speed), styles.dim);
+	const laneWidth = Math.max(0, width - 2 - (speedText ? plainWidth(speedText) + 1 : 0));
 	const lane = renderPacmanLane(snapshot, laneWidth, animationFrame, activity);
-	return ` ${lane}${" ".repeat(Math.max(0, flexibleGap))}${metrics} `;
+	return speedText ? ` ${lane} ${speedText} ` : ` ${lane} `;
 };

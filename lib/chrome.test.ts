@@ -8,12 +8,11 @@ import {
 	LANE_ACTIVITY_TEXT,
 	PACMAN_FRAMES,
 	PACMAN_GLYPH,
-	PACMAN_LANE_MAX_WIDTH,
 	PELLET_GLYPH,
 	POWER_PELLET_GLYPH,
 	POWER_PELLET_RATIOS,
 	pickFirstFitting,
-	renderChromeLine,
+	renderLaneStrip,
 	renderPacmanLane,
 } from "./chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
@@ -173,39 +172,26 @@ describe("Pac-Man lane", () => {
 	});
 });
 
-describe("health row layout", () => {
-	test("right-aligns fallback inside one-column padding", () => {
-		assert.equal(renderChromeLine(snapshot(), usage(), 0, identityStyles), "");
-		assert.equal(renderChromeLine(snapshot(), usage(), 1, identityStyles), "·");
-		const line = renderChromeLine(snapshot({ contextWindow: 0 }), usage(), 40, identityStyles);
-		assert.equal(plainWidth(line), 40);
-		assert.ok(line.includes("ctx unavailable"));
-		assert.ok(line.startsWith(" ") && line.endsWith(" "));
-	});
-
-	test("keeps lane left and readable metrics right", () => {
-		const line = stripAnsi(
-			renderChromeLine(
-				dominantSnapshot,
-				usage({ cacheHitRate: 97.9, cost: 1.61 }),
-				100,
-				identityStyles,
-				0,
-				"assistant",
-			),
+describe("lane strip", () => {
+	test("fills the width with lane and quiet speed", () => {
+		const strip = stripAnsi(
+			renderLaneStrip(dominantSnapshot, 40, identityStyles, 0, "idle", { tokensPerSecond: 42.25, estimated: true }),
 		);
-		assert.equal(plainWidth(line), 100);
-		assert.ok(line.includes("15.6%   CH98%  $1.61"));
-		assert.ok(line.includes(PACMAN_GLYPH));
-		assert.ok(line.includes(GHOST_GLYPH));
-		assert.ok(line.endsWith("$1.61 "));
+		assert.equal(plainWidth(strip), 40);
+		assert.ok(strip.endsWith("~42.3t/s "));
+		assert.ok(strip.includes(PACMAN_GLYPH));
 	});
 
-	test("caps lane on ultra-wide terminals", () => {
-		const line = stripAnsi(renderChromeLine(snapshot(), usage({ cacheHitRate: 90 }), 240, identityStyles));
-		assert.equal(plainWidth(line), 240);
-		assert.equal(line.split(PELLET_GLYPH).length - 1, PACMAN_LANE_MAX_WIDTH / 2 - 1 - POWER_PELLET_RATIOS.length);
-		assert.ok(line.indexOf("0.0%") > PACMAN_LANE_MAX_WIDTH);
-		assert.ok(line.endsWith("CH90% "));
+	test("auto-fits lane with window width", () => {
+		const narrow = stripAnsi(renderLaneStrip(dominantSnapshot, 30, identityStyles));
+		const wide = stripAnsi(renderLaneStrip(dominantSnapshot, 200, identityStyles));
+		assert.equal(plainWidth(narrow), 30);
+		assert.equal(plainWidth(wide), 200);
+		assert.ok(wide.split(PELLET_GLYPH).length > narrow.split(PELLET_GLYPH).length);
+	});
+
+	test("handles tiny widths", () => {
+		assert.equal(renderLaneStrip(dominantSnapshot, 2, identityStyles), "");
+		assert.equal(plainWidth(stripAnsi(renderLaneStrip(dominantSnapshot, 12, identityStyles))), 12);
 	});
 });

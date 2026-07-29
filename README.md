@@ -2,13 +2,13 @@
 
 Rounded editor with Pac-Man context chrome fused into its border for [pi](https://pi.dev).
 
-Model, Pac-Man context health, and Git metadata all live in the rounded editor border — zero extra chrome rows.
+Model, cache hit, cost, and Git metadata live in the rounded editor border — zero extra chrome rows. The Pac-Man lane auto-fits the window width across the top border.
 Slash-command autocomplete stays above the rounded editor instead of expanding inside it.
 
 ```
-╭──────────────────────────────────────────────────────────────────────────────╮
+╭─ 󰮯 • • • o • • • ~42.3t/s ─────────────────────────────────────────╮
 │ ›                                                                            │
-╰─ gpt-5.6-sol · medium ── 󰮯 • • • o • •  15.7%   CH98%  ~42.3t/s  $1.61 ── ⎇ main ?1 ──╯
+╰─ gpt-5.6-sol · medium ────────────────── 15.7%   CH98%  $1.61 ── ⎇ main ?1 ──╯
 ```
 
 Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle.
@@ -32,7 +32,7 @@ Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pelle
 
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 
-Width cascade compresses Git details, cost, and model details while preserving model, branch, `%`, and `CH` longest. Ultra-wide terminals cap the lane at 96 columns and keep a flexible gap before metrics hugging the border's right end.
+Width cascade compresses Git details, cost, and model details while preserving model, branch, `%`, and `CH` longest. The lane stretches with the window, so the rounded border never gaps.
 
 ## Font requirement
 

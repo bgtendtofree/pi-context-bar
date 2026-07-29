@@ -2,11 +2,17 @@ import { CustomEditor, type ExtensionContext, type KeybindingsManager } from "@e
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { editorModelOptions, type ModelInfo, pickEditorBorderLabels, renderLabeledBorder } from "../lib/border.ts";
-import { type ChromeStyles, type LaneActivity, renderChromeLine } from "../lib/chrome.ts";
+import {
+	type ChromeStyles,
+	freeMetricOptions,
+	type LaneActivity,
+	pickFirstFitting,
+	renderLaneStrip,
+} from "../lib/chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "../lib/context.ts";
 import { type GitState, gitLabelOptions, gitLabelTone } from "../lib/git.ts";
 import type { TokenSpeedSnapshot } from "../lib/speed.ts";
-import { stripAnsi } from "../lib/text.ts";
+import { plainWidth, stripAnsi } from "../lib/text.ts";
 
 export type HealthState = Readonly<{
 	snapshot: ContextSnapshot;
@@ -73,6 +79,12 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 			const { editor: lines, autocomplete } = splitEditorRender(rendered);
 
 			const borderColor = (text: string) => this.borderColor(text);
+			const healthStyles: ChromeStyles = {
+				dim: (text) => ctx.ui.theme.fg("dim", text),
+				warning: (text) => ctx.ui.theme.fg("warning", text),
+				error: (text) => ctx.ui.theme.fg("error", text),
+			};
+			const health = options.getHealth();
 			const prompt = `${ctx.ui.theme.fg("accent", "›")} `;
 			const wrap = (line: string, left: string, right: string, prefix: string): string => {
 				const borderLike = stripAnsi(line).endsWith("─");
@@ -83,7 +95,11 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 			};
 
 			const body = lines.slice(1, -1);
-			const result = [renderLabeledBorder(width, "╭", "╮", "", "", borderColor)];
+			const result = [
+				renderLabeledBorder(width, "╭", "╮", "", "", borderColor, (middleWidth) =>
+					renderLaneStrip(health.snapshot, middleWidth, healthStyles, health.frame, health.activity, health.speed),
+				),
+			];
 
 			for (const [index, line] of body.entries()) {
 				result.push(wrap(line, "│", "│", index === 0 ? prompt : "  "));
@@ -93,34 +109,16 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 				gitLabelOptions(options.getGit()),
 				width,
 			);
-			const healthStyles: ChromeStyles = {
-				dim: (text) => ctx.ui.theme.fg("dim", text),
-				warning: (text) => ctx.ui.theme.fg("warning", text),
-				error: (text) => ctx.ui.theme.fg("error", text),
-			};
-			result.push(
-				renderLabeledBorder(
-					width,
-					"╰",
-					"╯",
-					styleModelLabel(picked.modelLabel, ctx),
-					styleGitLabel(picked.gitLabel, ctx),
-					borderColor,
-					(middleWidth) => {
-						if (middleWidth < 12) return "";
-						const health = options.getHealth();
-						return renderChromeLine(
-							health.snapshot,
-							health.usage,
-							middleWidth,
-							healthStyles,
-							health.frame,
-							health.activity,
-							health.speed,
-						);
-					},
-				),
+			const modelLabel = styleModelLabel(picked.modelLabel, ctx);
+			const gitLabel = styleGitLabel(picked.gitLabel, ctx);
+			const usedByLabels =
+				2 + (picked.modelLabel ? plainWidth(modelLabel) + 3 : 1) + (picked.gitLabel ? plainWidth(gitLabel) + 4 : 1);
+			const metrics = pickFirstFitting(
+				freeMetricOptions(health.snapshot, health.usage, healthStyles),
+				Math.max(0, width - usedByLabels - 3),
 			);
+			const rightLabel = [metrics, gitLabel].filter(Boolean).join("  ");
+			result.push(renderLabeledBorder(width, "╰", "╯", modelLabel, rightLabel, borderColor));
 			const popup = autocomplete.map((line) => `  ${line}${" ".repeat(Math.max(0, width - visibleWidth(line) - 2))}`);
 			return [...popup, ...result];
 		}

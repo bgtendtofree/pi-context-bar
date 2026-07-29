@@ -1,18 +1,12 @@
+import { stripVTControlCharacters } from "node:util";
 import { CustomEditor, type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { editorModelOptions, type ModelInfo, pickEditorBorderLabels, renderLabeledBorder } from "../lib/border.ts";
-import {
-	type ChromeStyles,
-	freeMetricOptions,
-	type LaneActivity,
-	pickFirstFitting,
-	renderLaneStrip,
-} from "../lib/chrome.ts";
+import { type ChromeStyles, freeMetricOptions, type LaneActivity, renderLaneStrip } from "../lib/chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "../lib/context.ts";
 import { type GitState, gitLabelOptions, gitLabelTone } from "../lib/git.ts";
 import type { TokenSpeedSnapshot } from "../lib/speed.ts";
-import { plainWidth, stripAnsi } from "../lib/text.ts";
 
 export type HealthState = Readonly<{
 	snapshot: ContextSnapshot;
@@ -31,7 +25,7 @@ export type RoundedEditorOptions = Readonly<{
 }>;
 
 const isHorizontalBorder = (text: string): boolean => {
-	const plain = stripAnsi(text);
+	const plain = stripVTControlCharacters(text);
 	return plain.length > 0 && plain.replace(/─/g, "") === "";
 };
 
@@ -87,7 +81,7 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 			const health = options.getHealth();
 			const prompt = `${ctx.ui.theme.fg("accent", "›")} `;
 			const wrap = (line: string, left: string, right: string, prefix: string): string => {
-				const borderLike = stripAnsi(line).endsWith("─");
+				const borderLike = stripVTControlCharacters(line).endsWith("─");
 				const content = borderLike ? line : prefix + line;
 				const gap = Math.max(0, innerWidth - visibleWidth(content));
 				const fill = borderLike ? borderColor("─".repeat(gap)) : " ".repeat(gap);
@@ -112,11 +106,11 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 			const modelLabel = styleModelLabel(picked.modelLabel, ctx);
 			const gitLabel = styleGitLabel(picked.gitLabel, ctx);
 			const usedByLabels =
-				2 + (picked.modelLabel ? plainWidth(modelLabel) + 3 : 1) + (picked.gitLabel ? plainWidth(gitLabel) + 4 : 1);
-			const metrics = pickFirstFitting(
-				freeMetricOptions(health.usage, healthStyles),
-				Math.max(0, width - usedByLabels - 3),
-			);
+				2 + (picked.modelLabel ? visibleWidth(modelLabel) + 3 : 1) + (picked.gitLabel ? visibleWidth(gitLabel) + 4 : 1);
+			const metrics =
+				freeMetricOptions(health.usage, healthStyles).find(
+					(value) => visibleWidth(value) <= Math.max(0, width - usedByLabels - 3),
+				) ?? "";
 			const leftLabel = [modelLabel, metrics].filter(Boolean).join("  ");
 			result.push(renderLabeledBorder(width, "╰", "╯", leftLabel, gitLabel, borderColor));
 			const popup = autocomplete.map((line) => `  ${line}${" ".repeat(Math.max(0, width - visibleWidth(line) - 2))}`);

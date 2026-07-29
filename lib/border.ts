@@ -1,6 +1,6 @@
 /** Pure model/Git label fitting and rounded border rendering. */
 
-import { plainWidth } from "./text.ts";
+import { visibleWidth } from "@earendil-works/pi-tui";
 
 export type ModelInfo = Readonly<{
 	id: string;
@@ -31,8 +31,8 @@ export const pickEditorBorderLabels = (
 	width: number,
 ): Readonly<{ modelLabel: string; gitLabel: string }> => {
 	const fits = (modelLabel: string, gitLabel: string): boolean => {
-		const leftWidth = modelLabel ? plainWidth(modelLabel) + 3 : 1;
-		const rightWidth = gitLabel ? plainWidth(gitLabel) + 4 : 1;
+		const leftWidth = modelLabel ? visibleWidth(modelLabel) + 3 : 1;
+		const rightWidth = gitLabel ? visibleWidth(gitLabel) + 4 : 1;
 		return 2 + leftWidth + rightWidth + 3 <= width;
 	};
 
@@ -61,8 +61,8 @@ export const renderLabeledBorder = (
 
 	const left = leftLabel ? `${border("─")} ${leftLabel} ` : border("─");
 	const right = rightLabel ? ` ${rightLabel} ${border("──")}` : border("─");
-	const middleWidth = Math.max(0, width - 2 - plainWidth(left) - plainWidth(right));
+	const middleWidth = Math.max(0, width - 2 - visibleWidth(left) - visibleWidth(right));
 	const content = middle ? middle(middleWidth) : "";
-	const fillWidth = Math.max(0, middleWidth - plainWidth(content));
+	const fillWidth = Math.max(0, middleWidth - visibleWidth(content));
 	return `${border(leftCorner)}${left}${content}${border("─".repeat(fillWidth))}${right}${border(rightCorner)}`;
 };

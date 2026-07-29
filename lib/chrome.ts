@@ -1,8 +1,17 @@
 /** Pure Pac-Man lane, health metric formatting, and one-line layout. */
 
+import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
 import { formatTokenSpeed, type TokenSpeedSnapshot } from "./speed.ts";
-import { foreground, plainWidth } from "./text.ts";
+
+/** True-color foreground escape; classic arcade colors stay limited to game elements. */
+export const foreground = (hex: string, text: string): string => {
+	const value = Number.parseInt(hex.replace(/^#/, ""), 16);
+	const red = (value >> 16) & 0xff;
+	const green = (value >> 8) & 0xff;
+	const blue = value & 0xff;
+	return `\x1b[38;2;${red};${green};${blue}m${text}\x1b[39m`;
+};
 
 /** Classic arcade colors stay limited to game elements. */
 export const PACMAN_TEXT = "#FFFF00";
@@ -58,11 +67,6 @@ export const freeMetricOptions = (usage: SessionUsage, styles: ChromeStyles): re
 	const metricGroup = (separator: string, ...parts: readonly string[]): string =>
 		parts.filter(Boolean).join(styles.dim(separator));
 	return [...new Set([metricGroup("  ", ch, cost), ch, cost, ""])];
-};
-
-export const pickFirstFitting = (options: readonly string[], width: number): string => {
-	for (const option of options) if (plainWidth(option) <= width) return option;
-	return "";
 };
 
 const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>
@@ -134,7 +138,7 @@ export const renderLaneStrip = (
 	);
 	let speedText = styled(formatTokenSpeed(speed), styles.dim);
 	const laneWidth = (): number =>
-		width - 2 - (percent ? plainWidth(percent) + 1 : 0) - (speedText ? plainWidth(speedText) + 1 : 0);
+		width - 2 - (percent ? visibleWidth(percent) + 1 : 0) - (speedText ? visibleWidth(speedText) + 1 : 0);
 	if (laneWidth() < 4 && speedText) speedText = "";
 	if (laneWidth() < 4 && percent) percent = "";
 	const lane = renderPacmanLane(snapshot, Math.max(0, laneWidth()), animationFrame, activity);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { editorModelOptions, pickEditorBorderLabels, renderLabeledBorder } from "./border.ts";
-import { plainWidth } from "./text.ts";
 
 describe("editor model labels", () => {
 	test("keeps model before optional thinking", () => {
@@ -24,7 +24,7 @@ describe("rounded editor border", () => {
 		const picked = pickEditorBorderLabels(["gpt-5.6-sol · medium", "gpt-5.6-sol"], ["⎇ main ?1", "⎇ main"], 48);
 		assert.deepEqual(picked, { modelLabel: "gpt-5.6-sol · medium", gitLabel: "⎇ main ?1" });
 		const border = renderLabeledBorder(48, "╰", "╯", picked.modelLabel, picked.gitLabel, (text) => text);
-		assert.equal(plainWidth(border), 48);
+		assert.equal(visibleWidth(border), 48);
 		assert.ok(border.startsWith("╰─ gpt-5.6-sol · medium "));
 		assert.ok(border.endsWith(" ⎇ main ?1 ──╯"));
 	});
@@ -46,7 +46,7 @@ describe("rounded editor border", () => {
 			renderLabeledBorder(1, "╰", "╯", "", "", (text) => text),
 			"─",
 		);
-		assert.equal(plainWidth(renderLabeledBorder(12, "╰", "╯", "", "", (text) => text)), 12);
+		assert.equal(visibleWidth(renderLabeledBorder(12, "╰", "╯", "", "", (text) => text)), 12);
 	});
 
 	test("embeds middle content and fills the rest", () => {
@@ -59,7 +59,7 @@ describe("rounded editor border", () => {
 			(text) => text,
 			(middleWidth) => "x".repeat(Math.min(middleWidth, 10)),
 		);
-		assert.equal(plainWidth(border), 30);
+		assert.equal(visibleWidth(border), 30);
 		assert.ok(border.includes("xxxxxxxxxx"));
 		const withoutMiddle = renderLabeledBorder(
 			30,
@@ -70,7 +70,7 @@ describe("rounded editor border", () => {
 			(text) => text,
 			() => "",
 		);
-		assert.equal(plainWidth(withoutMiddle), 30);
+		assert.equal(visibleWidth(withoutMiddle), 30);
 		assert.ok(!withoutMiddle.includes("x"));
 	});
 
@@ -79,6 +79,6 @@ describe("rounded editor border", () => {
 			modelLabel: "模型",
 			gitLabel: "",
 		});
-		assert.equal(plainWidth(renderLabeledBorder(14, "╰", "╯", "模型", "", (text) => text)), 14);
+		assert.equal(visibleWidth(renderLabeledBorder(14, "╰", "╯", "模型", "", (text) => text)), 14);
 	});
 });

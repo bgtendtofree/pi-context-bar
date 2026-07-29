@@ -26,11 +26,10 @@ type ChromeState = Readonly<{
 	context: ContextSnapshot;
 	git: GitState | null;
 	usage: SessionUsage;
-	gitRefreshGeneration: number;
 	gitRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 	gitPollTimer: ReturnType<typeof setInterval> | undefined;
 	gitRefreshInFlight: boolean;
-	pendingGitRefresh: ExtensionAPI | undefined;
+	pendingGitRefresh: boolean;
 	gitPollingEnabled: boolean;
 	chompTokens: number;
 	rewind: Readonly<{ usedTokens: number; frame: number }> | undefined;
@@ -50,11 +49,10 @@ const freshState = (): ChromeState => ({
 	context: { usedTokens: 0, contextWindow: 0 },
 	git: null,
 	usage: { cost: 0, cacheHitRate: undefined },
-	gitRefreshGeneration: 0,
 	gitRefreshTimer: undefined,
 	gitPollTimer: undefined,
 	gitRefreshInFlight: false,
-	pendingGitRefresh: undefined,
+	pendingGitRefresh: false,
 	gitPollingEnabled: false,
 	chompTokens: 0,
 	rewind: undefined,
@@ -140,17 +138,16 @@ const startRewind = (fromUsedTokens: number): void => {
 const runGitRefresh = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> => {
 	if (state.ctx !== ctx) return;
 	if (state.gitRefreshInFlight) {
-		patch({ pendingGitRefresh: pi });
+		patch({ pendingGitRefresh: true });
 		return;
 	}
 
-	patch({ gitRefreshInFlight: true, gitRefreshGeneration: state.gitRefreshGeneration + 1 });
-	const generation = state.gitRefreshGeneration;
+	patch({ gitRefreshInFlight: true });
 	try {
 		const result = await pi
 			.exec("git", ["status", "--porcelain=v2", "--branch"], { cwd: ctx.cwd, timeout: 1500 })
 			.catch(() => undefined);
-		if (state.ctx !== ctx || generation !== state.gitRefreshGeneration || !result) return;
+		if (state.ctx !== ctx || !result) return;
 
 		const nextGitState = result.code === 0 ? parseGitStatus(result.stdout) : null;
 		patch({ gitPollingEnabled: result.code === 0 });
@@ -159,8 +156,8 @@ const runGitRefresh = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<v
 		requestRender();
 	} finally {
 		const pending = state.pendingGitRefresh;
-		patch({ gitRefreshInFlight: false, pendingGitRefresh: undefined });
-		if (pending) void runGitRefresh(pending, ctx);
+		patch({ gitRefreshInFlight: false, pendingGitRefresh: false });
+		if (pending) void runGitRefresh(pi, ctx);
 	}
 };
 
@@ -181,9 +178,8 @@ const stopGitRefresh = (): void => {
 	patch({
 		gitRefreshTimer: undefined,
 		gitPollTimer: undefined,
-		pendingGitRefresh: undefined,
+		pendingGitRefresh: false,
 		gitPollingEnabled: false,
-		gitRefreshGeneration: state.gitRefreshGeneration + 1,
 	});
 };
 

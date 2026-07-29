@@ -10,6 +10,8 @@ import {
 	PACMAN_GLYPH,
 	PACMAN_LANE_MAX_WIDTH,
 	PELLET_GLYPH,
+	POWER_PELLET_GLYPH,
+	POWER_PELLET_RATIOS,
 	pickFirstFitting,
 	renderChromeLine,
 	renderPacmanLane,
@@ -111,8 +113,9 @@ describe("Pac-Man lane", () => {
 		assert.equal(plainWidth(empty), 18);
 		assert.equal(plainWidth(half), 18);
 		assert.equal(plainWidth(full), 18);
-		assert.equal(empty.split(PELLET_GLYPH).length - 1, 8);
-		assert.equal(half.split(PELLET_GLYPH).length - 1, 4);
+		assert.equal(empty.split(PELLET_GLYPH).length - 1, 6);
+		assert.equal(empty.split(POWER_PELLET_GLYPH).length - 1, 2);
+		assert.equal(half.split(PELLET_GLYPH).length - 1, 2);
 		assert.equal(half.indexOf(PACMAN_GLYPH), 8);
 		assert.equal(full.includes(PELLET_GLYPH), false);
 	});
@@ -122,8 +125,8 @@ describe("Pac-Man lane", () => {
 		const closed = stripAnsi(renderPacmanLane(snapshot(), 10, 1));
 		assert.ok(open.includes(PACMAN_FRAMES[0]));
 		assert.ok(closed.includes(PACMAN_FRAMES[1]));
-		assert.equal(open.split(PELLET_GLYPH).length - 1, 4);
-		assert.equal(closed.split(PELLET_GLYPH).length - 1, 4);
+		assert.equal(open.split(PELLET_GLYPH).length - 1, 2);
+		assert.equal(closed.split(PELLET_GLYPH).length - 1, 2);
 	});
 
 	test("shows phase ghost only while active", () => {
@@ -133,6 +136,16 @@ describe("Pac-Man lane", () => {
 			const lane = renderPacmanLane(active, 18, 0, activity as keyof typeof LANE_ACTIVITY_TEXT);
 			assert.ok(lane.includes(foreground(color, `${GHOST_GLYPH} `)));
 		}
+	});
+
+	test("marks warning thresholds with power pellets that get eaten", () => {
+		const hungry = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 0, contextWindow: 100 }), 18));
+		assert.equal(hungry.split(POWER_PELLET_GLYPH).length - 1, POWER_PELLET_RATIOS.length);
+		const pastWarning = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 80, contextWindow: 100 }), 18));
+		assert.equal(pastWarning.split(POWER_PELLET_GLYPH).length - 1, 1);
+		const pastError = stripAnsi(renderPacmanLane(snapshot({ usedTokens: 95, contextWindow: 100 }), 18));
+		assert.equal(pastError.includes(POWER_PELLET_GLYPH), false);
+		assert.equal(pastError.includes(PELLET_GLYPH), false);
 	});
 
 	test("moves ghost chase distance and handles tiny lanes", () => {
@@ -191,7 +204,7 @@ describe("health row layout", () => {
 	test("caps lane on ultra-wide terminals", () => {
 		const line = stripAnsi(renderChromeLine(snapshot(), usage({ cacheHitRate: 90 }), 240, identityStyles));
 		assert.equal(plainWidth(line), 240);
-		assert.equal(line.split(PELLET_GLYPH).length - 1, PACMAN_LANE_MAX_WIDTH / 2 - 1);
+		assert.equal(line.split(PELLET_GLYPH).length - 1, PACMAN_LANE_MAX_WIDTH / 2 - 1 - POWER_PELLET_RATIOS.length);
 		assert.ok(line.indexOf("0.0%") > PACMAN_LANE_MAX_WIDTH);
 		assert.ok(line.endsWith("CH90% "));
 	});

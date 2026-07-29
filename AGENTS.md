@@ -16,7 +16,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets
 - No background color blocks; healthy text stays dim; only warning/error states gain color
 - Cap lane width on ultra-wide terminals; metrics align to editor inner right edge
-- Animate Pac-Man mouth only while agent runs; clear timer on end/shutdown
+- Chomp driven by streamed tokens: mouth speed = throughput, static when idle (no timers)
 - Keep token speed dim: `~Nt/s` while estimated live, provider-calibrated `Nt/s` after turn
 - High CH stays quiet; low CH warns. Git branch stays dim; only dirty/sync markers gain color
 - Functional style, no `any`, immutable snapshots

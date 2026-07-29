@@ -11,6 +11,9 @@ export const PACMAN_FRAMES = ["󰮯", "●"] as const;
 export const PACMAN_GLYPH = PACMAN_FRAMES[0];
 export const GHOST_GLYPH = "󰊠";
 export const PELLET_GLYPH = "•";
+export const POWER_PELLET_GLYPH = "o";
+/** Lane ratios matching the warning/error metric thresholds. */
+export const POWER_PELLET_RATIOS = [0.7, 0.9] as const;
 export const PACMAN_LANE_MAX_WIDTH = 96;
 
 export const LANE_ACTIVITY_TEXT = {
@@ -116,12 +119,20 @@ export const renderPacmanLane = (
 	const consumedCellCount = Math.round(ratio * Math.max(0, cellCount - 1));
 	const pelletCellCount = Math.max(0, cellCount - consumedCellCount - 1);
 	const pacman = coloredCells(PACMAN_TEXT, pacmanGlyph, 1, cellWidth);
+	const powerCells = new Set(
+		POWER_PELLET_RATIOS.map((powerRatio) => Math.round(powerRatio * Math.max(0, cellCount - 1))),
+	);
+	const pelletCells = Array.from(
+		{ length: pelletCellCount },
+		(_, index) =>
+			`${powerCells.has(consumedCellCount + 1 + index) ? POWER_PELLET_GLYPH : PELLET_GLYPH}${" ".repeat(cellWidth - 1)}`,
+	).join("");
+	const pellets = foreground(PELLET_TEXT, pelletCells);
 	const ghostColor = activity === "idle" ? undefined : LANE_ACTIVITY_TEXT[activity];
 	const preferredGhostDistance = Math.floor(Math.abs(Math.trunc(animationFrame)) / 2) % 2 === 0 ? 2 : 3;
 	const ghostDistance = Math.min(preferredGhostDistance, consumedCellCount);
 	const ghostCellIndex = ghostColor && consumedCellCount >= 2 ? consumedCellCount - ghostDistance : undefined;
 	const consumed = renderConsumedZone(consumedCellCount, ghostCellIndex, ghostColor, cellWidth);
-	const pellets = coloredCells(PELLET_TEXT, PELLET_GLYPH, pelletCellCount, cellWidth);
 	const remainder = " ".repeat(width - cellCount * cellWidth);
 	return `${consumed}${pacman}${pellets}${remainder}`;
 };

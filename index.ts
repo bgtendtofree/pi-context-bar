@@ -13,7 +13,8 @@ import {
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
 const WIDGET_KEY = "context-bar";
-const PACMAN_ANIMATION_INTERVAL_MS = 110;
+/** Streamed tokens per mouth frame: chomp speed follows throughput. */
+const PACMAN_TOKENS_PER_FRAME = 8;
 const GIT_REFRESH_DEBOUNCE_MS = 200;
 const GIT_IDLE_POLL_MS = 2500;
 
@@ -29,8 +30,7 @@ type ChromeState = Readonly<{
 	gitRefreshInFlight: boolean;
 	pendingGitRefresh: ExtensionAPI | undefined;
 	gitPollingEnabled: boolean;
-	animationFrame: number;
-	animationTimer: ReturnType<typeof setInterval> | undefined;
+	chompTokens: number;
 	laneActivity: LaneActivity;
 	tokenSpeed: TokenSpeedSnapshot | null;
 	speedSamples: readonly TokenSpeedSample[];
@@ -52,8 +52,7 @@ const freshState = (): ChromeState => ({
 	gitRefreshInFlight: false,
 	pendingGitRefresh: undefined,
 	gitPollingEnabled: false,
-	animationFrame: 0,
-	animationTimer: undefined,
+	chompTokens: 0,
 	laneActivity: "idle",
 	tokenSpeed: null,
 	speedSamples: [],
@@ -69,22 +68,6 @@ let state = freshState();
 
 const patch = (next: Partial<ChromeState>): void => {
 	state = { ...state, ...next };
-};
-
-const stopPacmanAnimation = (): void => {
-	if (state.animationTimer) clearInterval(state.animationTimer);
-	patch({ animationTimer: undefined, animationFrame: 0 });
-};
-
-const startPacmanAnimation = (): void => {
-	stopPacmanAnimation();
-	patch({
-		animationTimer: setInterval(() => {
-			patch({ animationFrame: state.animationFrame + 1 });
-			state.tui?.requestRender();
-		}, PACMAN_ANIMATION_INTERVAL_MS),
-	});
-	state.tui?.requestRender();
 };
 
 const refreshSnapshot = (ctx: ExtensionContext): void => {
@@ -118,6 +101,7 @@ const resetTurnSpeed = (): void => {
 		speedMessageStartedAt: undefined,
 		speedTurnOutputTokens: 0,
 		speedTurnActiveMs: 0,
+		chompTokens: 0,
 	});
 };
 
@@ -222,7 +206,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 									state.usage,
 									width,
 									styles,
-									state.animationFrame,
+									Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME),
 									state.laneActivity,
 									state.tokenSpeed,
 								),
@@ -244,9 +228,8 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 
-	pi.on("agent_start", (_event, ctx) => {
-		changeLaneActivity("working");
-		if (ctx.mode === "tui") startPacmanAnimation();
+	pi.on("agent_start", () => {
+		if (changeLaneActivity("working")) requestRender();
 	});
 
 	pi.on("turn_start", () => {
@@ -276,13 +259,16 @@ export default function zContext(pi: ExtensionAPI): void {
 		if (!delta) return;
 		const now = performance.now();
 		const streamStartedAt = state.speedStreamStartedAt ?? now;
-		const measured = recordTokenSpeed(state.speedSamples, now, streamStartedAt, estimateDeltaTokens(delta));
+		const tokens = estimateDeltaTokens(delta);
+		const measured = recordTokenSpeed(state.speedSamples, now, streamStartedAt, tokens);
 		patch({
 			speedStreamStartedAt: streamStartedAt,
 			speedMessageStartedAt: state.speedMessageStartedAt ?? now,
 			speedSamples: measured.samples,
 			tokenSpeed: measured.snapshot,
+			chompTokens: state.chompTokens + tokens,
 		});
+		requestRender();
 	});
 
 	pi.on("message_end", (event) => {
@@ -316,7 +302,6 @@ export default function zContext(pi: ExtensionAPI): void {
 
 	pi.on("agent_end", (_event, ctx) => {
 		changeLaneActivity("idle");
-		stopPacmanAnimation();
 		refreshSnapshot(ctx);
 		refreshSessionUsage(ctx);
 		requestRender();
@@ -339,7 +324,6 @@ export default function zContext(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		stopGitRefresh();
-		stopPacmanAnimation();
 		state = freshState();
 		if (ctx.mode === "tui") {
 			ctx.ui.setWorkingVisible(true);

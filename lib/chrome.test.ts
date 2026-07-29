@@ -13,7 +13,6 @@ import {
 	pickFirstFitting,
 	renderChromeLine,
 	renderPacmanLane,
-	styleFreeMetrics,
 } from "./chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
 import type { TokenSpeedSnapshot } from "./speed.ts";
@@ -58,7 +57,7 @@ describe("health metric formatting", () => {
 	});
 
 	test("builds wide and narrow options", () => {
-		const options = freeMetricOptions(dominantSnapshot, full);
+		const options = freeMetricOptions(dominantSnapshot, full, identityStyles);
 		assert.equal(options[0], "15.6%   CH98%  $1.61");
 		assert.equal(pickFirstFitting(options, 200), options[0]);
 		assert.ok(plainWidth(pickFirstFitting(options, 15)) <= 15);
@@ -66,7 +65,7 @@ describe("health metric formatting", () => {
 	});
 
 	test("supports missing CH", () => {
-		const options = freeMetricOptions(dominantSnapshot, usage({ cost: 0.042 }));
+		const options = freeMetricOptions(dominantSnapshot, usage({ cost: 0.042 }), identityStyles);
 		assert.ok(options[0]?.startsWith("15.6%"));
 		assert.equal(
 			options.every((option) => !option.includes("CH")),
@@ -76,7 +75,7 @@ describe("health metric formatting", () => {
 
 	test("adds quiet token speed without changing existing options", () => {
 		const speed: TokenSpeedSnapshot = { tokensPerSecond: 42.25, estimated: true };
-		const options = freeMetricOptions(dominantSnapshot, full, speed);
+		const options = freeMetricOptions(dominantSnapshot, full, identityStyles, speed);
 		assert.equal(options[0], "15.6%   CH98%  ~42.3t/s  $1.61");
 		assert.ok(options.includes("CH98%  ~42.3t/s"));
 	});
@@ -84,17 +83,23 @@ describe("health metric formatting", () => {
 
 describe("semantic metric styling", () => {
 	test("keeps healthy values quiet", () => {
-		const styled = styleFreeMetrics("51.3%   CH99%  $6.65", 51.3, 99, markedStyles);
-		assert.ok(styled.includes("<d>51.3%</d>"));
-		assert.ok(styled.includes("<d>CH99%</d>"));
-		assert.ok(!styled.includes("<w>"));
-		assert.ok(!styled.includes("<e>"));
+		const widest =
+			freeMetricOptions(snapshot({ usedTokens: 102_600 }), usage({ cost: 6.65, cacheHitRate: 99 }), markedStyles)[0] ??
+			"";
+		assert.ok(widest.includes("<d>51.3%</d>"));
+		assert.ok(widest.includes("<d>CH99%</d>"));
+		assert.ok(!widest.includes("<w>"));
+		assert.ok(!widest.includes("<e>"));
 	});
 
 	test("accents only unhealthy usage and cache", () => {
-		assert.ok(styleFreeMetrics("75.0%   CH60%", 75, 60, markedStyles).includes("<w>75.0%</w>"));
-		assert.ok(styleFreeMetrics("95.0%   CH20%", 95, 20, markedStyles).includes("<e>CH20%</e>"));
-		assert.equal(styleFreeMetrics("", 10, undefined, markedStyles), "");
+		const warning =
+			freeMetricOptions(snapshot({ usedTokens: 150_000 }), usage({ cacheHitRate: 60 }), markedStyles)[0] ?? "";
+		assert.ok(warning.includes("<w>75.0%</w>"));
+		const error =
+			freeMetricOptions(snapshot({ usedTokens: 190_000 }), usage({ cacheHitRate: 20 }), markedStyles)[0] ?? "";
+		assert.ok(error.includes("<e>CH20%</e>"));
+		assert.equal(freeMetricOptions(snapshot({ contextWindow: 0 }), usage(), markedStyles)[0], "");
 	});
 });
 

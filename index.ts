@@ -19,56 +19,82 @@ const GIT_IDLE_POLL_MS = 2500;
 
 type RenderRequester = Readonly<{ requestRender: () => void }>;
 
-let latestContextSnapshot: ContextSnapshot = {
-	usedTokens: 0,
-	contextWindow: 0,
+type ChromeState = Readonly<{
+	context: ContextSnapshot;
+	git: GitState | null;
+	usage: SessionUsage;
+	gitRefreshGeneration: number;
+	gitRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+	gitPollTimer: ReturnType<typeof setInterval> | undefined;
+	gitRefreshInFlight: boolean;
+	pendingGitRefresh: ExtensionAPI | undefined;
+	gitPollingEnabled: boolean;
+	animationFrame: number;
+	animationTimer: ReturnType<typeof setInterval> | undefined;
+	laneActivity: LaneActivity;
+	tokenSpeed: TokenSpeedSnapshot | null;
+	speedSamples: readonly TokenSpeedSample[];
+	speedStreamStartedAt: number | undefined;
+	speedMessageStartedAt: number | undefined;
+	speedTurnOutputTokens: number;
+	speedTurnActiveMs: number;
+	tui: RenderRequester | undefined;
+	ctx: ExtensionContext | undefined;
+}>;
+
+const freshState = (): ChromeState => ({
+	context: { usedTokens: 0, contextWindow: 0 },
+	git: null,
+	usage: { cost: 0, cacheHitRate: undefined },
+	gitRefreshGeneration: 0,
+	gitRefreshTimer: undefined,
+	gitPollTimer: undefined,
+	gitRefreshInFlight: false,
+	pendingGitRefresh: undefined,
+	gitPollingEnabled: false,
+	animationFrame: 0,
+	animationTimer: undefined,
+	laneActivity: "idle",
+	tokenSpeed: null,
+	speedSamples: [],
+	speedStreamStartedAt: undefined,
+	speedMessageStartedAt: undefined,
+	speedTurnOutputTokens: 0,
+	speedTurnActiveMs: 0,
+	tui: undefined,
+	ctx: undefined,
+});
+
+let state = freshState();
+
+const patch = (next: Partial<ChromeState>): void => {
+	state = { ...state, ...next };
 };
-let latestGitState: GitState | null = null;
-let latestSessionUsage: SessionUsage = {
-	cost: 0,
-	cacheHitRate: undefined,
-};
-let gitRefreshGeneration = 0;
-let gitRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-let gitPollTimer: ReturnType<typeof setInterval> | undefined;
-let gitRefreshInFlight = false;
-let pendingGitRefresh: ExtensionAPI | undefined;
-let gitPollingEnabled = false;
-let animationFrame = 0;
-let animationTimer: ReturnType<typeof setInterval> | undefined;
-let laneActivity: LaneActivity = "idle";
-let latestTokenSpeed: TokenSpeedSnapshot | null = null;
-let speedSamples: readonly TokenSpeedSample[] = [];
-let speedStreamStartedAt: number | undefined;
-let speedMessageStartedAt: number | undefined;
-let speedTurnOutputTokens = 0;
-let speedTurnActiveMs = 0;
-let activeTui: RenderRequester | undefined;
-let boundCtx: ExtensionContext | undefined;
 
 const stopPacmanAnimation = (): void => {
-	if (animationTimer) clearInterval(animationTimer);
-	animationTimer = undefined;
-	animationFrame = 0;
+	if (state.animationTimer) clearInterval(state.animationTimer);
+	patch({ animationTimer: undefined, animationFrame: 0 });
 };
 
 const startPacmanAnimation = (): void => {
 	stopPacmanAnimation();
-	animationTimer = setInterval(() => {
-		animationFrame++;
-		activeTui?.requestRender();
-	}, PACMAN_ANIMATION_INTERVAL_MS);
-	activeTui?.requestRender();
+	patch({
+		animationTimer: setInterval(() => {
+			patch({ animationFrame: state.animationFrame + 1 });
+			state.tui?.requestRender();
+		}, PACMAN_ANIMATION_INTERVAL_MS),
+	});
+	state.tui?.requestRender();
 };
 
 const refreshSnapshot = (ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
 	const usage = ctx.getContextUsage();
-	latestContextSnapshot = { usedTokens: usage?.tokens ?? 0, contextWindow: usage?.contextWindow ?? 0 };
+	patch({ context: { usedTokens: usage?.tokens ?? 0, contextWindow: usage?.contextWindow ?? 0 } });
 };
 
 const refreshSessionUsage = (ctx: ExtensionContext): void => {
-	latestSessionUsage = accumulateSessionUsage(ctx.sessionManager.getEntries());
+	patch({ usage: accumulateSessionUsage(ctx.sessionManager.getEntries()) });
 };
 
 const currentModel = (ctx: ExtensionContext): ModelInfo => {
@@ -76,81 +102,88 @@ const currentModel = (ctx: ExtensionContext): ModelInfo => {
 	return model ? { id: model.id, reasoning: Boolean(model.reasoning) } : null;
 };
 
-const requestRender = (): void => activeTui?.requestRender();
+const requestRender = (): void => state.tui?.requestRender();
 
 const changeLaneActivity = (next: LaneActivity): boolean => {
-	if (laneActivity === next) return false;
-	laneActivity = next;
+	if (state.laneActivity === next) return false;
+	patch({ laneActivity: next });
 	return true;
 };
 
 const resetTurnSpeed = (): void => {
-	latestTokenSpeed = null;
-	speedSamples = [];
-	speedStreamStartedAt = undefined;
-	speedMessageStartedAt = undefined;
-	speedTurnOutputTokens = 0;
-	speedTurnActiveMs = 0;
+	patch({
+		tokenSpeed: null,
+		speedSamples: [],
+		speedStreamStartedAt: undefined,
+		speedMessageStartedAt: undefined,
+		speedTurnOutputTokens: 0,
+		speedTurnActiveMs: 0,
+	});
 };
 
 const runGitRefresh = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> => {
-	if (boundCtx !== ctx) return;
-	if (gitRefreshInFlight) {
-		pendingGitRefresh = pi;
+	if (state.ctx !== ctx) return;
+	if (state.gitRefreshInFlight) {
+		patch({ pendingGitRefresh: pi });
 		return;
 	}
 
-	gitRefreshInFlight = true;
-	const generation = ++gitRefreshGeneration;
+	patch({ gitRefreshInFlight: true, gitRefreshGeneration: state.gitRefreshGeneration + 1 });
+	const generation = state.gitRefreshGeneration;
 	try {
 		const result = await pi
 			.exec("git", ["status", "--porcelain=v2", "--branch"], { cwd: ctx.cwd, timeout: 1500 })
 			.catch(() => undefined);
-		if (boundCtx !== ctx || generation !== gitRefreshGeneration || !result) return;
+		if (state.ctx !== ctx || generation !== state.gitRefreshGeneration || !result) return;
 
-		gitPollingEnabled = result.code === 0;
 		const nextGitState = result.code === 0 ? parseGitStatus(result.stdout) : null;
-		if (sameGitState(latestGitState, nextGitState)) return;
-		latestGitState = nextGitState;
+		patch({ gitPollingEnabled: result.code === 0 });
+		if (sameGitState(state.git, nextGitState)) return;
+		patch({ git: nextGitState });
 		requestRender();
 	} finally {
-		gitRefreshInFlight = false;
-		const pending = pendingGitRefresh;
-		pendingGitRefresh = undefined;
+		const pending = state.pendingGitRefresh;
+		patch({ gitRefreshInFlight: false, pendingGitRefresh: undefined });
 		if (pending) void runGitRefresh(pending, ctx);
 	}
 };
 
 const scheduleGitRefresh = (pi: ExtensionAPI, ctx: ExtensionContext, delay = GIT_REFRESH_DEBOUNCE_MS): void => {
-	if (boundCtx !== ctx) return;
-	if (gitRefreshTimer) clearTimeout(gitRefreshTimer);
-	gitRefreshTimer = setTimeout(() => {
-		gitRefreshTimer = undefined;
-		void runGitRefresh(pi, ctx);
-	}, delay);
+	if (state.ctx !== ctx) return;
+	if (state.gitRefreshTimer) clearTimeout(state.gitRefreshTimer);
+	patch({
+		gitRefreshTimer: setTimeout(() => {
+			patch({ gitRefreshTimer: undefined });
+			void runGitRefresh(pi, ctx);
+		}, delay),
+	});
 };
 
 const stopGitRefresh = (): void => {
-	if (gitRefreshTimer) clearTimeout(gitRefreshTimer);
-	if (gitPollTimer) clearInterval(gitPollTimer);
-	gitRefreshTimer = undefined;
-	gitPollTimer = undefined;
-	pendingGitRefresh = undefined;
-	gitPollingEnabled = false;
-	gitRefreshGeneration++;
+	if (state.gitRefreshTimer) clearTimeout(state.gitRefreshTimer);
+	if (state.gitPollTimer) clearInterval(state.gitPollTimer);
+	patch({
+		gitRefreshTimer: undefined,
+		gitPollTimer: undefined,
+		pendingGitRefresh: undefined,
+		gitPollingEnabled: false,
+		gitRefreshGeneration: state.gitRefreshGeneration + 1,
+	});
 };
 
 const startGitPolling = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
-	if (gitPollTimer) clearInterval(gitPollTimer);
+	if (state.gitPollTimer) clearInterval(state.gitPollTimer);
 	if (ctx.mode !== "tui") return;
-	gitPollTimer = setInterval(() => {
-		if (boundCtx === ctx && gitPollingEnabled && ctx.isIdle()) scheduleGitRefresh(pi, ctx);
-	}, GIT_IDLE_POLL_MS);
+	patch({
+		gitPollTimer: setInterval(() => {
+			if (state.ctx === ctx && state.gitPollingEnabled && ctx.isIdle()) scheduleGitRefresh(pi, ctx);
+		}, GIT_IDLE_POLL_MS),
+	});
 };
 
 const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
-	boundCtx = ctx;
+	patch({ ctx });
 	refreshSnapshot(ctx);
 	refreshSessionUsage(ctx);
 	scheduleGitRefresh(pi, ctx, 0);
@@ -160,9 +193,9 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	registerRoundedEditor(ctx, {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
-		getGit: () => latestGitState,
+		getGit: () => state.git,
 		onTui: (tui) => {
-			activeTui = tui;
+			patch({ tui });
 		},
 	});
 
@@ -174,7 +207,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	ctx.ui.setWidget(
 		WIDGET_KEY,
 		(tui, theme) => {
-			activeTui = tui;
+			patch({ tui });
 			const styles: ChromeStyles = {
 				dim: (text) => theme.fg("dim", text),
 				warning: (text) => theme.fg("warning", text),
@@ -182,16 +215,16 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 			};
 			return {
 				render: (width: number) =>
-					boundCtx
+					state.ctx
 						? [
 								renderChromeLine(
-									latestContextSnapshot,
-									latestSessionUsage,
+									state.context,
+									state.usage,
 									width,
 									styles,
-									animationFrame,
-									laneActivity,
-									latestTokenSpeed,
+									state.animationFrame,
+									state.laneActivity,
+									state.tokenSpeed,
 								),
 							]
 						: [],
@@ -206,7 +239,7 @@ export default function zContext(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => registerChrome(pi, ctx));
 
 	pi.on("context", (_event, ctx) => {
-		if (laneActivity !== "idle") changeLaneActivity("thinking");
+		if (state.laneActivity !== "idle") changeLaneActivity("thinking");
 		refreshSnapshot(ctx);
 		requestRender();
 	});
@@ -223,9 +256,7 @@ export default function zContext(pi: ExtensionAPI): void {
 
 	pi.on("message_start", (event) => {
 		if (event.message.role !== "assistant") return;
-		speedSamples = [];
-		speedStreamStartedAt = undefined;
-		speedMessageStartedAt = undefined;
+		patch({ speedSamples: [], speedStreamStartedAt: undefined, speedMessageStartedAt: undefined });
 	});
 
 	pi.on("message_update", (event) => {
@@ -244,18 +275,26 @@ export default function zContext(pi: ExtensionAPI): void {
 				: undefined;
 		if (!delta) return;
 		const now = performance.now();
-		speedStreamStartedAt ??= now;
-		speedMessageStartedAt ??= now;
-		const measured = recordTokenSpeed(speedSamples, now, speedStreamStartedAt, estimateDeltaTokens(delta));
-		speedSamples = measured.samples;
-		latestTokenSpeed = measured.snapshot;
+		const streamStartedAt = state.speedStreamStartedAt ?? now;
+		const measured = recordTokenSpeed(state.speedSamples, now, streamStartedAt, estimateDeltaTokens(delta));
+		patch({
+			speedStreamStartedAt: streamStartedAt,
+			speedMessageStartedAt: state.speedMessageStartedAt ?? now,
+			speedSamples: measured.samples,
+			tokenSpeed: measured.snapshot,
+		});
 	});
 
 	pi.on("message_end", (event) => {
 		if (event.message.role !== "assistant") return;
-		if (speedMessageStartedAt !== undefined) speedTurnActiveMs += performance.now() - speedMessageStartedAt;
-		speedTurnOutputTokens += event.message.usage.output;
-		speedMessageStartedAt = undefined;
+		patch({
+			speedTurnActiveMs:
+				state.speedMessageStartedAt !== undefined
+					? state.speedTurnActiveMs + performance.now() - state.speedMessageStartedAt
+					: state.speedTurnActiveMs,
+			speedTurnOutputTokens: state.speedTurnOutputTokens + event.message.usage.output,
+			speedMessageStartedAt: undefined,
+		});
 	});
 
 	pi.on("tool_execution_start", () => {
@@ -267,7 +306,9 @@ export default function zContext(pi: ExtensionAPI): void {
 		}
 	});
 	pi.on("turn_end", (_event, ctx) => {
-		latestTokenSpeed = completedTokenSpeed(speedTurnOutputTokens, speedTurnActiveMs) ?? latestTokenSpeed;
+		patch({
+			tokenSpeed: completedTokenSpeed(state.speedTurnOutputTokens, state.speedTurnActiveMs) ?? state.tokenSpeed,
+		});
 		refreshSessionUsage(ctx);
 		requestRender();
 		scheduleGitRefresh(pi, ctx, 0);
@@ -297,17 +338,9 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
-		laneActivity = "idle";
-		latestGitState = null;
-		latestSessionUsage = {
-			cost: 0,
-			cacheHitRate: undefined,
-		};
-		resetTurnSpeed();
 		stopGitRefresh();
 		stopPacmanAnimation();
-		activeTui = undefined;
-		boundCtx = undefined;
+		state = freshState();
 		if (ctx.mode === "tui") {
 			ctx.ui.setWorkingVisible(true);
 			ctx.ui.setEditorComponent(undefined);

@@ -33,19 +33,38 @@ export const formatCost = (cost: number): string => {
 	return `$${cost >= 1 ? cost.toFixed(2) : cost.toFixed(3)}`;
 };
 
-const metricGroup = (separator: string, ...parts: readonly string[]): string => parts.filter(Boolean).join(separator);
+const styleUsage = (text: string, percent: number, styles: ChromeStyles): string => {
+	if (percent > 90) return styles.error(text);
+	if (percent > 70) return styles.warning(text);
+	return styles.dim(text);
+};
 
-/** Metric options, widest → tightest. `%` and CH survive before cost. */
+const styleCache = (text: string, rate: number | undefined, styles: ChromeStyles): string => {
+	if (rate === undefined || rate >= 80) return styles.dim(text);
+	if (rate >= 50) return styles.warning(text);
+	return styles.error(text);
+};
+
+const styled = (text: string, style: (text: string) => string): string => (text ? style(text) : "");
+
+/** Metric options, widest → tightest, styled at construction. `%` and CH survive before cost. */
 export const freeMetricOptions = (
 	snapshot: ContextSnapshot,
 	usage: SessionUsage,
+	styles: ChromeStyles,
 	speed: TokenSpeedSnapshot | null = null,
 ): readonly string[] => {
-	const percent =
-		snapshot.contextWindow > 0 ? `${((snapshot.usedTokens / snapshot.contextWindow) * 100).toFixed(1)}%` : "";
-	const ch = usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "";
-	const speedText = formatTokenSpeed(speed);
-	const cost = formatCost(usage.cost);
+	const percentValue = snapshot.contextWindow > 0 ? (snapshot.usedTokens / snapshot.contextWindow) * 100 : 0;
+	const percent = styled(snapshot.contextWindow > 0 ? `${percentValue.toFixed(1)}%` : "", (text) =>
+		styleUsage(text, percentValue, styles),
+	);
+	const ch = styled(usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "", (text) =>
+		styleCache(text, usage.cacheHitRate, styles),
+	);
+	const speedText = styled(formatTokenSpeed(speed), styles.dim);
+	const cost = styled(formatCost(usage.cost), styles.dim);
+	const metricGroup = (separator: string, ...parts: readonly string[]): string =>
+		parts.filter(Boolean).join(styles.dim(separator));
 	const core = metricGroup("  ", ch, speedText);
 	const options = [
 		metricGroup("   ", percent, metricGroup("  ", ch, speedText, cost)),
@@ -60,35 +79,6 @@ export const freeMetricOptions = (
 export const pickFirstFitting = (options: readonly string[], width: number): string => {
 	for (const option of options) if (plainWidth(option) <= width) return option;
 	return "";
-};
-
-const styleUsage = (text: string, percent: number, styles: ChromeStyles): string => {
-	if (percent > 90) return styles.error(text);
-	if (percent > 70) return styles.warning(text);
-	return styles.dim(text);
-};
-
-const styleCache = (text: string, rate: number | undefined, styles: ChromeStyles): string => {
-	if (rate === undefined || rate >= 80) return styles.dim(text);
-	if (rate >= 50) return styles.warning(text);
-	return styles.error(text);
-};
-
-export const styleFreeMetrics = (
-	plain: string,
-	percent: number,
-	cacheHitRate: number | undefined,
-	styles: ChromeStyles,
-): string => {
-	if (plain.length === 0) return "";
-	return plain
-		.split(/( {2,})/)
-		.map((token) => {
-			if (/^~?\d+(?:\.\d+)?%$/.test(token)) return styleUsage(token, percent, styles);
-			if (token.startsWith("CH")) return styleCache(token, cacheHitRate, styles);
-			return styles.dim(token);
-		})
-		.join("");
 };
 
 const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>
@@ -155,15 +145,13 @@ export const renderChromeLine = (
 		return ` ${gap}${fitStyledText(unavailable, contentWidth)} `;
 	}
 
-	const percent = (snapshot.usedTokens / snapshot.contextWindow) * 100;
 	const minimumLaneWidth = Math.min(12, Math.max(4, Math.floor(contentWidth * 0.35)));
 	const metricWidth = Math.max(0, contentWidth - minimumLaneWidth - 2);
-	const metricText = pickFirstFitting(freeMetricOptions(snapshot, usage, speed), metricWidth);
-	const minimumGap = metricText.length > 0 ? 2 : 0;
-	const availableLaneWidth = Math.max(0, contentWidth - plainWidth(metricText) - minimumGap);
+	const metrics = pickFirstFitting(freeMetricOptions(snapshot, usage, styles, speed), metricWidth);
+	const minimumGap = metrics.length > 0 ? 2 : 0;
+	const availableLaneWidth = Math.max(0, contentWidth - plainWidth(metrics) - minimumGap);
 	const laneWidth = Math.min(PACMAN_LANE_MAX_WIDTH, availableLaneWidth);
-	const flexibleGap = contentWidth - laneWidth - plainWidth(metricText);
+	const flexibleGap = contentWidth - laneWidth - plainWidth(metrics);
 	const lane = renderPacmanLane(snapshot, laneWidth, animationFrame, activity);
-	const metrics = styleFreeMetrics(metricText, percent, usage.cacheHitRate, styles);
 	return ` ${lane}${" ".repeat(Math.max(0, flexibleGap))}${metrics} `;
 };

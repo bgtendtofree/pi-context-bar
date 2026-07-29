@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
-import { type ChromeStyles, type LaneActivity, renderChromeLine } from "./lib/chrome.ts";
+import type { LaneActivity } from "./lib/chrome.ts";
 import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
 import { type GitState, parseGitStatus, sameGitState } from "./lib/git.ts";
 import {
@@ -12,7 +12,6 @@ import {
 } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
-const WIDGET_KEY = "context-bar";
 /** Streamed tokens per mouth frame: chomp speed follows throughput. */
 const PACMAN_TOKENS_PER_FRAME = 8;
 const REWIND_FRAMES = 6;
@@ -210,6 +209,13 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
 		getGit: () => state.git,
+		getHealth: () => ({
+			snapshot: state.rewind ? { ...state.context, usedTokens: state.rewind.usedTokens } : state.context,
+			usage: state.usage,
+			speed: state.tokenSpeed,
+			frame: Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0),
+			activity: state.laneActivity,
+		}),
 		onTui: (tui) => {
 			patch({ tui });
 		},
@@ -219,28 +225,6 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 		const unsubscribe = footerData.onBranchChange(() => scheduleGitRefresh(pi, ctx, 0));
 		return { render: () => [], invalidate: () => {}, dispose: unsubscribe };
 	});
-
-	ctx.ui.setWidget(
-		WIDGET_KEY,
-		(tui, theme) => {
-			patch({ tui });
-			const styles: ChromeStyles = {
-				dim: (text) => theme.fg("dim", text),
-				warning: (text) => theme.fg("warning", text),
-				error: (text) => theme.fg("error", text),
-			};
-			return {
-				render: (width: number) => {
-					if (!state.ctx) return [];
-					const snapshot = state.rewind ? { ...state.context, usedTokens: state.rewind.usedTokens } : state.context;
-					const frame = Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0);
-					return [renderChromeLine(snapshot, state.usage, width, styles, frame, state.laneActivity, state.tokenSpeed)];
-				},
-				invalidate: () => {},
-			};
-		},
-		{ placement: "belowEditor" },
-	);
 };
 
 export default function zContext(pi: ExtensionAPI): void {
@@ -363,7 +347,6 @@ export default function zContext(pi: ExtensionAPI): void {
 			ctx.ui.setWorkingVisible(true);
 			ctx.ui.setEditorComponent(undefined);
 		}
-		ctx.ui.setWidget(WIDGET_KEY, undefined, { placement: "belowEditor" });
 		ctx.ui.setFooter(undefined);
 	});
 }

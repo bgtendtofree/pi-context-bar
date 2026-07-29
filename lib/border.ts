@@ -54,12 +54,15 @@ export const renderLabeledBorder = (
 	leftLabel: string,
 	rightLabel: string,
 	border: (text: string) => string,
+	middle?: (width: number) => string,
 ): string => {
 	if (width <= 0) return "";
 	if (width === 1) return border("─");
 
 	const left = leftLabel ? `${border("─")} ${leftLabel} ` : border("─");
 	const right = rightLabel ? ` ${rightLabel} ${border("──")}` : border("─");
-	const fillWidth = Math.max(0, width - 2 - plainWidth(left) - plainWidth(right));
-	return `${border(leftCorner)}${left}${border("─".repeat(fillWidth))}${right}${border(rightCorner)}`;
+	const middleWidth = Math.max(0, width - 2 - plainWidth(left) - plainWidth(right));
+	const content = middle ? middle(middleWidth) : "";
+	const fillWidth = Math.max(0, middleWidth - plainWidth(content));
+	return `${border(leftCorner)}${left}${content}${border("─".repeat(fillWidth))}${right}${border(rightCorner)}`;
 };

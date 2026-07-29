@@ -49,6 +49,31 @@ describe("rounded editor border", () => {
 		assert.equal(plainWidth(renderLabeledBorder(12, "╰", "╯", "", "", (text) => text)), 12);
 	});
 
+	test("embeds middle content and fills the rest", () => {
+		const border = renderLabeledBorder(
+			30,
+			"╰",
+			"╯",
+			"model",
+			"⎇ main",
+			(text) => text,
+			(middleWidth) => "x".repeat(Math.min(middleWidth, 10)),
+		);
+		assert.equal(plainWidth(border), 30);
+		assert.ok(border.includes("xxxxxxxxxx"));
+		const withoutMiddle = renderLabeledBorder(
+			30,
+			"╰",
+			"╯",
+			"model",
+			"⎇ main",
+			(text) => text,
+			() => "",
+		);
+		assert.equal(plainWidth(withoutMiddle), 30);
+		assert.ok(!withoutMiddle.includes("x"));
+	});
+
 	test("fits labels by terminal columns", () => {
 		assert.deepEqual(pickEditorBorderLabels(["模型"], ["⎇ 分支"], 18), {
 			modelLabel: "模型",

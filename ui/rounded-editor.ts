@@ -2,13 +2,25 @@ import { CustomEditor, type ExtensionContext, type KeybindingsManager } from "@e
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { editorModelOptions, type ModelInfo, pickEditorBorderLabels, renderLabeledBorder } from "../lib/border.ts";
+import { type ChromeStyles, type LaneActivity, renderChromeLine } from "../lib/chrome.ts";
+import type { ContextSnapshot, SessionUsage } from "../lib/context.ts";
 import { type GitState, gitLabelOptions, gitLabelTone } from "../lib/git.ts";
+import type { TokenSpeedSnapshot } from "../lib/speed.ts";
 import { stripAnsi } from "../lib/text.ts";
+
+export type HealthState = Readonly<{
+	snapshot: ContextSnapshot;
+	usage: SessionUsage;
+	speed: TokenSpeedSnapshot | null;
+	frame: number;
+	activity: LaneActivity;
+}>;
 
 export type RoundedEditorOptions = Readonly<{
 	getModel: () => ModelInfo;
 	getThinkingLevel: () => string;
 	getGit: () => GitState | null;
+	getHealth: () => HealthState;
 	onTui: (tui: TUI) => void;
 }>;
 
@@ -81,6 +93,11 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 				gitLabelOptions(options.getGit()),
 				width,
 			);
+			const healthStyles: ChromeStyles = {
+				dim: (text) => ctx.ui.theme.fg("dim", text),
+				warning: (text) => ctx.ui.theme.fg("warning", text),
+				error: (text) => ctx.ui.theme.fg("error", text),
+			};
 			result.push(
 				renderLabeledBorder(
 					width,
@@ -89,6 +106,19 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 					styleModelLabel(picked.modelLabel, ctx),
 					styleGitLabel(picked.gitLabel, ctx),
 					borderColor,
+					(middleWidth) => {
+						if (middleWidth < 12) return "";
+						const health = options.getHealth();
+						return renderChromeLine(
+							health.snapshot,
+							health.usage,
+							middleWidth,
+							healthStyles,
+							health.frame,
+							health.activity,
+							health.speed,
+						);
+					},
 				),
 			);
 			const popup = autocomplete.map((line) => `  ${line}${" ".repeat(Math.max(0, width - visibleWidth(line) - 2))}`);

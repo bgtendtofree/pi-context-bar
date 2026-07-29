@@ -8,14 +8,14 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 
 ## Rules
 
-- Keep health chrome height = 1 always; rounded editor may wrap naturally with input
+- Health chrome lives inside the editor bottom border; no extra rows
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
-- Editor bottom border: model/thinking left; local Git branch/status right; never path or provider quota
+- Editor bottom border: model/thinking left; Pac-Man lane + health metrics center; local Git branch/status right; never path or provider quota
 - Health metrics: native `%` · `CH` · optional live `t/s` · optional `$`
 - Classic palette: cream pellets, yellow solid Nerd Font Pac-Man, phase-colored ghost
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets
 - No background color blocks; healthy text stays dim; only warning/error states gain color
-- Cap lane width on ultra-wide terminals; metrics align to editor inner right edge
+- Cap lane width on ultra-wide terminals; metrics hug the border's right end before the Git label
 - Chomp driven by streamed tokens: mouth speed = throughput, static when idle (no timers)
 - Keep token speed dim: `~Nt/s` while estimated live, provider-calibrated `Nt/s` after turn
 - High CH stays quiet; low CH warns. Git branch stays dim; only dirty/sync markers gain color

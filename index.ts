@@ -15,6 +15,8 @@ import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 const WIDGET_KEY = "context-bar";
 /** Streamed tokens per mouth frame: chomp speed follows throughput. */
 const PACMAN_TOKENS_PER_FRAME = 8;
+const REWIND_FRAMES = 6;
+const REWIND_FRAME_MS = 70;
 const GIT_REFRESH_DEBOUNCE_MS = 200;
 const GIT_IDLE_POLL_MS = 2500;
 
@@ -31,6 +33,8 @@ type ChromeState = Readonly<{
 	pendingGitRefresh: ExtensionAPI | undefined;
 	gitPollingEnabled: boolean;
 	chompTokens: number;
+	rewind: Readonly<{ usedTokens: number; frame: number }> | undefined;
+	rewindTimer: ReturnType<typeof setInterval> | undefined;
 	laneActivity: LaneActivity;
 	tokenSpeed: TokenSpeedSnapshot | null;
 	speedSamples: readonly TokenSpeedSample[];
@@ -53,6 +57,8 @@ const freshState = (): ChromeState => ({
 	pendingGitRefresh: undefined,
 	gitPollingEnabled: false,
 	chompTokens: 0,
+	rewind: undefined,
+	rewindTimer: undefined,
 	laneActivity: "idle",
 	tokenSpeed: null,
 	speedSamples: [],
@@ -102,6 +108,32 @@ const resetTurnSpeed = (): void => {
 		speedTurnOutputTokens: 0,
 		speedTurnActiveMs: 0,
 		chompTokens: 0,
+	});
+};
+
+/** Slide Pac-Man back from pre-compact usage to reclaimed usage, then self-clear. */
+const startRewind = (fromUsedTokens: number): void => {
+	if (state.rewindTimer) clearInterval(state.rewindTimer);
+	const toUsedTokens = state.context.usedTokens;
+	patch({ rewind: { usedTokens: fromUsedTokens, frame: 0 } });
+	patch({
+		rewindTimer: setInterval(() => {
+			const rewind = state.rewind;
+			if (!rewind || rewind.frame >= REWIND_FRAMES) {
+				if (state.rewindTimer) clearInterval(state.rewindTimer);
+				patch({ rewindTimer: undefined, rewind: undefined });
+				requestRender();
+				return;
+			}
+			const frame = rewind.frame + 1;
+			patch({
+				rewind: {
+					usedTokens: toUsedTokens + (fromUsedTokens - toUsedTokens) * (1 - frame / REWIND_FRAMES),
+					frame,
+				},
+			});
+			requestRender();
+		}, REWIND_FRAME_MS),
 	});
 };
 
@@ -198,20 +230,12 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 				error: (text) => theme.fg("error", text),
 			};
 			return {
-				render: (width: number) =>
-					state.ctx
-						? [
-								renderChromeLine(
-									state.context,
-									state.usage,
-									width,
-									styles,
-									Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME),
-									state.laneActivity,
-									state.tokenSpeed,
-								),
-							]
-						: [],
+				render: (width: number) => {
+					if (!state.ctx) return [];
+					const snapshot = state.rewind ? { ...state.context, usedTokens: state.rewind.usedTokens } : state.context;
+					const frame = Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0);
+					return [renderChromeLine(snapshot, state.usage, width, styles, frame, state.laneActivity, state.tokenSpeed)];
+				},
 				invalidate: () => {},
 			};
 		},
@@ -311,8 +335,17 @@ export default function zContext(pi: ExtensionAPI): void {
 	pi.on("model_select", requestRender);
 	pi.on("thinking_level_select", requestRender);
 	pi.on("session_compact", (_event, ctx) => {
+		const before = state.context;
 		refreshSnapshot(ctx);
 		refreshSessionUsage(ctx);
+		if (
+			ctx.mode === "tui" &&
+			before.contextWindow > 0 &&
+			before.contextWindow === state.context.contextWindow &&
+			state.context.usedTokens < before.usedTokens
+		) {
+			startRewind(before.usedTokens);
+		}
 		requestRender();
 	});
 	pi.on("session_tree", (_event, ctx) => {
@@ -323,6 +356,7 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
+		if (state.rewindTimer) clearInterval(state.rewindTimer);
 		stopGitRefresh();
 		state = freshState();
 		if (ctx.mode === "tui") {

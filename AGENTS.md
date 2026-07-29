@@ -12,7 +12,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
 - Editor top border: Pac-Man lane (auto-fits window width, no cap) + quiet live `t/s` at the right end
 - Editor bottom border: model/thinking left; `%`/`CH`/`$` right before local Git branch/status; never path or provider quota
-- Health metrics: native `%` · `CH` · optional live `t/s` · optional `$`
+- Health metrics: native `%` · `CH` · quiet live `t/s` (top border) · optional `$`
 - Classic palette: cream pellets, yellow solid Nerd Font Pac-Man, phase-colored ghost
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets
 - No background color blocks; healthy text stays dim; only warning/error states gain color

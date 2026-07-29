@@ -1,8 +1,9 @@
+import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
 import type { LaneActivity } from "./lib/chrome.ts";
 import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
-import { type GitState, parseGitStatus, sameGitState } from "./lib/git.ts";
+import { type GitState, parseGitStatus } from "./lib/git.ts";
 import {
 	completedTokenSpeed,
 	estimateDeltaTokens,
@@ -153,7 +154,7 @@ const runGitRefresh = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<v
 
 		const nextGitState = result.code === 0 ? parseGitStatus(result.stdout) : null;
 		patch({ gitPollingEnabled: result.code === 0 });
-		if (sameGitState(state.git, nextGitState)) return;
+		if (isDeepStrictEqual(state.git, nextGitState)) return;
 		patch({ git: nextGitState });
 		requestRender();
 	} finally {

@@ -54,7 +54,6 @@ export const freeMetricOptions = (
 	snapshot: ContextSnapshot,
 	usage: SessionUsage,
 	styles: ChromeStyles,
-	speed: TokenSpeedSnapshot | null = null,
 ): readonly string[] => {
 	const percentValue = snapshot.contextWindow > 0 ? (snapshot.usedTokens / snapshot.contextWindow) * 100 : 0;
 	const percent = styled(snapshot.contextWindow > 0 ? `${percentValue.toFixed(1)}%` : "", (text) =>
@@ -63,18 +62,11 @@ export const freeMetricOptions = (
 	const ch = styled(usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "", (text) =>
 		styleCache(text, usage.cacheHitRate, styles),
 	);
-	const speedText = styled(formatTokenSpeed(speed), styles.dim);
 	const cost = styled(formatCost(usage.cost), styles.dim);
 	const metricGroup = (separator: string, ...parts: readonly string[]): string =>
 		parts.filter(Boolean).join(styles.dim(separator));
-	const core = metricGroup("  ", ch, speedText);
-	const options = [
-		metricGroup("   ", percent, metricGroup("  ", ch, speedText, cost)),
-		metricGroup("   ", percent, core),
-		percent,
-		core || cost,
-		"",
-	];
+	const core = metricGroup("  ", ch, cost);
+	const options = [metricGroup("   ", percent, core), metricGroup("   ", percent, ch), percent, ch || cost, ""];
 	return [...new Set(options)];
 };
 

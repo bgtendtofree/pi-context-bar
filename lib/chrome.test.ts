@@ -16,7 +16,6 @@ import {
 	renderPacmanLane,
 } from "./chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
-import type { TokenSpeedSnapshot } from "./speed.ts";
 import { foreground, plainWidth, stripAnsi } from "./text.ts";
 
 const usage = (partial: Partial<SessionUsage> = {}): SessionUsage => ({
@@ -72,13 +71,6 @@ describe("health metric formatting", () => {
 			options.every((option) => !option.includes("CH")),
 			true,
 		);
-	});
-
-	test("adds quiet token speed without changing existing options", () => {
-		const speed: TokenSpeedSnapshot = { tokensPerSecond: 42.25, estimated: true };
-		const options = freeMetricOptions(dominantSnapshot, full, identityStyles, speed);
-		assert.equal(options[0], "15.6%   CH98%  ~42.3t/s  $1.61");
-		assert.ok(options.includes("CH98%  ~42.3t/s"));
 	});
 });
 

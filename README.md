@@ -59,7 +59,6 @@ npm test               # node:test
 npm run test:coverage  # Node coverage with 90% gates
 npm run smoke          # load package manifest in Pi 0.82.0
 npm run smoke:package  # npm production-install smoke
-npm run package:check  # verify published files
 npm run ci             # full CI pipeline
 ```
 

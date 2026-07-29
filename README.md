@@ -57,7 +57,6 @@ npm run quality        # Biome CI check
 npm run typecheck      # TypeScript 7
 npm test               # node:test
 npm run test:coverage  # Node coverage with 90% gates
-npm run smoke          # load package manifest in Pi 0.82.0
 npm run smoke:package  # npm production-install smoke
 npm run ci             # full CI pipeline
 ```

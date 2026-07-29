@@ -66,7 +66,7 @@ export const freeMetricOptions = (usage: SessionUsage, styles: ChromeStyles): re
 	const cost = styled(formatCost(usage.cost), styles.dim);
 	const metricGroup = (separator: string, ...parts: readonly string[]): string =>
 		parts.filter(Boolean).join(styles.dim(separator));
-	return [...new Set([metricGroup("  ", ch, cost), ch, cost, ""])];
+	return [metricGroup("  ", ch, cost), ch, cost, ""];
 };
 
 const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>

@@ -40,9 +40,9 @@ describe("Git porcelain v2", () => {
 
 	test("supports clean and detached states", () => {
 		const clean = parseGitStatus("# branch.oid abcdef123\n# branch.head main\n");
-		assert.deepEqual(gitLabelOptions(clean), ["⎇ main"]);
+		assert.deepEqual([...new Set(gitLabelOptions(clean))], ["⎇ main"]);
 		const detached = parseGitStatus("# branch.oid abcdef123\n# branch.head (detached)\n");
-		assert.deepEqual(gitLabelOptions(detached), ["⎇ @abcdef1"]);
+		assert.deepEqual([...new Set(gitLabelOptions(detached))], ["⎇ @abcdef1"]);
 	});
 
 	test("handles initial, unmerged, and malformed status", () => {

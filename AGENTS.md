@@ -49,4 +49,4 @@ CI contract for this repository (managed by pi-ci-standard — regenerate with `
 - GitHub Actions runs project checks only through managed mise tasks. Never add language-specific check commands to workflows.
 <!-- pi-ci-standard:validation:end -->
 
-`npm test` uses `node:test`. `npm run test:coverage` enforces Node coverage thresholds. `npm run smoke` loads the package manifest in Pi; `npm run smoke:package` verifies an npm production install. Keep pure logic in `lib/`; do not grow untested math in `index.ts`.
+`npm test` uses `node:test`. `npm run test:coverage` enforces Node coverage thresholds. `npm run smoke:package` verifies an npm production install. Keep pure logic in `lib/`; do not grow untested math in `index.ts`.

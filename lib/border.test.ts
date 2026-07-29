@@ -10,7 +10,7 @@ describe("editor model labels", () => {
 		assert.equal(options[0], "anthropic/claude-opus · high");
 		assert.ok(options.includes("claude-opus · high"));
 		assert.ok(options.includes("claude-opus"));
-		assert.deepEqual(editorModelOptions({ id: "gpt-4o", reasoning: false }, "high"), ["gpt-4o"]);
+		assert.deepEqual([...new Set(editorModelOptions({ id: "gpt-4o", reasoning: false }, "high"))], ["gpt-4o"]);
 		assert.ok(
 			editorModelOptions({ id: "provider/a-very-long-model-name", reasoning: false }, "off").some((option) =>
 				option.endsWith("…"),

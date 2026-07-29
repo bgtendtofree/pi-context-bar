@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { completedTokenSpeed, estimateDeltaTokens, formatTokenSpeed, recordTokenSpeed } from "./speed.ts";
+import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, formatTokenSpeed } from "./speed.ts";
 
 describe("token speed", () => {
-	test("measures a bounded live window", () => {
+	test("measures cumulative live rate with floored elapsed time", () => {
 		assert.equal(estimateDeltaTokens("12345678"), 2);
-		const first = recordTokenSpeed([], 1000, 1000, 5);
-		assert.equal(first.snapshot.tokensPerSecond, 20);
-		const second = recordTokenSpeed(first.samples, 1500, 1000, 20);
-		assert.equal(second.snapshot.tokensPerSecond, 50);
-		const pruned = recordTokenSpeed(second.samples, 2600, 1000, 10);
-		assert.deepEqual(pruned.samples, [{ time: 2600, tokens: 10 }]);
-		assert.equal(pruned.snapshot.tokensPerSecond, 10);
+		assert.equal(estimateTokenSpeed(0, 1000), null);
+		assert.equal(estimateTokenSpeed(5, 0)?.tokensPerSecond, 20);
+		assert.equal(estimateTokenSpeed(25, 500)?.tokensPerSecond, 50);
+		assert.equal(estimateTokenSpeed(35, 1600)?.tokensPerSecond, 21.875);
 	});
 
 	test("formats estimated and provider-calibrated rates", () => {

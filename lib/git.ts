@@ -81,9 +81,5 @@ export const gitLabelOptions = (git: GitState | null): readonly string[] => {
 	const branch = `⎇ ${head}`;
 	const dirty = changes.length > 0 ? `${branch} ●` : branch;
 
-	return [
-		...new Set(
-			[[branch, ...changes, ...sync].join(" "), [branch, ...changes].join(" "), dirty, branch].filter(Boolean),
-		),
-	];
+	return [[branch, ...changes, ...sync].join(" "), [branch, ...changes].join(" "), dirty, branch].filter(Boolean);
 };

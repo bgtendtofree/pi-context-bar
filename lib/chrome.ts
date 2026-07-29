@@ -33,8 +33,7 @@ export const formatCost = (cost: number): string => {
 	return `$${cost >= 1 ? cost.toFixed(2) : cost.toFixed(3)}`;
 };
 
-const metricGroup = (...parts: readonly string[]): string => parts.filter(Boolean).join("   ");
-const efficiencyGroup = (...parts: readonly string[]): string => parts.filter(Boolean).join("  ");
+const metricGroup = (separator: string, ...parts: readonly string[]): string => parts.filter(Boolean).join(separator);
 
 /** Metric options, widest → tightest. `%` and CH survive before cost. */
 export const freeMetricOptions = (
@@ -47,10 +46,10 @@ export const freeMetricOptions = (
 	const ch = usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "";
 	const speedText = formatTokenSpeed(speed);
 	const cost = formatCost(usage.cost);
-	const core = efficiencyGroup(ch, speedText);
+	const core = metricGroup("  ", ch, speedText);
 	const options = [
-		metricGroup(percent, efficiencyGroup(ch, speedText, cost)),
-		metricGroup(percent, core),
+		metricGroup("   ", percent, metricGroup("  ", ch, speedText, cost)),
+		metricGroup("   ", percent, core),
 		percent,
 		core || cost,
 		"",

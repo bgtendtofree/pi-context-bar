@@ -32,7 +32,7 @@ let gitRefreshGeneration = 0;
 let gitRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let gitPollTimer: ReturnType<typeof setInterval> | undefined;
 let gitRefreshInFlight = false;
-let pendingGitRefresh: Readonly<{ pi: ExtensionAPI; ctx: ExtensionContext }> | undefined;
+let pendingGitRefresh: ExtensionAPI | undefined;
 let gitPollingEnabled = false;
 let animationFrame = 0;
 let animationTimer: ReturnType<typeof setInterval> | undefined;
@@ -96,7 +96,7 @@ const resetTurnSpeed = (): void => {
 const runGitRefresh = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> => {
 	if (boundCtx !== ctx) return;
 	if (gitRefreshInFlight) {
-		pendingGitRefresh = { pi, ctx };
+		pendingGitRefresh = pi;
 		return;
 	}
 
@@ -117,7 +117,7 @@ const runGitRefresh = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<v
 		gitRefreshInFlight = false;
 		const pending = pendingGitRefresh;
 		pendingGitRefresh = undefined;
-		if (pending && boundCtx === pending.ctx) void runGitRefresh(pending.pi, pending.ctx);
+		if (pending) void runGitRefresh(pending, ctx);
 	}
 };
 

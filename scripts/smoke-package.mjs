@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PI_VERSION = "0.82.0";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const PI_VERSION = manifest.devDependencies["@earendil-works/pi-coding-agent"];
 const workspace = mkdtempSync(join(tmpdir(), "pi-package-smoke-"));
 const packDirectory = join(workspace, "pack");
 const hostDirectory = join(workspace, "host");

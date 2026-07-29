@@ -1,4 +1,4 @@
-/** Pure model/Git label fitting and rounded border rendering. */
+/** Pure model label fitting and rounded border rendering. */
 
 import { visibleWidth } from "@earendil-works/pi-tui";
 
@@ -19,28 +19,6 @@ export const editorModelOptions = (model: ModelInfo, thinkingLevel: string): rea
 	return [withThinking, shortWithThinking, shortId, shortId.length > 16 ? `${shortId.slice(0, 15)}…` : shortId].filter(
 		Boolean,
 	);
-};
-
-export const pickEditorBorderLabels = (
-	modelLabels: readonly string[],
-	gitLabels: readonly string[],
-	width: number,
-): Readonly<{ modelLabel: string; gitLabel: string }> => {
-	const fits = (modelLabel: string, gitLabel: string): boolean => {
-		const leftWidth = modelLabel ? visibleWidth(modelLabel) + 3 : 1;
-		const rightWidth = gitLabel ? visibleWidth(gitLabel) + 4 : 1;
-		return 2 + leftWidth + rightWidth + 3 <= width;
-	};
-
-	for (const modelLabel of modelLabels) {
-		for (const gitLabel of gitLabels) {
-			if (fits(modelLabel, gitLabel)) return { modelLabel, gitLabel };
-		}
-	}
-	for (const modelLabel of modelLabels) {
-		if (fits(modelLabel, "")) return { modelLabel, gitLabel: "" };
-	}
-	return { modelLabel: "", gitLabel: "" };
 };
 
 export const renderLabeledBorder = (

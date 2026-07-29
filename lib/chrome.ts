@@ -64,27 +64,11 @@ export const freeMetricOptions = (usage: SessionUsage, styles: ChromeStyles): re
 		styleCache(text, usage.cacheHitRate, styles),
 	);
 	const cost = styled(formatCost(usage.cost), styles.dim);
-	const metricGroup = (separator: string, ...parts: readonly string[]): string =>
-		parts.filter(Boolean).join(styles.dim(separator));
-	return [metricGroup("  ", ch, cost), ch, cost, ""];
+	return [[ch, cost].filter(Boolean).join(styles.dim("  ")), ch, ""];
 };
 
 const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>
 	foreground(color, `${glyph}${" ".repeat(cellWidth - 1)}`.repeat(Math.max(0, count)));
-
-const renderConsumedZone = (
-	cellCount: number,
-	ghostCellIndex: number | undefined,
-	ghostColor: string | undefined,
-	cellWidth: number,
-): string => {
-	if (!ghostColor || ghostCellIndex === undefined || ghostCellIndex < 0 || ghostCellIndex >= cellCount) {
-		return " ".repeat(cellCount * cellWidth);
-	}
-	return `${" ".repeat(ghostCellIndex * cellWidth)}${coloredCells(ghostColor, GHOST_GLYPH, 1, cellWidth)}${" ".repeat(
-		(cellCount - ghostCellIndex - 1) * cellWidth,
-	)}`;
-};
 
 /** Fixed-width truthful lane: empty consumed space, Pac-Man boundary, remaining pellets. */
 export const renderPacmanLane = (
@@ -117,7 +101,12 @@ export const renderPacmanLane = (
 	const preferredGhostDistance = Math.floor(Math.abs(Math.trunc(animationFrame)) / 2) % 2 === 0 ? 2 : 3;
 	const ghostDistance = Math.min(preferredGhostDistance, consumedCellCount);
 	const ghostCellIndex = ghostColor && consumedCellCount >= 2 ? consumedCellCount - ghostDistance : undefined;
-	const consumed = renderConsumedZone(consumedCellCount, ghostCellIndex, ghostColor, cellWidth);
+	const consumed =
+		ghostColor && ghostCellIndex !== undefined
+			? `${" ".repeat(ghostCellIndex * cellWidth)}${coloredCells(ghostColor, GHOST_GLYPH, 1, cellWidth)}${" ".repeat(
+					(consumedCellCount - ghostCellIndex - 1) * cellWidth,
+				)}`
+			: " ".repeat(consumedCellCount * cellWidth);
 	const remainder = " ".repeat(width - cellCount * cellWidth);
 	return `${consumed}${pacman}${pellets}${remainder}`;
 };

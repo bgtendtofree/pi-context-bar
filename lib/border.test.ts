@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { editorModelOptions, pickEditorBorderLabels, renderLabeledBorder } from "./border.ts";
+import { editorModelOptions, renderLabeledBorder } from "./border.ts";
 
 describe("editor model labels", () => {
 	test("keeps model before optional thinking", () => {
@@ -20,24 +20,14 @@ describe("editor model labels", () => {
 });
 
 describe("rounded editor border", () => {
-	test("fits both labels when possible", () => {
-		const picked = pickEditorBorderLabels(["gpt-5.6-sol · medium", "gpt-5.6-sol"], ["⎇ main ?1", "⎇ main"], 48);
-		assert.deepEqual(picked, { modelLabel: "gpt-5.6-sol · medium", gitLabel: "⎇ main ?1" });
-		const border = renderLabeledBorder(48, "╰", "╯", picked.modelLabel, picked.gitLabel, (text) => text);
+	test("renders left and right labels", () => {
+		const border = renderLabeledBorder(48, "╰", "╯", "gpt-5.6-sol · medium", "CH98%  $1.61", (text) => text);
 		assert.equal(visibleWidth(border), 48);
 		assert.ok(border.startsWith("╰─ gpt-5.6-sol · medium "));
-		assert.ok(border.endsWith(" ⎇ main ?1 ──╯"));
+		assert.ok(border.endsWith(" CH98%  $1.61 ──╯"));
 	});
 
-	test("degrades labels and handles tiny widths", () => {
-		assert.deepEqual(pickEditorBorderLabels(["model"], ["⎇ branch"], 14), {
-			modelLabel: "model",
-			gitLabel: "",
-		});
-		assert.deepEqual(pickEditorBorderLabels(["long-model"], ["⎇ branch"], 5), {
-			modelLabel: "",
-			gitLabel: "",
-		});
+	test("handles tiny widths", () => {
 		assert.equal(
 			renderLabeledBorder(0, "╰", "╯", "", "", (text) => text),
 			"",
@@ -55,7 +45,7 @@ describe("rounded editor border", () => {
 			"╰",
 			"╯",
 			"model",
-			"⎇ main",
+			"CH98%",
 			(text) => text,
 			(middleWidth) => "x".repeat(Math.min(middleWidth, 10)),
 		);
@@ -66,7 +56,7 @@ describe("rounded editor border", () => {
 			"╰",
 			"╯",
 			"model",
-			"⎇ main",
+			"CH98%",
 			(text) => text,
 			() => "",
 		);
@@ -74,11 +64,7 @@ describe("rounded editor border", () => {
 		assert.ok(!withoutMiddle.includes("x"));
 	});
 
-	test("fits labels by terminal columns", () => {
-		assert.deepEqual(pickEditorBorderLabels(["模型"], ["⎇ 分支"], 18), {
-			modelLabel: "模型",
-			gitLabel: "",
-		});
+	test("measures labels by terminal columns", () => {
 		assert.equal(visibleWidth(renderLabeledBorder(14, "╰", "╯", "模型", "", (text) => text)), 14);
 	});
 });

@@ -1,6 +1,6 @@
 # pi-context-bar
 
-Rounded editor + single-line context chrome for pi: model/Git border + Pac-Man lane + CH% + cost.
+Rounded editor + single-line context chrome for pi: model border + Pac-Man lane + CH% + cost.
 
 ## Goal
 
@@ -11,14 +11,14 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 - Health chrome lives inside the editor borders; no extra rows
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
 - Editor top border: Pac-Man lane (auto-fits window width, no cap) + context `%` beside lane + quiet live `t/s` at the right end
-- Editor bottom border: model/thinking left with `CH`/`$` beside it; local Git branch/status right, alone; never path or provider quota
-- Health metrics: `%` + quiet live `t/s` (top border) · `CH` + optional `$` (beside model)
+- Editor bottom border: model/thinking left, `CH`/`$` right; never path, Git, or provider quota
+- Health metrics: `%` + quiet live `t/s` (top border) · `CH` + optional `$` (bottom right)
 - Classic palette: cream pellets, yellow solid Nerd Font Pac-Man, phase-colored ghost
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets
 - No background color blocks; healthy text stays dim; only warning/error states gain color
 - Chomp driven by streamed tokens: mouth speed = throughput, static when idle (no timers)
 - Keep token speed dim: `~Nt/s` while estimated live, provider-calibrated `Nt/s` after turn
-- High CH stays quiet; low CH warns. Git branch stays dim; only dirty/sync markers gain color
+- High CH stays quiet; low CH warns
 - Functional style, no `any`, immutable snapshots
 - Pure logic in `lib/chrome.ts`; keep `index.ts` thin
 
@@ -26,8 +26,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 
 - `lib/context.ts` — native context snapshot types and session usage
 - `lib/chrome.ts` — Pac-Man lane, health metrics, health-row composition
-- `lib/git.ts` — pure local Git parsing / label cascade
-- `lib/border.ts` — pure model/Git border fitting
+- `lib/border.ts` — pure model border fitting
 - `lib/text.ts` — ANSI-safe text helpers
 - `ui/rounded-editor.ts` — Pi/TUI editor adapter
 - `index.ts` — extension state, I/O, lifecycle wiring only

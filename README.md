@@ -2,13 +2,13 @@
 
 Rounded editor with Pac-Man context chrome fused into its border for [pi](https://pi.dev).
 
-Model, cache hit, cost, and Git metadata live in the rounded editor border — zero extra chrome rows. The Pac-Man lane auto-fits the window width across the top border.
+Model, cache hit, and cost live in the rounded editor border — zero extra chrome rows. The Pac-Man lane auto-fits the window width across the top border.
 Slash-command autocomplete stays above the rounded editor instead of expanding inside it.
 
 ```
 ╭─ 󰮯 • • • o • • • 15.7%  ~42.3t/s ────────────────────────────────╮
 │ ›                                                                            │
-╰─ gpt-5.6-sol · medium  CH98%  $1.61 ─────────────────────── ⎇ main ?1 ───────╯
+╰─ gpt-5.6-sol · medium ─────────────────────────────── CH98%  $1.61 ──╯
 ```
 
 Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle.
@@ -17,22 +17,22 @@ Pac-Man moves left → right using Pi's native context usage. Eaten pellets beco
 
 `nano-context` has a great segmented bar, but its custom footer drops default pi stats (especially **cache hit `CH%`**) and stacks 3 chrome lines total.
 
-`pi-context-bar` turns context into a compact Pac-Man lane, restores `CH%` / cost, and separates stable environment metadata from live health. Default footer is replaced with an empty footer, model/Git move into the rounded editor border, and the redundant built-in streaming working row is hidden while the extension is active.
+`pi-context-bar` turns context into a compact Pac-Man lane, restores `CH%` / cost, and separates stable environment metadata from live health. Default footer is replaced with an empty footer, model and health metrics move into the rounded editor border, and the redundant built-in streaming working row is hidden while the extension is active.
 
 ## Layout
 
 | Zone | Content |
 |------|---------|
 | Editor border left | model · thinking |
-| Editor border right | Git branch plus staged `+`, unstaged `*`, untracked `?`, ahead `↑`, behind `↓` |
+| Editor border right | `CH` · optional `$` |
 | Pac-Man lane | empty consumed space → phase ghost while running → yellow Pac-Man → cream remaining pellets |
-| Right-aligned metrics | native `%` · `CH` · optional token speed `t/s` · optional `$` |
+| Right-aligned metrics | native `%` · optional token speed `t/s` |
 
-Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pellets, and the active ghost keep classic arcade colors. Git branch stays dim, with color limited to meaningful dirty/sync markers. Git is local-only and omitted outside repositories.
+Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pellets, and the active ghost keep classic arcade colors.
 
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 
-Top border carries context consumption (lane, `%`, `t/s`); bottom left carries session identity (model, `CH`, cost); bottom right is Git alone. The lane stretches with the window, so the rounded border never gaps.
+Top border carries context consumption (lane, `%`, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, so the rounded border never gaps.
 
 ## Font requirement
 

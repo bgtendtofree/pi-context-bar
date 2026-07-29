@@ -1,9 +1,7 @@
-import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
 import type { LaneActivity } from "./lib/chrome.ts";
 import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
-import { type GitState, parseGitStatus } from "./lib/git.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
@@ -16,7 +14,6 @@ type RenderRequester = Readonly<{ requestRender: () => void }>;
 
 type ChromeState = Readonly<{
 	context: ContextSnapshot;
-	git: GitState | null;
 	usage: SessionUsage;
 	chompTokens: number;
 	rewind: Readonly<{ usedTokens: number; frame: number }> | undefined;
@@ -25,16 +22,13 @@ type ChromeState = Readonly<{
 	tokenSpeed: TokenSpeedSnapshot | null;
 	speedStreamTokens: number;
 	speedStreamStartedAt: number | undefined;
-	speedMessageStartedAt: number | undefined;
 	speedTurnOutputTokens: number;
 	speedTurnActiveMs: number;
 	tui: RenderRequester | undefined;
-	ctx: ExtensionContext | undefined;
 }>;
 
 const freshState = (): ChromeState => ({
 	context: { usedTokens: 0, contextWindow: 0 },
-	git: null,
 	usage: { cost: 0, cacheHitRate: undefined },
 	chompTokens: 0,
 	rewind: undefined,
@@ -43,11 +37,9 @@ const freshState = (): ChromeState => ({
 	tokenSpeed: null,
 	speedStreamTokens: 0,
 	speedStreamStartedAt: undefined,
-	speedMessageStartedAt: undefined,
 	speedTurnOutputTokens: 0,
 	speedTurnActiveMs: 0,
 	tui: undefined,
-	ctx: undefined,
 });
 
 let state = freshState();
@@ -84,7 +76,6 @@ const resetTurnSpeed = (): void => {
 		tokenSpeed: null,
 		speedStreamTokens: 0,
 		speedStreamStartedAt: undefined,
-		speedMessageStartedAt: undefined,
 		speedTurnOutputTokens: 0,
 		speedTurnActiveMs: 0,
 		chompTokens: 0,
@@ -117,30 +108,15 @@ const startRewind = (fromUsedTokens: number): void => {
 	});
 };
 
-// ponytail: no in-flight guard — overlapping git status races are harmless and self-heal on the next event
-const refreshGit = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> => {
-	const result = await pi
-		.exec("git", ["status", "--porcelain=v2", "--branch"], { cwd: ctx.cwd, timeout: 1500 })
-		.catch(() => undefined);
-	if (state.ctx !== ctx || !result) return;
-	const nextGitState = result.code === 0 ? parseGitStatus(result.stdout) : null;
-	if (isDeepStrictEqual(state.git, nextGitState)) return;
-	patch({ git: nextGitState });
-	requestRender();
-};
-
 const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
-	patch({ ctx });
 	refreshSnapshot(ctx);
 	refreshSessionUsage(ctx);
-	void refreshGit(pi, ctx);
 
 	if (ctx.mode === "tui") ctx.ui.setWorkingVisible(false);
 	registerRoundedEditor(ctx, {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
-		getGit: () => state.git,
 		getHealth: () => ({
 			snapshot: state.rewind ? { ...state.context, usedTokens: state.rewind.usedTokens } : state.context,
 			usage: state.usage,
@@ -153,10 +129,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 		},
 	});
 
-	ctx.ui.setFooter((_tui, _theme, footerData) => {
-		const unsubscribe = footerData.onBranchChange(() => void refreshGit(pi, ctx));
-		return { render: () => [], invalidate: () => {}, dispose: unsubscribe };
-	});
+	ctx.ui.setFooter(() => ({ render: () => [], invalidate: () => {}, dispose: () => {} }));
 };
 
 export default function zContext(pi: ExtensionAPI): void {
@@ -179,7 +152,7 @@ export default function zContext(pi: ExtensionAPI): void {
 
 	pi.on("message_start", (event) => {
 		if (event.message.role !== "assistant") return;
-		patch({ speedStreamTokens: 0, speedStreamStartedAt: undefined, speedMessageStartedAt: undefined });
+		patch({ speedStreamTokens: 0, speedStreamStartedAt: undefined });
 	});
 
 	pi.on("message_update", (event) => {
@@ -204,7 +177,6 @@ export default function zContext(pi: ExtensionAPI): void {
 		patch({
 			speedStreamStartedAt: streamStartedAt,
 			speedStreamTokens: totalTokens,
-			speedMessageStartedAt: state.speedMessageStartedAt ?? now,
 			tokenSpeed: estimateTokenSpeed(totalTokens, now - streamStartedAt) ?? state.tokenSpeed,
 			chompTokens: state.chompTokens + tokens,
 		});
@@ -215,21 +187,16 @@ export default function zContext(pi: ExtensionAPI): void {
 		if (event.message.role !== "assistant") return;
 		patch({
 			speedTurnActiveMs:
-				state.speedMessageStartedAt !== undefined
-					? state.speedTurnActiveMs + performance.now() - state.speedMessageStartedAt
+				state.speedStreamStartedAt !== undefined
+					? state.speedTurnActiveMs + performance.now() - state.speedStreamStartedAt
 					: state.speedTurnActiveMs,
 			speedTurnOutputTokens: state.speedTurnOutputTokens + event.message.usage.output,
-			speedMessageStartedAt: undefined,
+			speedStreamStartedAt: undefined,
 		});
 	});
 
 	pi.on("tool_execution_start", () => {
 		if (changeLaneActivity("tools")) requestRender();
-	});
-	pi.on("tool_execution_end", (event, ctx) => {
-		if (event.toolName === "edit" || event.toolName === "write" || event.toolName === "bash") {
-			void refreshGit(pi, ctx);
-		}
 	});
 	pi.on("turn_end", (_event, ctx) => {
 		patch({
@@ -237,7 +204,6 @@ export default function zContext(pi: ExtensionAPI): void {
 		});
 		refreshSessionUsage(ctx);
 		requestRender();
-		void refreshGit(pi, ctx);
 	});
 
 	pi.on("agent_end", (_event, ctx) => {
@@ -246,8 +212,6 @@ export default function zContext(pi: ExtensionAPI): void {
 		refreshSessionUsage(ctx);
 		requestRender();
 	});
-	pi.on("agent_settled", (_event, ctx) => void refreshGit(pi, ctx));
-
 	pi.on("model_select", requestRender);
 	pi.on("thinking_level_select", requestRender);
 	pi.on("session_compact", (_event, ctx) => {
@@ -268,7 +232,6 @@ export default function zContext(pi: ExtensionAPI): void {
 		refreshSnapshot(ctx);
 		refreshSessionUsage(ctx);
 		requestRender();
-		void refreshGit(pi, ctx);
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
 		if (state.rewindTimer) clearInterval(state.rewindTimer);

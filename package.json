@@ -1,7 +1,7 @@
 {
 	"name": "pi-context-bar",
 	"version": "0.1.0",
-	"description": "Rounded Pi editor with Pac-Man context health, cache hit, cost, and Git state.",
+	"description": "Rounded Pi editor with Pac-Man context health, cache hit, and cost.",
 	"type": "module",
 	"license": "MIT",
 	"engines": {
@@ -19,7 +19,6 @@
 		"lib/border.ts",
 		"lib/chrome.ts",
 		"lib/context.ts",
-		"lib/git.ts",
 		"lib/speed.ts",
 		"lib/text.ts",
 		"ui/rounded-editor.ts",
@@ -33,13 +32,8 @@
 	},
 	"scripts": {
 		"typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
-		"lint": "biome lint .",
-		"format": "biome format --write .",
-		"format:check": "biome format .",
-		"fix": "biome check --write .",
 		"quality": "biome ci .",
 		"test": "node --test",
-		"test:watch": "node --test --watch",
 		"test:coverage": "rm -rf coverage && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='lib/*.ts' --test-coverage-exclude='lib/*.test.ts' --test-coverage-lines=90 --test-coverage-functions=90 --test-coverage-branches=90 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info",
 		"smoke:package": "node scripts/smoke-package.mjs",
 		"validate": "npm run quality && npm run typecheck && npm test",

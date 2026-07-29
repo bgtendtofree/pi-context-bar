@@ -49,25 +49,15 @@ const styleCache = (text: string, rate: number | undefined, styles: ChromeStyles
 
 const styled = (text: string, style: (text: string) => string): string => (text ? style(text) : "");
 
-/** Metric options, widest → tightest, styled at construction. `%` and CH survive before cost. */
-export const freeMetricOptions = (
-	snapshot: ContextSnapshot,
-	usage: SessionUsage,
-	styles: ChromeStyles,
-): readonly string[] => {
-	const percentValue = snapshot.contextWindow > 0 ? (snapshot.usedTokens / snapshot.contextWindow) * 100 : 0;
-	const percent = styled(snapshot.contextWindow > 0 ? `${percentValue.toFixed(1)}%` : "", (text) =>
-		styleUsage(text, percentValue, styles),
-	);
+/** Cache/cost options, widest → tightest, styled at construction. CH survives before cost. */
+export const freeMetricOptions = (usage: SessionUsage, styles: ChromeStyles): readonly string[] => {
 	const ch = styled(usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "", (text) =>
 		styleCache(text, usage.cacheHitRate, styles),
 	);
 	const cost = styled(formatCost(usage.cost), styles.dim);
 	const metricGroup = (separator: string, ...parts: readonly string[]): string =>
 		parts.filter(Boolean).join(styles.dim(separator));
-	const core = metricGroup("  ", ch, cost);
-	const options = [metricGroup("   ", percent, core), metricGroup("   ", percent, ch), percent, ch || cost, ""];
-	return [...new Set(options)];
+	return [...new Set([metricGroup("  ", ch, cost), ch, cost, ""])];
 };
 
 export const pickFirstFitting = (options: readonly string[], width: number): string => {
@@ -128,7 +118,7 @@ export const renderPacmanLane = (
 	return `${consumed}${pacman}${pellets}${remainder}`;
 };
 
-/** Top-border strip: auto-fit lane filling the width, quiet speed at the right end. */
+/** Top-border strip: auto-fit lane with context `%`, quiet speed at the right end. */
 export const renderLaneStrip = (
 	snapshot: ContextSnapshot,
 	width: number,
@@ -138,8 +128,15 @@ export const renderLaneStrip = (
 	speed: TokenSpeedSnapshot | null = null,
 ): string => {
 	if (width <= 2) return "";
-	const speedText = styled(formatTokenSpeed(speed), styles.dim);
-	const laneWidth = Math.max(0, width - 2 - (speedText ? plainWidth(speedText) + 1 : 0));
-	const lane = renderPacmanLane(snapshot, laneWidth, animationFrame, activity);
-	return speedText ? ` ${lane} ${speedText} ` : ` ${lane} `;
+	const percentValue = snapshot.contextWindow > 0 ? (snapshot.usedTokens / snapshot.contextWindow) * 100 : 0;
+	let percent = styled(snapshot.contextWindow > 0 ? `${percentValue.toFixed(1)}%` : "", (text) =>
+		styleUsage(text, percentValue, styles),
+	);
+	let speedText = styled(formatTokenSpeed(speed), styles.dim);
+	const laneWidth = (): number =>
+		width - 2 - (percent ? plainWidth(percent) + 1 : 0) - (speedText ? plainWidth(speedText) + 1 : 0);
+	if (laneWidth() < 4 && speedText) speedText = "";
+	if (laneWidth() < 4 && percent) percent = "";
+	const lane = renderPacmanLane(snapshot, Math.max(0, laneWidth()), animationFrame, activity);
+	return ` ${[lane, percent, speedText].filter(Boolean).join(" ")} `;
 };

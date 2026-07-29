@@ -114,11 +114,11 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 			const usedByLabels =
 				2 + (picked.modelLabel ? plainWidth(modelLabel) + 3 : 1) + (picked.gitLabel ? plainWidth(gitLabel) + 4 : 1);
 			const metrics = pickFirstFitting(
-				freeMetricOptions(health.snapshot, health.usage, healthStyles),
+				freeMetricOptions(health.usage, healthStyles),
 				Math.max(0, width - usedByLabels - 3),
 			);
-			const rightLabel = [metrics, gitLabel].filter(Boolean).join("  ");
-			result.push(renderLabeledBorder(width, "╰", "╯", modelLabel, rightLabel, borderColor));
+			const leftLabel = [modelLabel, metrics].filter(Boolean).join("  ");
+			result.push(renderLabeledBorder(width, "╰", "╯", leftLabel, gitLabel, borderColor));
 			const popup = autocomplete.map((line) => `  ${line}${" ".repeat(Math.max(0, width - visibleWidth(line) - 2))}`);
 			return [...popup, ...result];
 		}

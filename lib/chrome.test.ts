@@ -57,16 +57,16 @@ describe("health metric formatting", () => {
 	});
 
 	test("builds wide and narrow options", () => {
-		const options = freeMetricOptions(dominantSnapshot, full, identityStyles);
-		assert.equal(options[0], "15.6%   CH98%  $1.61");
+		const options = freeMetricOptions(full, identityStyles);
+		assert.equal(options[0], "CH98%  $1.61");
 		assert.equal(pickFirstFitting(options, 200), options[0]);
-		assert.ok(plainWidth(pickFirstFitting(options, 15)) <= 15);
+		assert.ok(plainWidth(pickFirstFitting(options, 6)) <= 6);
 		assert.equal(pickFirstFitting(options, -1), "");
 	});
 
 	test("supports missing CH", () => {
-		const options = freeMetricOptions(dominantSnapshot, usage({ cost: 0.042 }), identityStyles);
-		assert.ok(options[0]?.startsWith("15.6%"));
+		const options = freeMetricOptions(usage({ cost: 0.042 }), identityStyles);
+		assert.ok(options[0]?.startsWith("$"));
 		assert.equal(
 			options.every((option) => !option.includes("CH")),
 			true,
@@ -75,24 +75,19 @@ describe("health metric formatting", () => {
 });
 
 describe("semantic metric styling", () => {
-	test("keeps healthy values quiet", () => {
-		const widest =
-			freeMetricOptions(snapshot({ usedTokens: 102_600 }), usage({ cost: 6.65, cacheHitRate: 99 }), markedStyles)[0] ??
-			"";
-		assert.ok(widest.includes("<d>51.3%</d>"));
+	test("keeps healthy cache quiet", () => {
+		const widest = freeMetricOptions(usage({ cost: 6.65, cacheHitRate: 99 }), markedStyles)[0] ?? "";
 		assert.ok(widest.includes("<d>CH99%</d>"));
 		assert.ok(!widest.includes("<w>"));
 		assert.ok(!widest.includes("<e>"));
 	});
 
-	test("accents only unhealthy usage and cache", () => {
-		const warning =
-			freeMetricOptions(snapshot({ usedTokens: 150_000 }), usage({ cacheHitRate: 60 }), markedStyles)[0] ?? "";
-		assert.ok(warning.includes("<w>75.0%</w>"));
-		const error =
-			freeMetricOptions(snapshot({ usedTokens: 190_000 }), usage({ cacheHitRate: 20 }), markedStyles)[0] ?? "";
+	test("accents only unhealthy cache", () => {
+		const warning = freeMetricOptions(usage({ cacheHitRate: 60 }), markedStyles)[0] ?? "";
+		assert.ok(warning.includes("<w>CH60%</w>"));
+		const error = freeMetricOptions(usage({ cacheHitRate: 20 }), markedStyles)[0] ?? "";
 		assert.ok(error.includes("<e>CH20%</e>"));
-		assert.equal(freeMetricOptions(snapshot({ contextWindow: 0 }), usage(), markedStyles)[0], "");
+		assert.equal(freeMetricOptions(usage(), markedStyles)[0], "");
 	});
 });
 
@@ -165,13 +160,27 @@ describe("Pac-Man lane", () => {
 });
 
 describe("lane strip", () => {
-	test("fills the width with lane and quiet speed", () => {
+	test("fills the width with lane, percent, and quiet speed", () => {
 		const strip = stripAnsi(
 			renderLaneStrip(dominantSnapshot, 40, identityStyles, 0, "idle", { tokensPerSecond: 42.25, estimated: true }),
 		);
 		assert.equal(plainWidth(strip), 40);
+		assert.ok(strip.includes("15.6%"));
 		assert.ok(strip.endsWith("~42.3t/s "));
 		assert.ok(strip.includes(PACMAN_GLYPH));
+	});
+
+	test("accents unhealthy usage percent", () => {
+		assert.ok(renderLaneStrip(snapshot({ usedTokens: 150_000 }), 30, markedStyles).includes("<w>75.0%</w>"));
+		assert.ok(renderLaneStrip(snapshot({ usedTokens: 190_000 }), 30, markedStyles).includes("<e>95.0%</e>"));
+	});
+
+	test("drops speed before percent on narrow strips", () => {
+		const narrow = stripAnsi(
+			renderLaneStrip(dominantSnapshot, 14, identityStyles, 0, "idle", { tokensPerSecond: 42.25, estimated: true }),
+		);
+		assert.ok(!narrow.includes("t/s"));
+		assert.ok(narrow.includes("15.6%"));
 	});
 
 	test("auto-fits lane with window width", () => {

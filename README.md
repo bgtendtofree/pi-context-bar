@@ -6,9 +6,9 @@ Model, cache hit, cost, and Git metadata live in the rounded editor border — z
 Slash-command autocomplete stays above the rounded editor instead of expanding inside it.
 
 ```
-╭─ 󰮯 • • • o • • • ~42.3t/s ─────────────────────────────────────────╮
+╭─ 󰮯 • • • o • • • 15.7%  ~42.3t/s ────────────────────────────────╮
 │ ›                                                                            │
-╰─ gpt-5.6-sol · medium ────────────────── 15.7%   CH98%  $1.61 ── ⎇ main ?1 ──╯
+╰─ gpt-5.6-sol · medium  CH98%  $1.61 ─────────────────────── ⎇ main ?1 ───────╯
 ```
 
 Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle.
@@ -32,7 +32,7 @@ Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pelle
 
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 
-Width cascade compresses Git details, cost, and model details while preserving model, branch, `%`, and `CH` longest. The lane stretches with the window, so the rounded border never gaps.
+Top border carries context consumption (lane, `%`, `t/s`); bottom left carries session identity (model, `CH`, cost); bottom right is Git alone. The lane stretches with the window, so the rounded border never gaps.
 
 ## Font requirement
 

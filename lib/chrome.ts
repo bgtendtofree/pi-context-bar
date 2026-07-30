@@ -93,7 +93,7 @@ export const renderPacmanLane = (
 	activity: LaneActivity = "idle",
 ): string => {
 	if (width <= 0) return "";
-	const frameIndex = Math.abs(Math.trunc(animationFrame)) % PACMAN_FRAMES.length;
+	const frameIndex = activity === "idle" ? 0 : Math.abs(Math.trunc(animationFrame)) % PACMAN_FRAMES.length;
 	const pacmanGlyph = PACMAN_FRAMES[frameIndex] ?? PACMAN_GLYPH;
 	if (width === 1) return foreground(PACMAN_TEXT, pacmanGlyph);
 

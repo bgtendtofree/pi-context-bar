@@ -119,12 +119,17 @@ describe("Pac-Man lane", () => {
 	});
 
 	test("animates mouth without resurrecting pellets", () => {
-		const open = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 0));
-		const closed = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 1));
+		const open = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 0, "working"));
+		const closed = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 1, "working"));
 		assert.ok(open.includes(PACMAN_FRAMES[0]));
 		assert.ok(closed.includes(PACMAN_FRAMES[1]));
 		assert.equal(open.split(PELLET_GLYPH).length - 1, 2);
 		assert.equal(closed.split(PELLET_GLYPH).length - 1, 2);
+	});
+
+	test("pins open-mouth Pac-Man while idle", () => {
+		assert.ok(stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 1)).includes(PACMAN_GLYPH));
+		assert.ok(!stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 1)).includes(PACMAN_FRAMES[1]));
 	});
 
 	test("shows phase ghost only while active", () => {

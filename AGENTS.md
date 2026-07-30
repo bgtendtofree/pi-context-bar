@@ -26,6 +26,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 
 - `lib/context.ts` — native context snapshot types and session usage
 - `lib/chrome.ts` — Pac-Man lane, health metrics, health-row composition
+- `lib/header.ts` — startup sweep frame + quiet welcome header
 - `lib/border.ts` — pure model border fitting
 - `lib/text.ts` — ANSI-safe text helpers
 - `ui/rounded-editor.ts` — Pi/TUI editor adapter

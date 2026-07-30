@@ -39,6 +39,21 @@ export type ChromeStyles = Readonly<{
 	error: (text: string) => string;
 }>;
 
+/** Frames per full breath cycle; ticks at ~150ms give a ~1.8s inhale/exhale. */
+export const BREATH_STEPS = 12;
+/** Grayscale ramp bounds: quiet dark gray up to visible light gray, never a color. */
+const BREATH_GRAY_MIN = 239;
+const BREATH_GRAY_MAX = 247;
+
+/** Breathing border styler: sine over the 256-color grayscale ramp, driven by breath frames. */
+export const breathingBorderColor = (frame: number): ((text: string) => string) => {
+	const phase = (Math.abs(Math.trunc(frame)) % BREATH_STEPS) / BREATH_STEPS;
+	const gray = Math.round(
+		BREATH_GRAY_MIN + (BREATH_GRAY_MAX - BREATH_GRAY_MIN) * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase)),
+	);
+	return (text) => `\x1b[38;5;${gray}m${text}\x1b[39m`;
+};
+
 export const formatCost = (cost: number): string => {
 	if (cost <= 0) return "";
 	return `$${cost >= 1 ? cost.toFixed(2) : cost.toFixed(3)}`;

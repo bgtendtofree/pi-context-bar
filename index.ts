@@ -6,9 +6,10 @@ import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type Toke
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
 /** Streamed tokens per mouth frame: chomp speed follows throughput. */
-const PACMAN_TOKENS_PER_FRAME = 8;
+const PACMAN_TOKENS_PER_FRAME = 3;
 const REWIND_FRAMES = 6;
 const REWIND_FRAME_MS = 70;
+const BREATH_FRAME_MS = 150;
 
 type RenderRequester = Readonly<{ requestRender: () => void }>;
 
@@ -19,6 +20,8 @@ type ChromeState = Readonly<{
 	rewind: Readonly<{ usedTokens: number; frame: number }> | undefined;
 	rewindTimer: ReturnType<typeof setInterval> | undefined;
 	laneActivity: LaneActivity;
+	breathFrame: number;
+	breathTimer: ReturnType<typeof setInterval> | undefined;
 	tokenSpeed: TokenSpeedSnapshot | null;
 	speedStreamTokens: number;
 	speedStreamStartedAt: number | undefined;
@@ -34,6 +37,8 @@ const freshState = (): ChromeState => ({
 	rewind: undefined,
 	rewindTimer: undefined,
 	laneActivity: "idle",
+	breathFrame: 0,
+	breathTimer: undefined,
 	tokenSpeed: null,
 	speedStreamTokens: 0,
 	speedStreamStartedAt: undefined,
@@ -68,6 +73,19 @@ const requestRender = (): void => state.tui?.requestRender();
 const changeLaneActivity = (next: LaneActivity): boolean => {
 	if (state.laneActivity === next) return false;
 	patch({ laneActivity: next });
+	if (next === "idle") {
+		if (state.breathTimer) clearInterval(state.breathTimer);
+		patch({ breathTimer: undefined, breathFrame: 0 });
+		return true;
+	}
+	if (!state.breathTimer) {
+		patch({
+			breathTimer: setInterval(() => {
+				patch({ breathFrame: state.breathFrame + 1 });
+				requestRender();
+			}, BREATH_FRAME_MS),
+		});
+	}
 	return true;
 };
 
@@ -123,6 +141,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 			speed: state.tokenSpeed,
 			frame: Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0),
 			activity: state.laneActivity,
+			breathFrame: state.breathFrame,
 		}),
 		onTui: (tui) => {
 			patch({ tui });
@@ -235,6 +254,7 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
 		if (state.rewindTimer) clearInterval(state.rewindTimer);
+		if (state.breathTimer) clearInterval(state.breathTimer);
 		state = freshState();
 		if (ctx.mode === "tui") {
 			ctx.ui.setWorkingVisible(true);

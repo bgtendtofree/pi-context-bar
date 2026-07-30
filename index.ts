@@ -1,7 +1,19 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { VERSION } from "@earendil-works/pi-coding-agent";
+import { getKeybindings } from "@earendil-works/pi-tui";
 import type { ModelInfo } from "./lib/border.ts";
 import type { LaneActivity } from "./lib/chrome.ts";
 import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
+import {
+	COMPACT_HINT_DEFS,
+	EXPANDED_HINT_DEFS,
+	formatKeyText,
+	type HeaderStyles,
+	type Hint,
+	renderSweepLine,
+	renderWelcome,
+	SWEEP_FRAMES,
+} from "./lib/header.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
@@ -10,6 +22,7 @@ const PACMAN_TOKENS_PER_FRAME = 3;
 const REWIND_FRAMES = 6;
 const REWIND_FRAME_MS = 70;
 const BREATH_FRAME_MS = 150;
+const SWEEP_FRAME_MS = 60;
 
 type RenderRequester = Readonly<{ requestRender: () => void }>;
 
@@ -28,6 +41,7 @@ type ChromeState = Readonly<{
 	speedTurnOutputTokens: number;
 	speedTurnActiveMs: number;
 	tui: RenderRequester | undefined;
+	welcomeTimer: ReturnType<typeof setInterval> | undefined;
 }>;
 
 const freshState = (): ChromeState => ({
@@ -45,6 +59,7 @@ const freshState = (): ChromeState => ({
 	speedTurnOutputTokens: 0,
 	speedTurnActiveMs: 0,
 	tui: undefined,
+	welcomeTimer: undefined,
 });
 
 let state = freshState();
@@ -126,12 +141,75 @@ const startRewind = (fromUsedTokens: number): void => {
 	});
 };
 
-const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
+const headerStyles = (ctx: ExtensionContext): HeaderStyles => ({
+	accent: (text) => ctx.ui.theme.bold(ctx.ui.theme.fg("accent", text)),
+	dim: (text) => ctx.ui.theme.fg("dim", text),
+	muted: (text) => ctx.ui.theme.fg("muted", text),
+});
+
+const resolveHints = (
+	defs: ReadonlyArray<Readonly<{ id: string; action: string; rawKey?: string }>>,
+): readonly Hint[] =>
+	defs.map(({ id, action, rawKey }) => ({
+		key: rawKey ?? formatKeyText(getKeybindings().getKeys(id as never) ?? [], process.platform),
+		action,
+	}));
+
+const welcomeInfo = () => ({ version: VERSION });
+
+/** Quiet header after the sweep; expandable via the same keybinding as pi's built-in header. */
+const setWelcomeHeader = (ctx: ExtensionContext): void => {
+	const info = welcomeInfo();
+	ctx.ui.setHeader(() => {
+		let expanded = false;
+		return {
+			render: (width: number) => [
+				...renderWelcome(
+					info,
+					resolveHints(COMPACT_HINT_DEFS),
+					resolveHints(EXPANDED_HINT_DEFS),
+					expanded,
+					width,
+					headerStyles(ctx),
+				),
+			],
+			invalidate: () => {},
+			setExpanded: (next: boolean) => {
+				expanded = next;
+			},
+		};
+	});
+};
+
+/** Opening sweep: Pac-Man eats the header lane once, then the quiet welcome header stays. */
+const playWelcome = (ctx: ExtensionContext): void => {
+	if (ctx.mode !== "tui") return;
+	let frame = 0;
+	ctx.ui.setHeader(() => ({
+		render: (width: number) => ["", renderSweepLine(frame, width)],
+		invalidate: () => {},
+	}));
+	patch({
+		welcomeTimer: setInterval(() => {
+			frame += 1;
+			if (frame > SWEEP_FRAMES) {
+				if (state.welcomeTimer) clearInterval(state.welcomeTimer);
+				patch({ welcomeTimer: undefined });
+				setWelcomeHeader(ctx);
+				return;
+			}
+			requestRender();
+		}, SWEEP_FRAME_MS),
+	});
+};
+
+const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext, reason: string): void => {
 	if (!ctx.hasUI) return;
 	refreshSnapshot(ctx);
 	refreshSessionUsage(ctx);
 
 	if (ctx.mode === "tui") ctx.ui.setWorkingVisible(false);
+	if (reason === "startup" || reason === "new") playWelcome(ctx);
 	registerRoundedEditor(ctx, {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
@@ -152,7 +230,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 };
 
 export default function zContext(pi: ExtensionAPI): void {
-	pi.on("session_start", (_event, ctx) => registerChrome(pi, ctx));
+	pi.on("session_start", (event, ctx) => registerChrome(pi, ctx, event.reason));
 
 	pi.on("context", (_event, ctx) => {
 		if (state.laneActivity !== "idle") changeLaneActivity("thinking");
@@ -255,10 +333,12 @@ export default function zContext(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", (_event, ctx) => {
 		if (state.rewindTimer) clearInterval(state.rewindTimer);
 		if (state.breathTimer) clearInterval(state.breathTimer);
+		if (state.welcomeTimer) clearInterval(state.welcomeTimer);
 		state = freshState();
 		if (ctx.mode === "tui") {
 			ctx.ui.setWorkingVisible(true);
 			ctx.ui.setEditorComponent(undefined);
+			ctx.ui.setHeader(undefined);
 		}
 		ctx.ui.setFooter(undefined);
 	});

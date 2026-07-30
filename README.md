@@ -11,7 +11,7 @@ Slash-command autocomplete stays above the rounded editor instead of expanding i
 ╰─ gpt-5.6-sol · medium ─────────────────────────────── CH98%  $1.61 ──╯
 ```
 
-Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle.
+Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle. While the agent works, the rounded border itself breathes — a slow grayscale sine on the frame — so slow turns still read as alive; the border returns to the theme color the moment the agent goes idle.
 
 ## Why
 
@@ -33,6 +33,12 @@ Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pelle
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 
 Top border carries context consumption (lane, `%`, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, so the rounded border never gaps.
+
+## Startup
+
+On session start, Pac-Man sweeps the header lane once (eating every pellet in ~0.6s), then a quiet welcome header stays: bold `pi` + version on one row, resolved keybinding hints (`esc interrupt · ctrl+c exit · / commands · ! bash · …`) on the next. Keys are read from your actual keybindings, so remaps show correctly, and the expand keybinding toggles a full hint list. No model or cwd repeats — those already live in the editor border and your shell. The sweep plays on `startup` and `/new` only, never on reload.
+
+Pairs well with `"quietStartup": true` in `~/.pi/agent/settings.json`, which hides pi's `[Context] [Skills] [Extensions]` loaded-resources rows; resource details remain available via `/status`.
 
 ## Font requirement
 

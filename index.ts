@@ -50,6 +50,7 @@ type ChromeState = Readonly<{
 	tui: RenderRequester | undefined;
 	welcomeTimer: ReturnType<typeof setInterval> | undefined;
 	quota: KimiUsage | undefined;
+	quotaActive: boolean;
 	quotaTimer: ReturnType<typeof setInterval> | undefined;
 }>;
 
@@ -70,6 +71,7 @@ const freshState = (): ChromeState => ({
 	tui: undefined,
 	welcomeTimer: undefined,
 	quota: undefined,
+	quotaActive: false,
 	quotaTimer: undefined,
 });
 
@@ -89,8 +91,16 @@ const refreshSessionUsage = (ctx: ExtensionContext): void => {
 	patch({ usage: accumulateSessionUsage(ctx.sessionManager.getEntries()) });
 };
 
+/** Quota belongs to the active model's provider; a non-kimi model hides and stops polling it. */
+const syncQuotaActivity = (ctx: ExtensionContext): void => {
+	const active = ctx.model?.provider === "kimi-coding";
+	if (!active && state.quota) patch({ quota: undefined });
+	patch({ quotaActive: active });
+};
+
 /** Poll the Coding Plan quota API; failures keep the last good snapshot and stay silent. */
 const refreshQuota = async (): Promise<void> => {
+	if (!state.quotaActive) return;
 	const key = kimiApiKey();
 	if (!key) return;
 	try {
@@ -233,6 +243,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext, reason: string)
 
 	if (ctx.mode === "tui") ctx.ui.setWorkingVisible(false);
 	if (reason === "startup" || reason === "new") playWelcome(ctx);
+	syncQuotaActivity(ctx);
 	if (kimiApiKey()) {
 		void refreshQuota();
 		if (!state.quotaTimer) patch({ quotaTimer: setInterval(() => void refreshQuota(), QUOTA_REFRESH_MS) });
@@ -337,7 +348,11 @@ export default function zContext(pi: ExtensionAPI): void {
 		refreshSessionUsage(ctx);
 		requestRender();
 	});
-	pi.on("model_select", requestRender);
+	pi.on("model_select", (_event, ctx) => {
+		syncQuotaActivity(ctx);
+		if (state.quotaActive) void refreshQuota();
+		requestRender();
+	});
 	pi.on("thinking_level_select", requestRender);
 	pi.on("session_compact", (_event, ctx) => {
 		const before = state.context;

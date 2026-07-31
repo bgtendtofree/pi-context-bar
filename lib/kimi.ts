@@ -50,25 +50,30 @@ const shortName = (data: JsonObject, fallback: string): string => {
 	return typeof name === "string" && name ? name : fallback;
 };
 
-/** The /usages payload: flat rows, the weekly summary tagged model_name "all". */
+/** The /usages payload: weekly summary under `usage`, rate-limit windows under `limits`. */
 export const parseKimiUsage = (payload: unknown): KimiUsage => {
-	if (!isObject(payload) || !Array.isArray(payload.data)) return { weeklyPercent: undefined, limits: [] };
-	let weeklyPercent: number | undefined;
+	if (!isObject(payload)) return { weeklyPercent: undefined, limits: [] };
+	const weeklyPercent = isObject(payload.usage) ? usedPercent(payload.usage) : undefined;
 	const limits: KimiLimit[] = [];
-	for (const [index, item] of payload.data.entries()) {
-		if (!isObject(item)) continue;
-		const percent = usedPercent(item);
-		if (percent === undefined) continue;
-		if (item.model_name === "all") weeklyPercent = percent;
-		else limits.push({ label: windowLabel(item, shortName(item, `L${index + 1}`)), percent });
+	if (Array.isArray(payload.limits)) {
+		for (const [index, item] of payload.limits.entries()) {
+			if (!isObject(item)) continue;
+			const detail = isObject(item.detail) ? item.detail : item;
+			const percent = usedPercent(detail);
+			if (percent === undefined) continue;
+			const window = isObject(item.window) ? item.window : detail;
+			limits.push({ label: windowLabel(window, shortName(detail, `L${index + 1}`)), percent });
+		}
 	}
 	return { weeklyPercent, limits };
 };
 
-/** Fetch Coding Plan quota from the active model's base URL. Throws on non-200. */
+/** Fetch Coding Plan quota; model base URLs are Anthropic-style (…/coding), the usage API lives under /v1. */
 export const fetchKimiUsage = async (apiKey: string, baseUrl: string): Promise<KimiUsage> => {
 	const headers = { Authorization: `Bearer ${apiKey}`, "User-Agent": "KimiCLI/1.6" };
-	const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/usages`, { headers });
+	const base = baseUrl.replace(/\/+$/, "");
+	const url = base.endsWith("/v1") ? `${base}/usages` : `${base}/v1/usages`;
+	const response = await fetch(url, { headers });
 	if (!response.ok) throw new Error(`Kimi usage API ${response.status}`);
 	return parseKimiUsage(await response.json());
 };

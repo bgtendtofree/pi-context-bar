@@ -14,6 +14,7 @@ import {
 	renderWelcome,
 	SWEEP_FRAMES,
 } from "./lib/header.ts";
+import { fetchKimiUsage, type KimiUsage, readKimiKeyFromAuthStore } from "./lib/kimi.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
@@ -23,6 +24,12 @@ const REWIND_FRAMES = 6;
 const REWIND_FRAME_MS = 70;
 const BREATH_FRAME_MS = 150;
 const SWEEP_FRAME_MS = 60;
+/** Coding Plan quota poll interval; the API has no push, 5 min is fresh enough. */
+const QUOTA_REFRESH_MS = 5 * 60 * 1000;
+
+/** Kimi Code (Coding Plan) key, mirroring pi's own resolution: /login store first, env second. Missing key = quota stays hidden. */
+const kimiApiKey = (): string | undefined =>
+	readKimiKeyFromAuthStore() ?? process.env.KIMI_API_KEY ?? process.env.KIMI_CODING_API_KEY;
 
 type RenderRequester = Readonly<{ requestRender: () => void }>;
 
@@ -42,6 +49,8 @@ type ChromeState = Readonly<{
 	speedTurnActiveMs: number;
 	tui: RenderRequester | undefined;
 	welcomeTimer: ReturnType<typeof setInterval> | undefined;
+	quota: KimiUsage | undefined;
+	quotaTimer: ReturnType<typeof setInterval> | undefined;
 }>;
 
 const freshState = (): ChromeState => ({
@@ -60,6 +69,8 @@ const freshState = (): ChromeState => ({
 	speedTurnActiveMs: 0,
 	tui: undefined,
 	welcomeTimer: undefined,
+	quota: undefined,
+	quotaTimer: undefined,
 });
 
 let state = freshState();
@@ -76,6 +87,18 @@ const refreshSnapshot = (ctx: ExtensionContext): void => {
 
 const refreshSessionUsage = (ctx: ExtensionContext): void => {
 	patch({ usage: accumulateSessionUsage(ctx.sessionManager.getEntries()) });
+};
+
+/** Poll the Coding Plan quota API; failures keep the last good snapshot and stay silent. */
+const refreshQuota = async (): Promise<void> => {
+	const key = kimiApiKey();
+	if (!key) return;
+	try {
+		patch({ quota: await fetchKimiUsage(key, process.env.KIMI_BASE_URL) });
+		requestRender();
+	} catch {
+		// ponytail: quota is advisory chrome; a failed poll must never break the editor
+	}
 };
 
 const currentModel = (ctx: ExtensionContext): ModelInfo => {
@@ -210,12 +233,17 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext, reason: string)
 
 	if (ctx.mode === "tui") ctx.ui.setWorkingVisible(false);
 	if (reason === "startup" || reason === "new") playWelcome(ctx);
+	if (kimiApiKey()) {
+		void refreshQuota();
+		if (!state.quotaTimer) patch({ quotaTimer: setInterval(() => void refreshQuota(), QUOTA_REFRESH_MS) });
+	}
 	registerRoundedEditor(ctx, {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
 		getHealth: () => ({
 			snapshot: state.rewind ? { ...state.context, usedTokens: state.rewind.usedTokens } : state.context,
 			usage: state.usage,
+			quota: state.quota,
 			speed: state.tokenSpeed,
 			frame: Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0),
 			activity: state.laneActivity,
@@ -334,6 +362,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		if (state.rewindTimer) clearInterval(state.rewindTimer);
 		if (state.breathTimer) clearInterval(state.breathTimer);
 		if (state.welcomeTimer) clearInterval(state.welcomeTimer);
+		if (state.quotaTimer) clearInterval(state.quotaTimer);
 		state = freshState();
 		if (ctx.mode === "tui") {
 			ctx.ui.setWorkingVisible(true);

@@ -11,7 +11,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 - Health chrome lives inside the editor borders; no extra rows
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
 - Editor top border: Pac-Man lane (auto-fits window width, no cap) + context `%` beside lane + quiet live `t/s` at the right end
-- Editor bottom border: model/thinking left, `CH`/`$` right; never path, Git, or provider quota
+- Editor bottom border: model/thinking + Kimi quota beside it on the left, `CH`/`$` right; never path or Git
 - Health metrics: `%` + quiet live `t/s` (top border) · `CH` + optional `$` (bottom right)
 - Classic palette: cream pellets, yellow solid Nerd Font Pac-Man, phase-colored ghost
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets
@@ -26,6 +26,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 
 - `lib/context.ts` — native context snapshot types and session usage
 - `lib/chrome.ts` — Pac-Man lane, health metrics, health-row composition
+- `lib/kimi.ts` — Kimi Code (Coding Plan) quota fetch, parse, metric formatting
 - `lib/header.ts` — startup sweep frame + quiet welcome header
 - `lib/border.ts` — pure model border fitting
 - `lib/text.ts` — ANSI-safe text helpers

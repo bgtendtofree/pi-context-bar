@@ -59,7 +59,7 @@ export const formatCost = (cost: number): string => {
 	return `$${cost >= 1 ? cost.toFixed(2) : cost.toFixed(3)}`;
 };
 
-const styleUsage = (text: string, percent: number, styles: ChromeStyles): string => {
+export const styleUsage = (text: string, percent: number, styles: ChromeStyles): string => {
 	if (percent > 90) return styles.error(text);
 	if (percent > 70) return styles.warning(text);
 	return styles.dim(text);

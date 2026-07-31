@@ -19,6 +19,7 @@
 		"lib/border.ts",
 		"lib/chrome.ts",
 		"lib/context.ts",
+		"lib/kimi.ts",
 		"lib/speed.ts",
 		"lib/text.ts",
 		"ui/rounded-editor.ts",

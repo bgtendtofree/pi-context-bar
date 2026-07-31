@@ -11,11 +11,13 @@ import {
 	renderLaneStrip,
 } from "../lib/chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "../lib/context.ts";
+import { type KimiUsage, kimiMetricOptions } from "../lib/kimi.ts";
 import type { TokenSpeedSnapshot } from "../lib/speed.ts";
 
 export type HealthState = Readonly<{
 	snapshot: ContextSnapshot;
 	usage: SessionUsage;
+	quota: KimiUsage | undefined;
 	speed: TokenSpeedSnapshot | null;
 	frame: number;
 	activity: LaneActivity;
@@ -94,16 +96,24 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 			for (const [index, line] of body.entries()) {
 				result.push(wrap(line, "│", "│", index === 0 ? prompt : "  "));
 			}
-			const modelLabel =
-				editorModelOptions(options.getModel(), options.getThinkingLevel()).find(
-					(label) => 2 + visibleWidth(label) + 3 + 1 <= width,
-				) ?? "";
-			const usedByModel = modelLabel ? visibleWidth(modelLabel) + 3 : 1;
+			const quota = health.quota ? kimiMetricOptions(health.quota, healthStyles) : [""];
+			// Quota sits beside the model it belongs to; the model survives before quota.
+			const picked = editorModelOptions(options.getModel(), options.getThinkingLevel())
+				.flatMap((model) => quota.map((quotaText) => ({ model, quotaText })))
+				.find(
+					({ model, quotaText }) =>
+						2 + visibleWidth(model) + (quotaText ? visibleWidth(quotaText) + 1 : 0) + 3 + 1 <= width,
+				);
+			const modelLabel = picked ? styleModelLabel(picked.model, ctx) : "";
+			const leftLabel = picked?.model && picked.quotaText ? `${modelLabel} ${picked.quotaText}` : modelLabel;
+			const usedByModel = picked
+				? visibleWidth(picked.model) + (picked.quotaText ? visibleWidth(picked.quotaText) + 1 : 0) + 3
+				: 1;
 			const metrics =
 				freeMetricOptions(health.usage, healthStyles).find(
 					(value) => value === "" || visibleWidth(value) + 4 <= width - 2 - usedByModel,
 				) ?? "";
-			result.push(renderLabeledBorder(width, "╰", "╯", styleModelLabel(modelLabel, ctx), metrics, borderColor));
+			result.push(renderLabeledBorder(width, "╰", "╯", leftLabel, metrics, borderColor));
 			const popup = autocomplete.map((line) => `  ${line}${" ".repeat(Math.max(0, width - visibleWidth(line) - 2))}`);
 			return [...popup, ...result];
 		}

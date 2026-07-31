@@ -1,8 +1,5 @@
 /** Kimi Code (Coding Plan) quota: fetch, parse, and format weekly usage + rate-limit windows. */
 
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { ChromeStyles } from "./chrome.ts";
 import { styleUsage } from "./chrome.ts";
 
@@ -18,8 +15,6 @@ export type KimiUsage = Readonly<{
 	limits: readonly KimiLimit[];
 }>;
 
-export const KIMI_DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1";
-
 type JsonObject = Readonly<Record<string, unknown>>;
 
 const isObject = (value: unknown): value is JsonObject =>
@@ -31,10 +26,9 @@ const toNumber = (value: unknown): number | undefined => {
 };
 
 const usedPercent = (data: JsonObject): number | undefined => {
-	const limit = toNumber(data.limit ?? data.limit_amount);
+	const limit = toNumber(data.limit);
 	if (limit === undefined || limit <= 0) return undefined;
-	const remaining = toNumber(data.remaining);
-	const used = toNumber(data.used ?? data.used_amount) ?? (remaining !== undefined ? limit - remaining : undefined);
+	const used = toNumber(data.used);
 	return used === undefined ? undefined : (used / limit) * 100;
 };
 
@@ -56,65 +50,25 @@ const shortName = (data: JsonObject, fallback: string): string => {
 	return typeof name === "string" && name ? name : fallback;
 };
 
-/** Coding Plan key from pi's own login store (auth.json, provider "kimi-coding"). */
-export const kimiKeyFromAuthData = (data: unknown): string | undefined => {
-	if (!isObject(data)) return undefined;
-	const entry = data["kimi-coding"];
-	if (!isObject(entry) || entry.type !== "api_key") return undefined;
-	return typeof entry.key === "string" && entry.key ? entry.key : undefined;
-};
-
-/** Read the key pi stored via /login; missing file or entry = undefined. */
-export const readKimiKeyFromAuthStore = (): string | undefined => {
-	try {
-		const dir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-		return kimiKeyFromAuthData(JSON.parse(readFileSync(join(dir, "auth.json"), "utf8")));
-	} catch {
-		return undefined;
-	}
-};
-
+/** The /usages payload: flat rows, the weekly summary tagged model_name "all". */
 export const parseKimiUsage = (payload: unknown): KimiUsage => {
-	if (!isObject(payload)) return { weeklyPercent: undefined, limits: [] };
+	if (!isObject(payload) || !Array.isArray(payload.data)) return { weeklyPercent: undefined, limits: [] };
 	let weeklyPercent: number | undefined;
 	const limits: KimiLimit[] = [];
-
-	if (Array.isArray(payload.data)) {
-		// /usages shape: flat rows, weekly summary tagged model_name "all".
-		for (const [index, item] of payload.data.entries()) {
-			if (!isObject(item)) continue;
-			const percent = usedPercent(item);
-			if (percent === undefined) continue;
-			if (item.model_name === "all") weeklyPercent = percent;
-			else limits.push({ label: windowLabel(item, shortName(item, `L${index + 1}`)), percent });
-		}
-		return { weeklyPercent, limits };
-	}
-
-	// /usage fallback shape: { usage, limits: [{ detail, window }] }.
-	if (isObject(payload.usage)) weeklyPercent = usedPercent(payload.usage);
-	if (Array.isArray(payload.limits)) {
-		for (const [index, item] of payload.limits.entries()) {
-			if (!isObject(item)) continue;
-			const detail = isObject(item.detail) ? item.detail : item;
-			const percent = usedPercent(detail);
-			if (percent === undefined) continue;
-			const window = isObject(item.window) ? item.window : detail;
-			limits.push({ label: windowLabel(window, shortName(detail, `L${index + 1}`)), percent });
-		}
+	for (const [index, item] of payload.data.entries()) {
+		if (!isObject(item)) continue;
+		const percent = usedPercent(item);
+		if (percent === undefined) continue;
+		if (item.model_name === "all") weeklyPercent = percent;
+		else limits.push({ label: windowLabel(item, shortName(item, `L${index + 1}`)), percent });
 	}
 	return { weeklyPercent, limits };
 };
 
-/** Fetch Coding Plan quota; tries /usages then /usage. Throws on non-200. */
-export const fetchKimiUsage = async (
-	apiKey: string,
-	baseUrl: string | undefined = KIMI_DEFAULT_BASE_URL,
-): Promise<KimiUsage> => {
+/** Fetch Coding Plan quota from the active model's base URL. Throws on non-200. */
+export const fetchKimiUsage = async (apiKey: string, baseUrl: string): Promise<KimiUsage> => {
 	const headers = { Authorization: `Bearer ${apiKey}`, "User-Agent": "KimiCLI/1.6" };
-	const base = baseUrl.replace(/\/+$/, "");
-	let response = await fetch(`${base}/usages`, { headers });
-	if (response.status === 404) response = await fetch(`${base}/usage`, { headers });
+	const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/usages`, { headers });
 	if (!response.ok) throw new Error(`Kimi usage API ${response.status}`);
 	return parseKimiUsage(await response.json());
 };

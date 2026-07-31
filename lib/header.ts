@@ -12,10 +12,6 @@ export type HeaderStyles = Readonly<{
 	muted: (text: string) => string;
 }>;
 
-export type WelcomeInfo = Readonly<{
-	version: string;
-}>;
-
 /** One resolved keybinding hint: display key plus what it does. */
 export type Hint = Readonly<{ key: string; action: string }>;
 
@@ -42,17 +38,6 @@ export const EXPANDED_HINT_DEFS = [
 	{ id: "app.clipboard.pasteImage", action: "paste image" },
 ] as const;
 
-/** "+"/"/" combos like pi's keyText: ctrl+c, cmd on darwin shows alt as option. */
-export const formatKeyText = (keys: readonly string[], platform: NodeJS.Platform): string =>
-	keys
-		.map((key) =>
-			key
-				.split("+")
-				.map((part) => (platform === "darwin" && part.toLowerCase() === "alt" ? "option" : part))
-				.join("+"),
-		)
-		.join("/");
-
 /** Sweep frame: Pac-Man eats left → right across the width, frame SWEEP_FRAMES = all eaten. */
 export const renderSweepLine = (frame: number, width: number): string => {
 	if (width <= 2) return "";
@@ -72,7 +57,7 @@ const hintLine = (hints: readonly Hint[], styles: HeaderStyles): string =>
 
 /** Quiet welcome lines. Collapsed: logo row + one hint row. Expanded: logo row + hint list. */
 export const renderWelcome = (
-	info: WelcomeInfo,
+	version: string,
 	compactHints: readonly Hint[],
 	expandedHints: readonly Hint[],
 	expanded: boolean,
@@ -80,7 +65,7 @@ export const renderWelcome = (
 	styles: HeaderStyles,
 ): readonly string[] => {
 	if (width <= 0) return [];
-	const logo = styles.accent("pi") + styles.dim(` v${info.version}`);
+	const logo = styles.accent("pi") + styles.dim(` v${version}`);
 	if (!expanded) {
 		const hints = width >= 40 ? hintLine(compactHints, styles) : "";
 		return hints ? ["", logo, hints] : ["", logo];

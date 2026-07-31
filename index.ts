@@ -1,20 +1,18 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { VERSION } from "@earendil-works/pi-coding-agent";
-import { getKeybindings } from "@earendil-works/pi-tui";
+import { keyText, VERSION } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
 import type { LaneActivity } from "./lib/chrome.ts";
 import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
 import {
 	COMPACT_HINT_DEFS,
 	EXPANDED_HINT_DEFS,
-	formatKeyText,
 	type HeaderStyles,
 	type Hint,
 	renderSweepLine,
 	renderWelcome,
 	SWEEP_FRAMES,
 } from "./lib/header.ts";
-import { fetchKimiUsage, type KimiUsage, readKimiKeyFromAuthStore } from "./lib/kimi.ts";
+import { fetchKimiUsage, type KimiUsage } from "./lib/kimi.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
@@ -26,10 +24,6 @@ const BREATH_FRAME_MS = 150;
 const SWEEP_FRAME_MS = 60;
 /** Coding Plan quota poll interval; the API has no push, 5 min is fresh enough. */
 const QUOTA_REFRESH_MS = 5 * 60 * 1000;
-
-/** Kimi Code (Coding Plan) key, mirroring pi's own resolution: /login store first, env second. Missing key = quota stays hidden. */
-const kimiApiKey = (): string | undefined =>
-	readKimiKeyFromAuthStore() ?? process.env.KIMI_API_KEY ?? process.env.KIMI_CODING_API_KEY;
 
 type RenderRequester = Readonly<{ requestRender: () => void }>;
 
@@ -99,12 +93,14 @@ const syncQuotaActivity = (ctx: ExtensionContext): void => {
 };
 
 /** Poll the Coding Plan quota API; failures keep the last good snapshot and stay silent. */
-const refreshQuota = async (): Promise<void> => {
+const refreshQuota = async (ctx: ExtensionContext): Promise<void> => {
 	if (!state.quotaActive) return;
-	const key = kimiApiKey();
-	if (!key) return;
+	const baseUrl = ctx.model?.baseUrl;
+	if (!baseUrl) return;
 	try {
-		patch({ quota: await fetchKimiUsage(key, process.env.KIMI_BASE_URL) });
+		const key = await ctx.modelRegistry.getApiKeyForProvider("kimi-coding");
+		if (!key) return;
+		patch({ quota: await fetchKimiUsage(key, baseUrl) });
 		requestRender();
 	} catch {
 		// ponytail: quota is advisory chrome; a failed poll must never break the editor
@@ -184,21 +180,18 @@ const resolveHints = (
 	defs: ReadonlyArray<Readonly<{ id: string; action: string; rawKey?: string }>>,
 ): readonly Hint[] =>
 	defs.map(({ id, action, rawKey }) => ({
-		key: rawKey ?? formatKeyText(getKeybindings().getKeys(id as never) ?? [], process.platform),
+		key: rawKey ?? keyText(id as never),
 		action,
 	}));
 
-const welcomeInfo = () => ({ version: VERSION });
-
 /** Quiet header after the sweep; expandable via the same keybinding as pi's built-in header. */
 const setWelcomeHeader = (ctx: ExtensionContext): void => {
-	const info = welcomeInfo();
 	ctx.ui.setHeader(() => {
 		let expanded = false;
 		return {
 			render: (width: number) => [
 				...renderWelcome(
-					info,
+					VERSION,
 					resolveHints(COMPACT_HINT_DEFS),
 					resolveHints(EXPANDED_HINT_DEFS),
 					expanded,
@@ -244,10 +237,8 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext, reason: string)
 	if (ctx.mode === "tui") ctx.ui.setWorkingVisible(false);
 	if (reason === "startup" || reason === "new") playWelcome(ctx);
 	syncQuotaActivity(ctx);
-	if (kimiApiKey()) {
-		void refreshQuota();
-		if (!state.quotaTimer) patch({ quotaTimer: setInterval(() => void refreshQuota(), QUOTA_REFRESH_MS) });
-	}
+	void refreshQuota(ctx);
+	if (!state.quotaTimer) patch({ quotaTimer: setInterval(() => void refreshQuota(ctx), QUOTA_REFRESH_MS) });
 	registerRoundedEditor(ctx, {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
@@ -350,7 +341,7 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 	pi.on("model_select", (_event, ctx) => {
 		syncQuotaActivity(ctx);
-		if (state.quotaActive) void refreshQuota();
+		void refreshQuota(ctx);
 		requestRender();
 	});
 	pi.on("thinking_level_select", requestRender);

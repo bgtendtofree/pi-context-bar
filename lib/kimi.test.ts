@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { ChromeStyles } from "./chrome.ts";
-import { type KimiUsage, kimiKeyFromAuthData, kimiMetricOptions, parseKimiUsage } from "./kimi.ts";
+import { type KimiUsage, kimiMetricOptions, parseKimiUsage } from "./kimi.ts";
 
 const identityStyles: ChromeStyles = {
 	dim: (text) => text,
@@ -34,29 +34,6 @@ describe("parseKimiUsage", () => {
 		]);
 	});
 
-	test("parses the /usage fallback shape with detail/window", () => {
-		const usage = parseKimiUsage({
-			usage: { used: 10, limit: 200 },
-			limits: [{ detail: { used: 5, limit: 50 }, window: { duration: 2, timeUnit: "HOUR" } }],
-		});
-		assert.equal(usage.weeklyPercent, 5);
-		assert.deepEqual(usage.limits, [{ label: "2h", percent: 10 }]);
-	});
-
-	test("derives used from remaining when used is absent", () => {
-		const usage = parseKimiUsage({ usage: { remaining: 25, limit: 100 } });
-		assert.equal(usage.weeklyPercent, 75);
-	});
-
-	test("handles string numbers and alternate field names", () => {
-		const usage = parseKimiUsage({
-			usage: { used_amount: "30", limit_amount: "120" },
-			limits: [{ detail: { used: "1", limit: "4" }, window: { duration: "90", time_unit: "minute" } }],
-		});
-		assert.equal(usage.weeklyPercent, 25);
-		assert.deepEqual(usage.limits, [{ label: "90m", percent: 25 }]);
-	});
-
 	test("matches enum-style units by substring and converts seconds", () => {
 		const usage = parseKimiUsage({
 			data: [
@@ -71,6 +48,14 @@ describe("parseKimiUsage", () => {
 		]);
 	});
 
+	test("handles string numbers and alternate unit field names", () => {
+		const usage = parseKimiUsage({
+			data: [{ used: "1", limit: "4", duration: "90", time_unit: "minute" }],
+		});
+		assert.equal(usage.weeklyPercent, undefined);
+		assert.deepEqual(usage.limits, [{ label: "90m", percent: 25 }]);
+	});
+
 	test("skips rows without usable numbers and falls back to row names", () => {
 		const usage = parseKimiUsage({
 			data: [{ model_name: "all" }, { name: "burst", used: 1, limit: 2 }, { used: 1, limit: 0 }],
@@ -80,24 +65,9 @@ describe("parseKimiUsage", () => {
 	});
 
 	test("returns empty usage for garbage", () => {
-		for (const payload of [undefined, null, 42, "nope", []]) {
+		for (const payload of [undefined, null, 42, "nope", [], { usage: { used: 1, limit: 2 } }]) {
 			assert.deepEqual(parseKimiUsage(payload), { weeklyPercent: undefined, limits: [] });
 		}
-	});
-});
-
-describe("kimiKeyFromAuthData", () => {
-	test("reads the kimi-coding api_key entry", () => {
-		const data = { "kimi-coding": { type: "api_key", key: "sk-kimi-abc" }, deepseek: { type: "api_key", key: "sk-x" } };
-		assert.equal(kimiKeyFromAuthData(data), "sk-kimi-abc");
-	});
-
-	test("returns undefined for missing, oauth, or malformed entries", () => {
-		assert.equal(kimiKeyFromAuthData({}), undefined);
-		assert.equal(kimiKeyFromAuthData({ "kimi-coding": { type: "oauth", token: "t" } }), undefined);
-		assert.equal(kimiKeyFromAuthData({ "kimi-coding": { type: "api_key", key: "" } }), undefined);
-		assert.equal(kimiKeyFromAuthData({ "kimi-coding": "nope" }), undefined);
-		assert.equal(kimiKeyFromAuthData(null), undefined);
 	});
 });
 

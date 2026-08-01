@@ -21,7 +21,6 @@
 		"lib/context.ts",
 		"lib/kimi.ts",
 		"lib/speed.ts",
-		"lib/text.ts",
 		"ui/rounded-editor.ts",
 		"README.md",
 		"LICENSE"

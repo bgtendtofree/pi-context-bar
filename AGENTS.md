@@ -29,7 +29,6 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 - `lib/kimi.ts` — Kimi Code (Coding Plan) quota fetch, parse, metric formatting
 - `lib/header.ts` — startup sweep frame + quiet welcome header
 - `lib/border.ts` — pure model border fitting
-- `lib/text.ts` — ANSI-safe text helpers
 - `ui/rounded-editor.ts` — Pi/TUI editor adapter
 - `index.ts` — extension state, I/O, lifecycle wiring only
 - `lib/*.test.ts` — mirrored Node.js `node:test` suites

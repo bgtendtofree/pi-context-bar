@@ -13,7 +13,7 @@ import {
 	SWEEP_FRAMES,
 } from "./lib/header.ts";
 import { fetchKimiUsage } from "./lib/kimi.ts";
-import { fetchOpenAiUsage } from "./lib/openai.ts";
+import { fetchOpenAiUsage, fetchResetCreditIds, redeemResetCredit } from "./lib/openai.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
@@ -271,6 +271,39 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext, reason: string)
 };
 
 export default function zContext(pi: ExtensionAPI): void {
+	pi.registerCommand("openai-codex-reset", {
+		description: "Redeem a banked OpenAI Codex (ChatGPT plan) usage-limit reset",
+		handler: async (_args, ctx) => {
+			if (ctx.model?.provider !== "openai-codex") {
+				ctx.ui.notify("Active model is not openai-codex", "warning");
+				return;
+			}
+			try {
+				const key = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
+				if (!key) {
+					ctx.ui.notify("No OpenAI Codex credentials", "warning");
+					return;
+				}
+				const baseUrl = ctx.model?.baseUrl;
+				const ids = await fetchResetCreditIds(key, baseUrl);
+				if (ids.length === 0) {
+					ctx.ui.notify("No banked OpenAI resets available", "info");
+					return;
+				}
+				const confirmed = await ctx.ui.confirm(
+					"Redeem OpenAI reset?",
+					`Consume 1 of ${ids.length} banked usage-limit resets? This resets your current 5h/weekly window.`,
+				);
+				if (!confirmed) return;
+				const outcome = await redeemResetCredit(key, ids[0] ?? "", baseUrl);
+				ctx.ui.notify(`OpenAI reset: ${outcome}`, outcome === "reset" ? "info" : "warning");
+				await refreshQuota(ctx);
+			} catch (error) {
+				ctx.ui.notify(`OpenAI reset failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+			}
+		},
+	});
+
 	pi.on("session_start", (event, ctx) => registerChrome(pi, ctx, event.reason));
 
 	pi.on("context", (_event, ctx) => {

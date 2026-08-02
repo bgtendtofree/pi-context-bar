@@ -104,4 +104,15 @@ describe("kimiMetricOptions", () => {
 	test("keeps quiet quota dim", () => {
 		assert.equal(kimiMetricOptions(full, markedStyles)[1], "<d>W40%</d>");
 	});
+
+	test("appends banked reset credits and uses them as the tight fallback", () => {
+		const usage: KimiUsage = { ...full, weeklyPercent: undefined, resetCredits: 3 };
+		const options = kimiMetricOptions(usage, identityStyles).map(stripVTControlCharacters);
+		assert.deepEqual(options, ["5h30% 1d12% R3", "R3", ""]);
+	});
+
+	test("hides zero reset credits", () => {
+		const options = kimiMetricOptions({ ...full, resetCredits: 0 }, identityStyles).map(stripVTControlCharacters);
+		assert.deepEqual(options, ["W40% 5h30% 1d12%", "W40%", ""]);
+	});
 });

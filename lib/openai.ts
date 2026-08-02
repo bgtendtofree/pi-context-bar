@@ -56,7 +56,9 @@ export const parseOpenAiUsage = (payload: unknown): KimiUsage => {
 		if (percent === undefined) continue;
 		limits.push({ label: windowLabel(window, `L${index + 1}`), percent });
 	}
-	return { weeklyPercent: undefined, limits };
+	const resetContainer = payload.rate_limit_reset_credits;
+	const resetCredits = isObject(resetContainer) ? toNumber(resetContainer.available_count) : undefined;
+	return { weeklyPercent: undefined, limits, ...(resetCredits !== undefined ? { resetCredits } : {}) };
 };
 
 /** Fetch ChatGPT plan quota; model base URLs point at …/codex/responses, the usage API lives at /wham/usage. */

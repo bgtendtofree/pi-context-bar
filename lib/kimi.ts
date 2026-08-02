@@ -13,6 +13,8 @@ export type KimiUsage = Readonly<{
 	/** Used percent 0–100 of the weekly quota, undefined when the plan reports none. */
 	weeklyPercent: number | undefined;
 	limits: readonly KimiLimit[];
+	/** Banked usage-limit reset credits (OpenAI Codex plans); absent on providers without resets. */
+	resetCredits?: number;
 }>;
 
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -86,5 +88,7 @@ export const kimiMetricOptions = (usage: KimiUsage, styles: ChromeStyles): reado
 	const limits = usage.limits
 		.map((limit) => styled(`${limit.label}${Math.round(limit.percent)}%`, limit.percent))
 		.join(styles.dim(" "));
-	return [[weekly, limits].filter(Boolean).join(styles.dim(" ")), weekly, ""];
+	// Banked resets are quiet chrome; zero or unknown stays hidden.
+	const resets = usage.resetCredits ? styles.dim(`R${usage.resetCredits}`) : "";
+	return [[weekly, limits, resets].filter(Boolean).join(styles.dim(" ")), weekly || resets, ""];
 };

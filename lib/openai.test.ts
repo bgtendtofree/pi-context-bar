@@ -10,6 +10,7 @@ const usagePayload = {
 		secondary_window: { used_percent: 24, reset_at: 1738900000, limit_window_seconds: 604800 },
 	},
 	credits: { has_credits: true, unlimited: false, balance: 5.39 },
+	rate_limit_reset_credits: { available_count: 2 },
 };
 
 const fakeJwt = (payload: unknown): string => `x.${Buffer.from(JSON.stringify(payload)).toString("base64")}.y`;
@@ -22,6 +23,7 @@ describe("parseOpenAiUsage", () => {
 				{ label: "5h", percent: 6 },
 				{ label: "7d", percent: 24 },
 			],
+			resetCredits: 2,
 		});
 	});
 

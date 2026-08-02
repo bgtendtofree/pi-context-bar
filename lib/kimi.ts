@@ -1,21 +1,6 @@
-/** Kimi Code (Coding Plan) quota: fetch, parse, and format weekly usage + rate-limit windows. */
+/** Kimi Code (Coding Plan) quota: fetch and parse weekly usage + rate-limit windows into the shared QuotaUsage shape. */
 
-import type { ChromeStyles } from "./chrome.ts";
-import { styleUsage } from "./chrome.ts";
-
-export type KimiLimit = Readonly<{
-	label: string;
-	/** Used percent 0–100 of this limit window. */
-	percent: number;
-}>;
-
-export type KimiUsage = Readonly<{
-	/** Used percent 0–100 of the weekly quota, undefined when the plan reports none. */
-	weeklyPercent: number | undefined;
-	limits: readonly KimiLimit[];
-	/** Banked usage-limit reset credits (OpenAI Codex plans); absent on providers without resets. */
-	resetCredits?: number;
-}>;
+import type { QuotaLimit, QuotaUsage } from "./chrome.ts";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -53,10 +38,10 @@ const shortName = (data: JsonObject, fallback: string): string => {
 };
 
 /** The /usages payload: weekly summary under `usage`, rate-limit windows under `limits`. */
-export const parseKimiUsage = (payload: unknown): KimiUsage => {
+export const parseKimiUsage = (payload: unknown): QuotaUsage => {
 	if (!isObject(payload)) return { weeklyPercent: undefined, limits: [] };
 	const weeklyPercent = isObject(payload.usage) ? usedPercent(payload.usage) : undefined;
-	const limits: KimiLimit[] = [];
+	const limits: QuotaLimit[] = [];
 	if (Array.isArray(payload.limits)) {
 		for (const [index, item] of payload.limits.entries()) {
 			if (!isObject(item)) continue;
@@ -71,24 +56,11 @@ export const parseKimiUsage = (payload: unknown): KimiUsage => {
 };
 
 /** Fetch Coding Plan quota; model base URLs are Anthropic-style (…/coding), the usage API lives under /v1. */
-export const fetchKimiUsage = async (apiKey: string, baseUrl: string): Promise<KimiUsage> => {
+export const fetchKimiUsage = async (apiKey: string, baseUrl: string): Promise<QuotaUsage> => {
 	const headers = { Authorization: `Bearer ${apiKey}`, "User-Agent": "KimiCLI/1.6" };
 	const base = baseUrl.replace(/\/+$/, "");
 	const url = base.endsWith("/v1") ? `${base}/usages` : `${base}/v1/usages`;
 	const response = await fetch(url, { headers });
 	if (!response.ok) throw new Error(`Kimi usage API ${response.status}`);
 	return parseKimiUsage(await response.json());
-};
-
-/** Quota metric variants, widest → tightest, styled at construction. Weekly survives before limits. */
-export const kimiMetricOptions = (usage: KimiUsage, styles: ChromeStyles): readonly string[] => {
-	const styled = (text: string, percent: number): string => styleUsage(text, percent, styles);
-	const weekly =
-		usage.weeklyPercent !== undefined ? styled(`W${Math.round(usage.weeklyPercent)}%`, usage.weeklyPercent) : "";
-	const limits = usage.limits
-		.map((limit) => styled(`${limit.label}${Math.round(limit.percent)}%`, limit.percent))
-		.join(styles.dim(" "));
-	// Banked resets are quiet chrome; zero or unknown stays hidden.
-	const resets = usage.resetCredits ? styles.dim(`R${usage.resetCredits}`) : "";
-	return [[weekly, limits, resets].filter(Boolean).join(styles.dim(" ")), weekly || resets, ""];
 };

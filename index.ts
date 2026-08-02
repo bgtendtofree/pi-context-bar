@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { keyText, VERSION } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
-import type { LaneActivity } from "./lib/chrome.ts";
+import type { LaneActivity, QuotaUsage } from "./lib/chrome.ts";
 import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
 import {
 	COMPACT_HINT_DEFS,
@@ -12,7 +12,7 @@ import {
 	renderWelcome,
 	SWEEP_FRAMES,
 } from "./lib/header.ts";
-import { fetchKimiUsage, type KimiUsage } from "./lib/kimi.ts";
+import { fetchKimiUsage } from "./lib/kimi.ts";
 import { fetchOpenAiUsage } from "./lib/openai.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
@@ -44,7 +44,7 @@ type ChromeState = Readonly<{
 	speedTurnActiveMs: number;
 	tui: RenderRequester | undefined;
 	welcomeTimer: ReturnType<typeof setInterval> | undefined;
-	quota: KimiUsage | undefined;
+	quota: QuotaUsage | undefined;
 	quotaActive: boolean;
 	quotaTimer: ReturnType<typeof setInterval> | undefined;
 }>;

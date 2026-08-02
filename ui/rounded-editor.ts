@@ -8,16 +8,17 @@ import {
 	type ChromeStyles,
 	freeMetricOptions,
 	type LaneActivity,
+	type QuotaUsage,
+	quotaMetricOptions,
 	renderLaneStrip,
 } from "../lib/chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "../lib/context.ts";
-import { type KimiUsage, kimiMetricOptions } from "../lib/kimi.ts";
 import type { TokenSpeedSnapshot } from "../lib/speed.ts";
 
 export type HealthState = Readonly<{
 	snapshot: ContextSnapshot;
 	usage: SessionUsage;
-	quota: KimiUsage | undefined;
+	quota: QuotaUsage | undefined;
 	speed: TokenSpeedSnapshot | null;
 	frame: number;
 	activity: LaneActivity;
@@ -96,7 +97,7 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 			for (const [index, line] of body.entries()) {
 				result.push(wrap(line, "│", "│", index === 0 ? prompt : "  "));
 			}
-			const quota = health.quota ? kimiMetricOptions(health.quota, healthStyles) : [""];
+			const quota = health.quota ? quotaMetricOptions(health.quota, healthStyles) : [""];
 			// Quota sits beside the model it belongs to; the model survives before quota.
 			const picked = editorModelOptions(options.getModel(), options.getThinkingLevel())
 				.flatMap((model) => quota.map((quotaText) => ({ model, quotaText })))

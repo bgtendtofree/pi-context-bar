@@ -1,20 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { stripVTControlCharacters } from "node:util";
-import type { ChromeStyles } from "./chrome.ts";
-import { type KimiUsage, kimiMetricOptions, parseKimiUsage } from "./kimi.ts";
-
-const identityStyles: ChromeStyles = {
-	dim: (text) => text,
-	warning: (text) => text,
-	error: (text) => text,
-};
-
-const markedStyles: ChromeStyles = {
-	dim: (text) => `<d>${text}</d>`,
-	warning: (text) => `<w>${text}</w>`,
-	error: (text) => `<e>${text}</e>`,
-};
+import { parseKimiUsage } from "./kimi.ts";
 
 // Real /usages response shape (2026-08, trimmed): string numbers, ISO resetTime, window/detail pairs.
 const usagesPayload = {
@@ -73,46 +59,5 @@ describe("parseKimiUsage", () => {
 		for (const payload of [undefined, null, 42, "nope", [], { data: [] }]) {
 			assert.deepEqual(parseKimiUsage(payload), { weeklyPercent: undefined, limits: [] });
 		}
-	});
-});
-
-describe("kimiMetricOptions", () => {
-	const full: KimiUsage = {
-		weeklyPercent: 40,
-		limits: [
-			{ label: "5h", percent: 30 },
-			{ label: "1d", percent: 12 },
-		],
-	};
-
-	test("offers widest to tightest variants", () => {
-		const options = kimiMetricOptions(full, identityStyles).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["W40% 5h30% 1d12%", "W40%", ""]);
-	});
-
-	test("skips the combined variant when weekly is unknown", () => {
-		const options = kimiMetricOptions({ weeklyPercent: undefined, limits: full.limits }, identityStyles);
-		assert.equal(stripVTControlCharacters(options[0] ?? ""), "5h30% 1d12%");
-		assert.equal(options[1], "");
-	});
-
-	test("escalates color with usage level", () => {
-		const options = kimiMetricOptions({ weeklyPercent: 95, limits: [{ label: "5h", percent: 80 }] }, markedStyles);
-		assert.equal(options[0], "<e>W95%</e><d> </d><w>5h80%</w>");
-	});
-
-	test("keeps quiet quota dim", () => {
-		assert.equal(kimiMetricOptions(full, markedStyles)[1], "<d>W40%</d>");
-	});
-
-	test("appends banked reset credits and uses them as the tight fallback", () => {
-		const usage: KimiUsage = { ...full, weeklyPercent: undefined, resetCredits: 3 };
-		const options = kimiMetricOptions(usage, identityStyles).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["5h30% 1d12% R3", "R3", ""]);
-	});
-
-	test("hides zero reset credits", () => {
-		const options = kimiMetricOptions({ ...full, resetCredits: 0 }, identityStyles).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["W40% 5h30% 1d12%", "W40%", ""]);
 	});
 });

@@ -82,6 +82,34 @@ export const freeMetricOptions = (usage: SessionUsage, styles: ChromeStyles): re
 	return [[ch, cost].filter(Boolean).join(styles.dim("  ")), ch, ""];
 };
 
+export type QuotaLimit = Readonly<{
+	label: string;
+	/** Used percent 0–100 of this limit window. */
+	percent: number;
+}>;
+
+/** Shared subscription-quota snapshot; each provider parser fills the parts its plan reports. */
+export type QuotaUsage = Readonly<{
+	/** Used percent 0–100 of the weekly quota, undefined when the plan reports none. */
+	weeklyPercent: number | undefined;
+	limits: readonly QuotaLimit[];
+	/** Banked usage-limit reset credits (OpenAI Codex plans); absent on providers without resets. */
+	resetCredits?: number;
+}>;
+
+/** Quota metric variants, widest → tightest, styled at construction. Weekly survives before limits. */
+export const quotaMetricOptions = (usage: QuotaUsage, styles: ChromeStyles): readonly string[] => {
+	const styledUsage = (text: string, percent: number): string => styleUsage(text, percent, styles);
+	const weekly =
+		usage.weeklyPercent !== undefined ? styledUsage(`W${Math.round(usage.weeklyPercent)}%`, usage.weeklyPercent) : "";
+	const limits = usage.limits
+		.map((limit) => styledUsage(`${limit.label}${Math.round(limit.percent)}%`, limit.percent))
+		.join(styles.dim(" "));
+	// Banked resets are quiet chrome; zero or unknown stays hidden.
+	const resets = usage.resetCredits ? styles.dim(`R${usage.resetCredits}`) : "";
+	return [[weekly, limits, resets].filter(Boolean).join(styles.dim(" ")), weekly || resets, ""];
+};
+
 const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>
 	foreground(color, `${glyph}${" ".repeat(cellWidth - 1)}`.repeat(Math.max(0, count)));
 

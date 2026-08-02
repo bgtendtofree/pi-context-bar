@@ -16,6 +16,8 @@ import {
 	PELLET_GLYPH,
 	POWER_PELLET_GLYPH,
 	POWER_PELLET_RATIOS,
+	type QuotaUsage,
+	quotaMetricOptions,
 	renderLaneStrip,
 	renderPacmanLane,
 } from "./chrome.ts";
@@ -235,5 +237,46 @@ describe("breathing border", () => {
 		for (let frame = 1; frame <= BREATH_STEPS / 2; frame += 1) {
 			assert.ok(grayOf(frame) >= grayOf(frame - 1));
 		}
+	});
+});
+
+describe("quota metric options", () => {
+	const full: QuotaUsage = {
+		weeklyPercent: 40,
+		limits: [
+			{ label: "5h", percent: 30 },
+			{ label: "1d", percent: 12 },
+		],
+	};
+
+	test("offers widest to tightest variants", () => {
+		const options = quotaMetricOptions(full, identityStyles).map(stripVTControlCharacters);
+		assert.deepEqual(options, ["W40% 5h30% 1d12%", "W40%", ""]);
+	});
+
+	test("skips the combined variant when weekly is unknown", () => {
+		const options = quotaMetricOptions({ weeklyPercent: undefined, limits: full.limits }, identityStyles);
+		assert.equal(stripVTControlCharacters(options[0] ?? ""), "5h30% 1d12%");
+		assert.equal(options[1], "");
+	});
+
+	test("escalates color with usage level", () => {
+		const options = quotaMetricOptions({ weeklyPercent: 95, limits: [{ label: "5h", percent: 80 }] }, markedStyles);
+		assert.equal(options[0], "<e>W95%</e><d> </d><w>5h80%</w>");
+	});
+
+	test("keeps quiet quota dim", () => {
+		assert.equal(quotaMetricOptions(full, markedStyles)[1], "<d>W40%</d>");
+	});
+
+	test("appends banked reset credits and uses them as the tight fallback", () => {
+		const usageWithResets: QuotaUsage = { ...full, weeklyPercent: undefined, resetCredits: 3 };
+		const options = quotaMetricOptions(usageWithResets, identityStyles).map(stripVTControlCharacters);
+		assert.deepEqual(options, ["5h30% 1d12% R3", "R3", ""]);
+	});
+
+	test("hides zero reset credits", () => {
+		const options = quotaMetricOptions({ ...full, resetCredits: 0 }, identityStyles).map(stripVTControlCharacters);
+		assert.deepEqual(options, ["W40% 5h30% 1d12%", "W40%", ""]);
 	});
 });

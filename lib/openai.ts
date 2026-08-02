@@ -1,6 +1,6 @@
-/** OpenAI Codex (ChatGPT Plus/Pro) quota: fetch and parse wham/usage rate-limit windows into the shared KimiUsage shape. */
+/** OpenAI Codex (ChatGPT Plus/Pro) quota: fetch and parse wham/usage rate-limit windows into the shared QuotaUsage shape. */
 
-import type { KimiLimit, KimiUsage } from "./kimi.ts";
+import type { QuotaLimit, QuotaUsage } from "./chrome.ts";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -45,10 +45,10 @@ const windowLabel = (window: JsonObject, fallback: string): string => {
 const windowPercent = (window: JsonObject): number | undefined => toNumber(window.used_percent ?? window.usedPercent);
 
 /** The /wham/usage payload: rate_limit.primary_window (5h) + secondary_window (7d), each {used_percent, limit_window_seconds}. */
-export const parseOpenAiUsage = (payload: unknown): KimiUsage => {
+export const parseOpenAiUsage = (payload: unknown): QuotaUsage => {
 	if (!isObject(payload)) return { weeklyPercent: undefined, limits: [] };
 	const rateLimit = isObject(payload.rate_limit) ? payload.rate_limit : payload;
-	const limits: KimiLimit[] = [];
+	const limits: QuotaLimit[] = [];
 	for (const [index, key] of ["primary_window", "secondary_window"].entries()) {
 		const window = rateLimit[key];
 		if (!isObject(window)) continue;
@@ -62,7 +62,7 @@ export const parseOpenAiUsage = (payload: unknown): KimiUsage => {
 };
 
 /** Fetch ChatGPT plan quota; model base URLs point at …/codex/responses, the usage API lives at /wham/usage. */
-export const fetchOpenAiUsage = async (apiKey: string, baseUrl?: string): Promise<KimiUsage> => {
+export const fetchOpenAiUsage = async (apiKey: string, baseUrl?: string): Promise<QuotaUsage> => {
 	const accountId = openAiAccountId(apiKey);
 	if (!accountId) throw new Error("OpenAI token has no chatgpt_account_id");
 	const base = (baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "").replace(/\/codex(\/responses)?$/, "");

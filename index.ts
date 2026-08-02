@@ -13,6 +13,7 @@ import {
 	SWEEP_FRAMES,
 } from "./lib/header.ts";
 import { fetchKimiUsage, type KimiUsage } from "./lib/kimi.ts";
+import { fetchOpenAiUsage } from "./lib/openai.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
@@ -85,22 +86,32 @@ const refreshSessionUsage = (ctx: ExtensionContext): void => {
 	patch({ usage: accumulateSessionUsage(ctx.sessionManager.getEntries()) });
 };
 
-/** Quota belongs to the active model's provider; a non-kimi model hides and stops polling it. */
+/** Quota belongs to the active model's provider; a non-subscription model hides and stops polling it. */
+const quotaProvider = (ctx: ExtensionContext): "kimi-coding" | "openai-codex" | undefined => {
+	const provider = ctx.model?.provider;
+	return provider === "kimi-coding" || provider === "openai-codex" ? provider : undefined;
+};
+
 const syncQuotaActivity = (ctx: ExtensionContext): void => {
-	const active = ctx.model?.provider === "kimi-coding";
+	const active = quotaProvider(ctx) !== undefined;
 	if (!active && state.quota) patch({ quota: undefined });
 	patch({ quotaActive: active });
 };
 
-/** Poll the Coding Plan quota API; failures keep the last good snapshot and stay silent. */
+/** Poll the subscription quota API; failures keep the last good snapshot and stay silent. */
 const refreshQuota = async (ctx: ExtensionContext): Promise<void> => {
 	if (!state.quotaActive) return;
+	const provider = quotaProvider(ctx);
+	if (!provider) return;
 	const baseUrl = ctx.model?.baseUrl;
-	if (!baseUrl) return;
+	if (provider === "kimi-coding" && !baseUrl) return;
 	try {
-		const key = await ctx.modelRegistry.getApiKeyForProvider("kimi-coding");
+		const key = await ctx.modelRegistry.getApiKeyForProvider(provider);
 		if (!key) return;
-		patch({ quota: await fetchKimiUsage(key, baseUrl) });
+		patch({
+			quota:
+				provider === "openai-codex" ? await fetchOpenAiUsage(key, baseUrl) : await fetchKimiUsage(key, baseUrl ?? ""),
+		});
 		requestRender();
 	} catch {
 		// ponytail: quota is advisory chrome; a failed poll must never break the editor

@@ -45,7 +45,6 @@ type ChromeState = Readonly<{
 	tui: RenderRequester | undefined;
 	welcomeTimer: ReturnType<typeof setInterval> | undefined;
 	quota: QuotaUsage | undefined;
-	quotaActive: boolean;
 	quotaTimer: ReturnType<typeof setInterval> | undefined;
 }>;
 
@@ -66,7 +65,6 @@ const freshState = (): ChromeState => ({
 	tui: undefined,
 	welcomeTimer: undefined,
 	quota: undefined,
-	quotaActive: false,
 	quotaTimer: undefined,
 });
 
@@ -92,17 +90,13 @@ const quotaProvider = (ctx: ExtensionContext): "kimi-coding" | "openai-codex" | 
 	return provider === "kimi-coding" || provider === "openai-codex" ? provider : undefined;
 };
 
-const syncQuotaActivity = (ctx: ExtensionContext): void => {
-	const active = quotaProvider(ctx) !== undefined;
-	if (!active && state.quota) patch({ quota: undefined });
-	patch({ quotaActive: active });
-};
-
 /** Poll the subscription quota API; failures keep the last good snapshot and stay silent. */
 const refreshQuota = async (ctx: ExtensionContext): Promise<void> => {
-	if (!state.quotaActive) return;
 	const provider = quotaProvider(ctx);
-	if (!provider) return;
+	if (!provider) {
+		if (state.quota) patch({ quota: undefined });
+		return;
+	}
 	const baseUrl = ctx.model?.baseUrl;
 	if (provider === "kimi-coding" && !baseUrl) return;
 	try {
@@ -247,7 +241,6 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext, reason: string)
 
 	if (ctx.mode === "tui") ctx.ui.setWorkingVisible(false);
 	if (reason === "startup" || reason === "new") playWelcome(ctx);
-	syncQuotaActivity(ctx);
 	void refreshQuota(ctx);
 	if (!state.quotaTimer) patch({ quotaTimer: setInterval(() => void refreshQuota(ctx), QUOTA_REFRESH_MS) });
 	registerRoundedEditor(ctx, {
@@ -384,7 +377,6 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 	pi.on("model_select", (_event, ctx) => {
-		syncQuotaActivity(ctx);
 		void refreshQuota(ctx);
 		requestRender();
 	});

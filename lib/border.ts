@@ -16,8 +16,8 @@ export const editorModelOptions = (model: ModelInfo, thinkingLevel: string): rea
 	const withThinking = thinking ? `${id} · ${thinking}` : id;
 	const shortWithThinking = thinking ? `${shortId} · ${thinking}` : shortId;
 
-	return [withThinking, shortWithThinking, shortId, shortId.length > 16 ? `${shortId.slice(0, 15)}…` : shortId].filter(
-		Boolean,
+	return Array.from(
+		new Set([withThinking, shortWithThinking, shortId, shortId.length > 16 ? `${shortId.slice(0, 15)}…` : shortId]),
 	);
 };
 

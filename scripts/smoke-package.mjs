@@ -1,11 +1,22 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempDisposableSync, readFileSync } from "node:fs";
+import { mkdtempDisposableSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+// Guard: every runtime source file must ship in the tarball; a missing file breaks the installed extension silently.
+const shipped = new Set(manifest.files);
+const missing = ["lib", "ui"].flatMap((dir) =>
+	readdirSync(join(root, dir))
+		.filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts") && !shipped.has(`${dir}/${file}`))
+		.map((file) => `${dir}/${file}`),
+);
+if (missing.length > 0) {
+	console.error(`package.json files is missing runtime sources: ${missing.join(", ")}`);
+	process.exit(1);
+}
 using workspace = mkdtempDisposableSync(join(tmpdir(), "pi-package-smoke-"));
 const cwd = workspace.path;
 

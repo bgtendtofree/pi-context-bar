@@ -32,10 +32,7 @@ export type RoundedEditorOptions = Readonly<{
 	onTui: (tui: TUI) => void;
 }>;
 
-const isHorizontalBorder = (text: string): boolean => {
-	const plain = stripVTControlCharacters(text);
-	return plain.length > 0 && plain.replace(/─/g, "") === "";
-};
+const isHorizontalBorder = (text: string): boolean => /^─+$/.test(stripVTControlCharacters(text));
 
 export const splitEditorRender = (
 	lines: readonly string[],

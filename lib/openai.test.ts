@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, test } from "node:test";
+import { describe, type TestContext, test } from "node:test";
 import {
 	fetchOpenAiUsage,
 	fetchResetCreditIds,
@@ -26,21 +26,14 @@ const authedToken = fakeJwt({ "https://api.openai.com/auth": { chatgpt_account_i
 
 type MockResponse = Readonly<{ ok: boolean; status?: number; json: () => Promise<unknown> }>;
 
-const withMockFetch = async (
-	response: MockResponse,
-	run: (calls: Array<{ url: unknown; init: unknown }>) => Promise<void>,
-): Promise<void> => {
-	const original = globalThis.fetch;
+/** Stub global fetch for one test; node:test restores it on test end. */
+const mockFetch = (t: TestContext, response: MockResponse): Array<{ url: unknown; init: unknown }> => {
 	const calls: Array<{ url: unknown; init: unknown }> = [];
-	globalThis.fetch = (async (url: unknown, init: unknown) => {
+	t.mock.method(globalThis, "fetch", async (url: unknown, init: unknown) => {
 		calls.push({ url, init });
 		return response;
-	}) as typeof fetch;
-	try {
-		await run(calls);
-	} finally {
-		globalThis.fetch = original;
-	}
+	});
+	return calls;
 };
 
 describe("parseOpenAiUsage", () => {
@@ -142,54 +135,48 @@ describe("openAiAccountId", () => {
 });
 
 describe("openai fetch functions", () => {
-	test("fetchOpenAiUsage hits wham/usage with bearer + account id and parses windows", async () => {
-		await withMockFetch({ ok: true, json: async () => usagePayload }, async (calls) => {
-			const usage = await fetchOpenAiUsage(authedToken, "https://chatgpt.com/backend-api/codex/responses");
-			assert.equal(usage.limits.length, 2);
-			assert.equal(usage.resetCredits, 2);
-			assert.equal(calls[0]?.url, "https://chatgpt.com/backend-api/wham/usage");
-			const headers = (calls[0] as { init: { headers: Record<string, string> } }).init.headers;
-			assert.equal(headers.Authorization, `Bearer ${authedToken}`);
-			assert.equal(headers["ChatGPT-Account-Id"], "acc_123");
-		});
+	test("fetchOpenAiUsage hits wham/usage with bearer + account id and parses windows", async (t) => {
+		const calls = mockFetch(t, { ok: true, json: async () => usagePayload });
+		const usage = await fetchOpenAiUsage(authedToken, "https://chatgpt.com/backend-api/codex/responses");
+		assert.equal(usage.limits.length, 2);
+		assert.equal(usage.resetCredits, 2);
+		assert.equal(calls[0]?.url, "https://chatgpt.com/backend-api/wham/usage");
+		const headers = (calls[0] as { init: { headers: Record<string, string> } }).init.headers;
+		assert.equal(headers.Authorization, `Bearer ${authedToken}`);
+		assert.equal(headers["ChatGPT-Account-Id"], "acc_123");
 	});
 
-	test("fetchResetCreditIds lists redeemable credits", async () => {
-		await withMockFetch({ ok: true, json: async () => [{ credit_id: "c1" }] }, async (calls) => {
-			assert.deepEqual(await fetchResetCreditIds(authedToken), ["c1"]);
-			assert.equal(calls[0]?.url, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits");
-		});
+	test("fetchResetCreditIds lists redeemable credits", async (t) => {
+		const calls = mockFetch(t, { ok: true, json: async () => [{ credit_id: "c1" }] });
+		assert.deepEqual(await fetchResetCreditIds(authedToken), ["c1"]);
+		assert.equal(calls[0]?.url, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits");
 	});
 
-	test("redeemResetCredit posts an idempotent consume and returns the outcome code", async () => {
-		await withMockFetch({ ok: true, json: async () => ({ code: "already_redeemed" }) }, async (calls) => {
-			const outcome = await redeemResetCredit(authedToken, "c1");
-			assert.equal(outcome, "already_redeemed");
-			assert.equal(calls[0]?.url, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume");
-			const body = JSON.parse(String((calls[0] as { init: { body: string } }).init.body));
-			assert.equal(body.credit_id, "c1");
-			assert.ok(typeof body.redeem_request_id === "string" && body.redeem_request_id.length > 0);
-		});
+	test("redeemResetCredit posts an idempotent consume and returns the outcome code", async (t) => {
+		const calls = mockFetch(t, { ok: true, json: async () => ({ code: "already_redeemed" }) });
+		const outcome = await redeemResetCredit(authedToken, "c1");
+		assert.equal(outcome, "already_redeemed");
+		assert.equal(calls[0]?.url, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume");
+		const body = JSON.parse(String((calls[0] as { init: { body: string } }).init.body));
+		assert.equal(body.credit_id, "c1");
+		assert.ok(typeof body.redeem_request_id === "string" && body.redeem_request_id.length > 0);
 	});
 
-	test("redeemResetCredit defaults to reset when the body has no code", async () => {
-		await withMockFetch({ ok: true, json: async () => ({}) }, async () => {
-			assert.equal(await redeemResetCredit(authedToken, "c1"), "reset");
-		});
+	test("redeemResetCredit defaults to reset when the body has no code", async (t) => {
+		mockFetch(t, { ok: true, json: async () => ({}) });
+		assert.equal(await redeemResetCredit(authedToken, "c1"), "reset");
 	});
 
-	test("fetch failures throw", async () => {
-		await withMockFetch({ ok: false, status: 401, json: async () => ({}) }, async () => {
-			await assert.rejects(fetchOpenAiUsage(authedToken), /401/);
-			await assert.rejects(fetchResetCreditIds(authedToken), /401/);
-			await assert.rejects(redeemResetCredit(authedToken, "c1"), /401/);
-		});
+	test("fetch failures throw", async (t) => {
+		mockFetch(t, { ok: false, status: 401, json: async () => ({}) });
+		await assert.rejects(fetchOpenAiUsage(authedToken), /401/);
+		await assert.rejects(fetchResetCreditIds(authedToken), /401/);
+		await assert.rejects(redeemResetCredit(authedToken, "c1"), /401/);
 	});
 
-	test("tokens without an account id throw before any request", async () => {
-		await withMockFetch({ ok: true, json: async () => ({}) }, async (calls) => {
-			await assert.rejects(fetchOpenAiUsage("bad-token"), /chatgpt_account_id/);
-			assert.equal(calls.length, 0);
-		});
+	test("tokens without an account id throw before any request", async (t) => {
+		const calls = mockFetch(t, { ok: true, json: async () => ({}) });
+		await assert.rejects(fetchOpenAiUsage("bad-token"), /chatgpt_account_id/);
+		assert.equal(calls.length, 0);
 	});
 });

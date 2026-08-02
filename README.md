@@ -30,6 +30,19 @@ Pac-Man moves left → right using Pi's native context usage. Eaten pellets beco
 
 Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pellets, and the active ghost keep classic arcade colors.
 
+## Subscription quota
+
+When the active model belongs to a subscription provider, its quota sits beside the model label:
+
+- **Kimi Code (Coding Plan)**: weekly `W%` plus rolling rate-limit windows (`5h%`, `1d%`) from `/v1/usages`
+- **OpenAI Codex (ChatGPT Plus/Pro)**: `5h%` and `7d%` windows from `/wham/usage`, plus a dim `R<n>` count when banked usage-limit resets are available
+
+Quota is advisory chrome: polls every 5 minutes, failures keep the last good snapshot, and everything hides when a non-subscription model is active.
+
+### `/openai-codex-reset`
+
+Redeems one banked OpenAI usage-limit reset (resets the current 5h/weekly window). This is an **intentional, user-requested feature** — the command calls the same `/wham/rate-limit-reset-credits` endpoints the official Codex CLI `/usage` redeem flow uses, with an explicit confirm dialog before the mutating POST and an idempotency key on every consume. Audits should not flag it as removable bloat; the passive `R<n>` display and the active redeem command are a pair by design.
+
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 
 Top border carries context consumption (lane, `%`, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, so the rounded border never gaps.
@@ -81,7 +94,7 @@ pi --no-extensions -e ./index.ts --no-session --no-tools -p "Reply ok"
 - Tests use built-in `node:test` and Node coverage
 - Runtime source and tests use separate TypeScript configs
 - Loads as `.ts` via jiti (no build step)
-- Pi core packages stay `*` peers; development and CI test exact Pi `0.82.0`
+- Pi core packages stay `*` peers; development and CI test exact Pi `0.83.0`
 
 ## License
 

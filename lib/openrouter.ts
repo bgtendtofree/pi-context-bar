@@ -33,7 +33,7 @@ export const parseOpenRouterKey = (payload: unknown): QuotaUsage => {
 	const data = payload.data;
 	const limit = toNumber(data.limit);
 	const remaining = toNumber(data.limit_remaining);
-	const usage = toNumber(data.usage);
+	const daily = toNumber(data.usage_daily);
 	const limits: QuotaLimit[] = [];
 	if (limit !== undefined && limit > 0 && remaining !== undefined) {
 		limits.push({ label: resetLabel(data.limit_reset), percent: ((limit - remaining) / limit) * 100 });
@@ -42,7 +42,7 @@ export const parseOpenRouterKey = (payload: unknown): QuotaUsage => {
 		weeklyPercent: undefined,
 		limits,
 		...(remaining !== undefined ? { balanceDollars: remaining } : {}),
-		...(limit === undefined && usage !== undefined ? { spentDollars: usage } : {}),
+		...(limit === undefined && daily !== undefined ? { dailySpentDollars: daily } : {}),
 	};
 };
 

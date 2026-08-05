@@ -9,25 +9,25 @@ describe("OpenRouter key balance parsing", () => {
 		});
 		assert.equal(quota.weeklyPercent, undefined);
 		assert.equal(quota.balanceDollars, 6.75);
-		assert.equal(quota.spentDollars, undefined);
+		assert.equal(quota.dailySpentDollars, undefined);
 		assert.deepEqual(quota.limits, [{ label: "7d", percent: 32.5 }]);
 	});
 
-	test("unlimited key reports usage as spent with no balance", () => {
+	test("unlimited key reports daily spend with no balance", () => {
 		const quota = parseOpenRouterKey({
-			data: { label: "K", usage: 3.25, limit: null, limit_remaining: null, limit_reset: null },
+			data: { label: "K", usage: 3.25, usage_daily: 0.42, limit: null, limit_remaining: null, limit_reset: null },
 		});
 		assert.equal(quota.balanceDollars, undefined);
-		assert.equal(quota.spentDollars, 3.25);
+		assert.equal(quota.dailySpentDollars, 0.42);
 		assert.deepEqual(quota.limits, []);
 	});
 
 	test("limited key with unknown remaining keeps the limit quiet", () => {
 		const quota = parseOpenRouterKey({
-			data: { label: "K", usage: 1, limit: 10, limit_remaining: null, limit_reset: "daily" },
+			data: { label: "K", usage: 1, usage_daily: 0.5, limit: 10, limit_remaining: null, limit_reset: "daily" },
 		});
 		assert.equal(quota.balanceDollars, undefined);
-		assert.equal(quota.spentDollars, undefined);
+		assert.equal(quota.dailySpentDollars, undefined);
 		assert.deepEqual(quota.limits, []);
 	});
 

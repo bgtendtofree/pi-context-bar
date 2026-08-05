@@ -103,10 +103,10 @@ export type QuotaUsage = Readonly<{
 	limits: readonly QuotaLimit[];
 	/** Banked usage-limit reset credits (OpenAI Codex plans); absent on providers without resets. */
 	resetCredits?: number;
-	/** Remaining key balance in dollars (OpenRouter limited keys); unlimited keys report spentDollars instead. */
+	/** Remaining key balance in dollars (OpenRouter limited keys); unlimited keys report dailySpentDollars instead. */
 	balanceDollars?: number;
-	/** Lifetime spend in dollars (OpenRouter unlimited keys). */
-	spentDollars?: number;
+	/** Spend in dollars for the current UTC day (OpenRouter unlimited keys). */
+	dailySpentDollars?: number;
 }>;
 
 /** Quota metric variants, widest → tightest, styled at construction. Weekly survives before limits. */
@@ -120,7 +120,10 @@ export const quotaMetricOptions = (usage: QuotaUsage, styles: ChromeStyles): rea
 	// Banked resets and dollar balances are quiet chrome; zero or unknown stays hidden.
 	const resets = usage.resetCredits ? styles.dim(`R${usage.resetCredits}`) : "";
 	const balance = styled(formatDollarBalance(usage.balanceDollars), styles.dim);
-	const spent = styled(usage.spentDollars !== undefined ? `used$${usage.spentDollars.toFixed(2)}` : "", styles.dim);
+	const spent = styled(
+		usage.dailySpentDollars !== undefined ? `d$${usage.dailySpentDollars.toFixed(2)}` : "",
+		styles.dim,
+	);
 	return [
 		[weekly, limits, resets, balance, spent].filter(Boolean).join(styles.dim(" ")),
 		[weekly || resets, balance || spent].filter(Boolean).join(styles.dim(" ")),

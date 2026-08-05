@@ -322,9 +322,12 @@ describe("quota metric options", () => {
 		assert.deepEqual(options, ["7d33% $6.75", "$6.75", ""]);
 	});
 
-	test("shows unlimited-key spend", () => {
-		const options = quotaMetricOptions({ weeklyPercent: undefined, limits: [], spentDollars: 3.25 }, identityStyles);
-		assert.deepEqual(options, ["used$3.25", "used$3.25", ""]);
+	test("shows unlimited-key daily spend", () => {
+		const options = quotaMetricOptions(
+			{ weeklyPercent: undefined, limits: [], dailySpentDollars: 0.42 },
+			identityStyles,
+		);
+		assert.deepEqual(options, ["d$0.42", "d$0.42", ""]);
 	});
 
 	test("hides balance when zero or absent", () => {

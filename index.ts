@@ -14,6 +14,7 @@ import {
 } from "./lib/header.ts";
 import { fetchKimiUsage } from "./lib/kimi.ts";
 import { fetchOpenAiUsage, fetchResetCreditIds, redeemResetCredit } from "./lib/openai.ts";
+import { fetchOpenRouterBalance } from "./lib/openrouter.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
@@ -85,9 +86,9 @@ const refreshSessionUsage = (ctx: ExtensionContext): void => {
 };
 
 /** Quota belongs to the active model's provider; a non-subscription model hides and stops polling it. */
-const quotaProvider = (ctx: ExtensionContext): "kimi-coding" | "openai-codex" | undefined => {
+const quotaProvider = (ctx: ExtensionContext): "kimi-coding" | "openai-codex" | "openrouter" | undefined => {
 	const provider = ctx.model?.provider;
-	return provider === "kimi-coding" || provider === "openai-codex" ? provider : undefined;
+	return provider === "kimi-coding" || provider === "openai-codex" || provider === "openrouter" ? provider : undefined;
 };
 
 /** Poll the subscription quota API; failures keep the last good snapshot and stay silent. */
@@ -104,7 +105,11 @@ const refreshQuota = async (ctx: ExtensionContext): Promise<void> => {
 		if (!key) return;
 		patch({
 			quota:
-				provider === "openai-codex" ? await fetchOpenAiUsage(key, baseUrl) : await fetchKimiUsage(key, baseUrl ?? ""),
+				provider === "openai-codex"
+					? await fetchOpenAiUsage(key, baseUrl)
+					: provider === "openrouter"
+						? await fetchOpenRouterBalance(key, baseUrl ?? "https://openrouter.ai/api/v1")
+						: await fetchKimiUsage(key, baseUrl ?? ""),
 		});
 		requestRender();
 	} catch {

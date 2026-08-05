@@ -36,6 +36,7 @@ When the active model belongs to a subscription provider, its quota sits beside 
 
 - **Kimi Code (Coding Plan)**: weekly `W%` plus rolling rate-limit windows (`5h%`, `1d%`) from `/v1/usages`
 - **OpenAI Codex (ChatGPT Plus/Pro)**: `5h%` and `7d%` windows from `/wham/usage`, plus a dim `R<n>` count when banked usage-limit resets are available
+- **OpenRouter**: key credit limit window (`1d%`/`7d%`/`1mo%`) and remaining balance `$` from `/api/v1/key`; unlimited keys show lifetime `used$` instead of a balance
 
 Quota is advisory chrome: polls every 5 minutes, failures keep the last good snapshot, and everything hides when a non-subscription model is active.
 

@@ -63,6 +63,10 @@ export const formatCost = (cost: number): string => {
 	return `$${cost >= 1 ? cost.toFixed(2) : cost.toFixed(3)}`;
 };
 
+/** Dollar balances floor at zero and stay quiet when unknown or empty. */
+export const formatDollarBalance = (dollars: number | undefined): string =>
+	dollars !== undefined && dollars > 0 ? `$${dollars.toFixed(2)}` : "";
+
 export const styleUsage = (text: string, percent: number, styles: ChromeStyles): string => {
 	if (percent > 90) return styles.error(text);
 	if (percent > 70) return styles.warning(text);
@@ -99,6 +103,10 @@ export type QuotaUsage = Readonly<{
 	limits: readonly QuotaLimit[];
 	/** Banked usage-limit reset credits (OpenAI Codex plans); absent on providers without resets. */
 	resetCredits?: number;
+	/** Remaining key balance in dollars (OpenRouter limited keys); unlimited keys report spentDollars instead. */
+	balanceDollars?: number;
+	/** Lifetime spend in dollars (OpenRouter unlimited keys). */
+	spentDollars?: number;
 }>;
 
 /** Quota metric variants, widest → tightest, styled at construction. Weekly survives before limits. */
@@ -109,9 +117,15 @@ export const quotaMetricOptions = (usage: QuotaUsage, styles: ChromeStyles): rea
 	const limits = usage.limits
 		.map((limit) => styledUsage(`${limit.label}${Math.round(limit.percent)}%`, limit.percent))
 		.join(styles.dim(" "));
-	// Banked resets are quiet chrome; zero or unknown stays hidden.
+	// Banked resets and dollar balances are quiet chrome; zero or unknown stays hidden.
 	const resets = usage.resetCredits ? styles.dim(`R${usage.resetCredits}`) : "";
-	return [[weekly, limits, resets].filter(Boolean).join(styles.dim(" ")), weekly || resets, ""];
+	const balance = styled(formatDollarBalance(usage.balanceDollars), styles.dim);
+	const spent = styled(usage.spentDollars !== undefined ? `used$${usage.spentDollars.toFixed(2)}` : "", styles.dim);
+	return [
+		[weekly, limits, resets, balance, spent].filter(Boolean).join(styles.dim(" ")),
+		[weekly || resets, balance || spent].filter(Boolean).join(styles.dim(" ")),
+		"",
+	];
 };
 
 const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>

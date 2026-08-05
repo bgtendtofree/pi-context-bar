@@ -54,6 +54,10 @@ export const breathingBorderColor = (frame: number): ((text: string) => string) 
 	return (text) => `\x1b[38;5;${gray}m${text}\x1b[39m`;
 };
 
+/** Compact context-window size: 200_000 → 200K, 512 → 512. */
+export const formatWindowSize = (tokens: number): string =>
+	tokens >= 1000 ? `${Math.round(tokens / 1000)}K` : `${tokens}`;
+
 export const formatCost = (cost: number): string => {
 	if (cost <= 0) return "";
 	return `$${cost >= 1 ? cost.toFixed(2) : cost.toFixed(3)}`;
@@ -154,7 +158,7 @@ export const renderPacmanLane = (
 	return `${consumed}${pacman}${pellets}${remainder}`;
 };
 
-/** Top-border strip: auto-fit lane with context `%`, quiet speed at the right end. */
+/** Top-border strip: auto-fit lane with context `%` (+ window size), quiet speed at the right end. */
 export const renderLaneStrip = (
 	snapshot: ContextSnapshot,
 	width: number,
@@ -165,14 +169,31 @@ export const renderLaneStrip = (
 ): string => {
 	if (width <= 2) return "";
 	const percentValue = snapshot.contextWindow > 0 ? (snapshot.usedTokens / snapshot.contextWindow) * 100 : 0;
-	let percent = styled(snapshot.contextWindow > 0 ? `${percentValue.toFixed(1)}%` : "", (text) =>
-		styleUsage(text, percentValue, styles),
-	);
-	let speedText = styled(formatTokenSpeed(speed), styles.dim);
-	const laneWidth = (): number =>
-		width - 2 - (percent ? visibleWidth(percent) + 1 : 0) - (speedText ? visibleWidth(speedText) + 1 : 0);
-	if (laneWidth() < 4 && speedText) speedText = "";
-	if (laneWidth() < 4 && percent) percent = "";
-	const lane = renderPacmanLane(snapshot, Math.max(0, laneWidth()), animationFrame, activity);
-	return ` ${[lane, percent, speedText].filter(Boolean).join(" ")} `;
+	const styledPercent = (text: string): string => styled(text, (value) => styleUsage(value, percentValue, styles));
+	// Window size rides with the percent it is the denominator of; tight strips fall back to plain %.
+	const percentOptions =
+		snapshot.contextWindow > 0
+			? [
+					styledPercent(`${percentValue.toFixed(1)}% (${formatWindowSize(snapshot.contextWindow)})`),
+					styledPercent(`${percentValue.toFixed(1)}%`),
+				]
+			: [];
+	const speedText = styled(formatTokenSpeed(speed), styles.dim);
+	const laneWidth = (percent: string | undefined, speed: string | undefined): number =>
+		width - 2 - (percent ? visibleWidth(percent) + 1 : 0) - (speed ? visibleWidth(speed) + 1 : 0);
+	let pickedPercent: string | undefined;
+	let pickedSpeed = speedText;
+	for (const candidate of percentOptions) {
+		if (laneWidth(candidate, pickedSpeed) >= 4) {
+			pickedPercent = candidate;
+			break;
+		}
+		if (laneWidth(candidate, undefined) >= 4) {
+			pickedPercent = candidate;
+			pickedSpeed = "";
+			break;
+		}
+	}
+	const lane = renderPacmanLane(snapshot, Math.max(0, laneWidth(pickedPercent, pickedSpeed)), animationFrame, activity);
+	return ` ${[lane, pickedPercent, pickedSpeed].filter(Boolean).join(" ")} `;
 };

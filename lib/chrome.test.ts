@@ -8,6 +8,7 @@ import {
 	type ChromeStyles,
 	foreground,
 	formatCost,
+	formatWindowSize,
 	freeMetricOptions,
 	GHOST_GLYPH,
 	LANE_ACTIVITY_TEXT,
@@ -191,9 +192,34 @@ describe("lane strip", () => {
 		assert.ok(strip.includes(PACMAN_GLYPH));
 	});
 
+	test("appends the window size to the percent", () => {
+		const strip = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 40, identityStyles, 0, "idle", {
+				tokensPerSecond: 42.25,
+				estimated: true,
+			}),
+		);
+		assert.ok(strip.includes("15.6% (372K)"));
+	});
+
 	test("accents unhealthy usage percent", () => {
-		assert.ok(renderLaneStrip(snapshot({ usedTokens: 150_000 }), 30, markedStyles).includes("<w>75.0%</w>"));
-		assert.ok(renderLaneStrip(snapshot({ usedTokens: 190_000 }), 30, markedStyles).includes("<e>95.0%</e>"));
+		assert.ok(renderLaneStrip(snapshot({ usedTokens: 150_000 }), 30, markedStyles).includes("<w>75.0% (200K)</w>"));
+		assert.ok(renderLaneStrip(snapshot({ usedTokens: 190_000 }), 30, markedStyles).includes("<e>95.0% (200K)</e>"));
+	});
+
+	test("formats window sizes compactly", () => {
+		assert.equal(formatWindowSize(200_000), "200K");
+		assert.equal(formatWindowSize(372_000), "372K");
+		assert.equal(formatWindowSize(512), "512");
+		assert.equal(formatWindowSize(0), "0");
+	});
+
+	test("drops window size to plain percent on narrow strips", () => {
+		const narrow = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 16, identityStyles, 0, "idle", { tokensPerSecond: 42.25, estimated: true }),
+		);
+		assert.ok(!narrow.includes("(372K)"));
+		assert.ok(narrow.includes("15.6%"));
 	});
 
 	test("drops speed before percent on narrow strips", () => {

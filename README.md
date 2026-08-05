@@ -6,7 +6,7 @@ Model, cache hit, and cost live in the rounded editor border — zero extra chro
 Slash-command autocomplete stays above the rounded editor instead of expanding inside it.
 
 ```
-╭─ 󰮯 • • • o • • • 15.7%  ~42.3t/s ────────────────────────────────╮
+╭─ 󰮯 • • • o • • • 15.7% (200K)  ~42.3t/s ──────────────────────────╮
 │ ›                                                                            │
 ╰─ gpt-5.6-sol · medium ─────────────────────────────── CH98%  $1.61 ──╯
 ```
@@ -45,7 +45,7 @@ Redeems one banked OpenAI usage-limit reset (resets the current 5h/weekly window
 
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 
-Top border carries context consumption (lane, `%`, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, so the rounded border never gaps.
+Top border carries context consumption (lane, `%` with the model's context-window size, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, so the rounded border never gaps.
 
 ## Startup
 

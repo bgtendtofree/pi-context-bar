@@ -11,6 +11,8 @@ export type SessionUsage = Readonly<{
 	cost: number;
 	/** Cache hit rate 0–100 of the most recent assistant turn that reported prompt tokens. */
 	cacheHitRate: number | undefined;
+	/** Token-weighted cache hit rate 0–100 across all assistant turns that reported prompt tokens. */
+	cacheHitRateAvg: number | undefined;
 }>;
 
 export type AssistantUsage = Extract<SessionMessageEntry["message"], { role: "assistant" }>["usage"];
@@ -26,13 +28,20 @@ const PLAN_PROVIDERS = new Set(["kimi-coding", "openai-codex", "ln"]);
 export const accumulateSessionUsage = (entries: readonly SessionEntry[]): SessionUsage => {
 	let cost = 0;
 	let hitRate: number | undefined;
+	let promptTokens = 0;
+	let cacheReadTokens = 0;
 
 	for (const entry of entries) {
 		if (entry.type === "message" && entry.message.role === "assistant") {
 			const usage = entry.message.usage;
 			if (!PLAN_PROVIDERS.has(entry.message.provider)) cost += usage.cost.total;
 			const rate = cacheHitRate(usage);
-			if (rate !== undefined) hitRate = rate;
+			if (rate !== undefined) {
+				hitRate = rate;
+				// Token-weighted average: big turns count more than small ones, matching nano-context's all-hit.
+				promptTokens += usage.input + usage.cacheRead + usage.cacheWrite;
+				cacheReadTokens += usage.cacheRead;
+			}
 		} else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
 			// ponytail: toolResult carries no provider; counted as billed — image/tool-model calls on plan providers are rare
 			cost += entry.message.usage.cost.total;
@@ -41,5 +50,9 @@ export const accumulateSessionUsage = (entries: readonly SessionEntry[]): Sessio
 			cost += entry.usage.cost.total;
 		}
 	}
-	return { cost, cacheHitRate: hitRate };
+	return {
+		cost,
+		cacheHitRate: hitRate,
+		cacheHitRateAvg: promptTokens > 0 ? (cacheReadTokens / promptTokens) * 100 : undefined,
+	};
 };

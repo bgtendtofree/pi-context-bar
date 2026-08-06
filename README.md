@@ -11,7 +11,7 @@ Slash-command autocomplete stays above the rounded editor instead of expanding i
 ╰─ gpt-5.6-sol · medium ─────────────────────────────── CH98%  $1.61 ──╯
 ```
 
-Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle. The border stays static theme-colored while working, flashing bright once for ~240ms on every activity transition (start, thinking, tools) — a transient cue instead of continuous animation, so the chrome reads alive without constant motion.
+Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle. The border stays static theme-colored throughout — the chomping mouth and the ghost carry activity, and chomp speed is driven by live token throughput, so a slow turn is directly visible as slow chomping.
 
 ## Why
 
@@ -47,6 +47,8 @@ Redeems one banked OpenAI usage-limit reset (resets the current 5h/weekly window
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 
 Top border carries context consumption (lane, `%` with the model's context-window size, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, so the rounded border never gaps.
+
+`CH` shows the latest turn's cache hit rate (pi's built-in footer semantics). When the session's token-weighted average diverges from it by more than 5 points, the average joins the label as `CH98/94%` (latest/average), so a quietly drifting hit rate cannot mislead; the average is dim and the latest turn keeps the warning/error coloring.
 
 ## Startup
 

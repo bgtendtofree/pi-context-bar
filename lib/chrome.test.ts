@@ -15,8 +15,6 @@ import {
 	PELLET_GLYPH,
 	POWER_PELLET_GLYPH,
 	POWER_PELLET_RATIOS,
-	PULSE_FRAMES,
-	pulseBorderColor,
 	type QuotaUsage,
 	quotaMetricOptions,
 	renderLaneStrip,
@@ -27,6 +25,7 @@ import type { ContextSnapshot, SessionUsage } from "./context.ts";
 const usage = (partial: Partial<SessionUsage> = {}): SessionUsage => ({
 	cost: 0,
 	cacheHitRate: undefined,
+	cacheHitRateAvg: undefined,
 	...partial,
 });
 
@@ -92,16 +91,16 @@ describe("health metric formatting", () => {
 describe("semantic metric styling", () => {
 	test("keeps healthy cache quiet", () => {
 		const widest = freeMetricOptions(usage({ cost: 6.65, cacheHitRate: 99 }), markedStyles)[0] ?? "";
-		assert.ok(widest.includes("<d>CH99%</d>"));
+		assert.ok(widest.includes("<d>CH99</d>%"));
 		assert.ok(!widest.includes("<w>"));
 		assert.ok(!widest.includes("<e>"));
 	});
 
 	test("accents only unhealthy cache", () => {
 		const warning = freeMetricOptions(usage({ cacheHitRate: 60 }), markedStyles)[0] ?? "";
-		assert.ok(warning.includes("<w>CH60%</w>"));
+		assert.ok(warning.includes("<w>CH60</w>%"));
 		const error = freeMetricOptions(usage({ cacheHitRate: 20 }), markedStyles)[0] ?? "";
-		assert.ok(error.includes("<e>CH20%</e>"));
+		assert.ok(error.includes("<e>CH20</e>%"));
 		assert.equal(freeMetricOptions(usage(), markedStyles)[0], "");
 	});
 });
@@ -244,26 +243,22 @@ describe("lane strip", () => {
 	});
 });
 
-describe("transition pulse", () => {
-	const grayOf = (frame: number): number | undefined => {
-		const styler = pulseBorderColor(frame);
-		return styler === undefined ? undefined : Number(/38;5;(\d+)m/.exec(styler("─"))?.[1]);
-	};
-
-	test("wraps text in a grayscale foreground and resets", () => {
-		const styled = pulseBorderColor(0)?.("─") ?? "";
-		assert.ok(styled.startsWith("\x1b[38;5;"));
-		assert.ok(styled.endsWith("─\x1b[39m"));
+describe("CH session average", () => {
+	test("joins the token-weighted average when it diverges by more than 5 points", () => {
+		const options = freeMetricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 92 }), identityStyles);
+		assert.equal(stripVTControlCharacters(options[0] ?? ""), "CH98/92%");
 	});
 
-	test("flashes bright first, dims monotonically, then returns to the theme", () => {
-		assert.equal(grayOf(0), 255);
-		for (let frame = 1; frame < PULSE_FRAMES; frame += 1) {
-			assert.ok((grayOf(frame) ?? 0) < (grayOf(frame - 1) ?? 0));
-		}
-		assert.equal(pulseBorderColor(-1), undefined);
-		assert.equal(pulseBorderColor(PULSE_FRAMES), undefined);
-		assert.equal(pulseBorderColor(PULSE_FRAMES + 1), undefined);
+	test("stays latest-only when the average is close or unknown", () => {
+		assert.equal(freeMetricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 96 }), identityStyles)[0], "CH98%");
+		assert.equal(freeMetricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 98.2 }), identityStyles)[0], "CH98%");
+		assert.equal(freeMetricOptions(usage({ cacheHitRate: 98 }), identityStyles)[0], "CH98%");
+	});
+
+	test("keeps the latest-turn color on CH and styles the average dim", () => {
+		const widest = freeMetricOptions(usage({ cacheHitRate: 20, cacheHitRateAvg: 60 }), markedStyles)[0] ?? "";
+		assert.ok(widest.includes("<e>CH20</e>"));
+		assert.ok(widest.includes("<d>/60</d>%"));
 	});
 });
 

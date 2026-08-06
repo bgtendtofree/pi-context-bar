@@ -82,6 +82,22 @@ describe("session usage", () => {
 		assert.equal(result.cacheHitRate, 80);
 	});
 
+	test("computes token-weighted session average across reported turns", () => {
+		const result = accumulateSessionUsage([
+			assistantEntry("one", assistantUsage({ input: 10, cacheRead: 90 })), // 100 prompt, 90 hit
+			assistantEntry("two", assistantUsage({ input: 20, cacheRead: 80 })), // 100 prompt, 80 hit
+			assistantEntry("three", assistantUsage({ cacheRead: 200, cacheWrite: 200 })), // 400 prompt, 200 hit
+		]);
+		assert.equal(result.cacheHitRate, 50);
+		// token-weighted: (90 + 80 + 200) / (100 + 100 + 400) = 370 / 600 = 61.67
+		assert.ok(Math.abs((result.cacheHitRateAvg ?? 0) - 61.666) < 0.01);
+	});
+
+	test("leaves the average undefined when no turn reports prompt tokens", () => {
+		assert.equal(accumulateSessionUsage([]).cacheHitRateAvg, undefined);
+		assert.equal(accumulateSessionUsage([assistantEntry("one", assistantUsage())]).cacheHitRateAvg, undefined);
+	});
+
 	test("excludes subscription-plan assistant cost but keeps its CH", () => {
 		const result = accumulateSessionUsage([
 			assistantEntry("plan", assistantUsage({ input: 10, cacheRead: 90 }, 0.5), "kimi-coding"),

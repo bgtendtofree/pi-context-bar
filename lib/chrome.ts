@@ -39,16 +39,6 @@ export type ChromeStyles = Readonly<{
 	error: (text: string) => string;
 }>;
 
-/** Pulse frames at ~60ms/frame give a ~240ms flash; after it the border returns to the theme color. */
-export const PULSE_FRAMES = 4;
-
-/** One-shot transition flash: bright first frame, steps back toward the theme; outside the pulse returns undefined. */
-export const pulseBorderColor = (frame: number): ((text: string) => string) | undefined => {
-	if (frame < 0 || frame >= PULSE_FRAMES) return undefined;
-	const gray = 255 - Math.round((frame * 28) / (PULSE_FRAMES - 1));
-	return (text) => `\x1b[38;5;${gray}m${text}\x1b[39m`;
-};
-
 /** Compact context-window size: 200_000 → 200K, 512 → 512. */
 export const formatWindowSize = (tokens: number): string =>
 	tokens >= 1000 ? `${Math.round(tokens / 1000)}K` : `${tokens}`;
@@ -74,11 +64,23 @@ const styleCache = (text: string, rate: number | undefined, styles: ChromeStyles
 
 const styled = (text: string, style: (text: string) => string): string => (text ? style(text) : "");
 
+/** Session average joins the CH label only when it diverges meaningfully from the latest turn. */
+export const CH_AVG_DIVERGENCE_POINTS = 5;
+
+/** CH label: latest turn's rate, with the token-weighted session average appended when it diverges. */
+const cacheLabel = (usage: SessionUsage, styles: ChromeStyles): string => {
+	const latest = usage.cacheHitRate;
+	if (latest === undefined) return "";
+	const avg = usage.cacheHitRateAvg;
+	const diverged = avg !== undefined && Math.abs(latest - avg) > CH_AVG_DIVERGENCE_POINTS;
+	const latestPart = styleCache(`CH${Math.round(latest)}`, latest, styles);
+	const avgPart = diverged ? styles.dim(`/${Math.round(avg)}`) : "";
+	return `${latestPart}${avgPart}%`;
+};
+
 /** Cache/cost options, widest → tightest, styled at construction. CH survives before cost. */
 export const freeMetricOptions = (usage: SessionUsage, styles: ChromeStyles): readonly string[] => {
-	const ch = styled(usage.cacheHitRate !== undefined ? `CH${Math.round(usage.cacheHitRate)}%` : "", (text) =>
-		styleCache(text, usage.cacheHitRate, styles),
-	);
+	const ch = cacheLabel(usage, styles);
 	const cost = styled(formatCost(usage.cost), styles.dim);
 	return [[ch, cost].filter(Boolean).join(styles.dim("  ")), ch, ""];
 };

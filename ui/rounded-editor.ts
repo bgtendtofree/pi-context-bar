@@ -7,7 +7,6 @@ import {
 	type ChromeStyles,
 	freeMetricOptions,
 	type LaneActivity,
-	pulseBorderColor,
 	type QuotaUsage,
 	quotaMetricOptions,
 	renderLaneStrip,
@@ -22,7 +21,6 @@ export type HealthState = Readonly<{
 	speed: TokenSpeedSnapshot | null;
 	frame: number;
 	activity: LaneActivity;
-	pulseFrame: number;
 }>;
 
 export type RoundedEditorOptions = Readonly<{
@@ -66,8 +64,6 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 			const { editor: lines, autocomplete } = splitEditorRender(rendered);
 
 			const health = options.getHealth();
-			const pulse = pulseBorderColor(health.pulseFrame);
-			const borderColor = (text: string): string => (pulse ? pulse(text) : this.borderColor(text));
 			const healthStyles: ChromeStyles = {
 				dim: (text) => ctx.ui.theme.fg("dim", text),
 				warning: (text) => ctx.ui.theme.fg("warning", text),
@@ -78,14 +74,21 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 				const borderLike = stripVTControlCharacters(line).endsWith("─");
 				const content = borderLike ? line : prefix + line;
 				const gap = Math.max(0, innerWidth - visibleWidth(content));
-				const fill = borderLike ? borderColor("─".repeat(gap)) : " ".repeat(gap);
-				return borderColor(left) + content + fill + borderColor(right);
+				const fill = borderLike ? this.borderColor("─".repeat(gap)) : " ".repeat(gap);
+				return this.borderColor(left) + content + fill + this.borderColor(right);
 			};
 
 			const body = lines.slice(1, -1);
 			const result = [
-				renderLabeledBorder(width, "╭", "╮", "", "", borderColor, (middleWidth) =>
-					renderLaneStrip(health.snapshot, middleWidth, healthStyles, health.frame, health.activity, health.speed),
+				renderLabeledBorder(
+					width,
+					"╭",
+					"╮",
+					"",
+					"",
+					(text: string) => this.borderColor(text),
+					(middleWidth) =>
+						renderLaneStrip(health.snapshot, middleWidth, healthStyles, health.frame, health.activity, health.speed),
 				),
 			];
 
@@ -109,7 +112,7 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 				freeMetricOptions(health.usage, healthStyles).find(
 					(value) => value === "" || visibleWidth(value) + 4 <= width - 2 - usedByModel,
 				) ?? "";
-			result.push(renderLabeledBorder(width, "╰", "╯", leftLabel, metrics, borderColor));
+			result.push(renderLabeledBorder(width, "╰", "╯", leftLabel, metrics, (text: string) => this.borderColor(text)));
 			const popup = autocomplete.map((line) => `  ${line}${" ".repeat(Math.max(0, width - visibleWidth(line) - 2))}`);
 			return [...popup, ...result];
 		}

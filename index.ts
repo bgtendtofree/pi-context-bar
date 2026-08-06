@@ -1,30 +1,23 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { keyText, VERSION } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
-import type { LaneActivity, QuotaUsage } from "./lib/chrome.ts";
+import { ASCII_GLYPHS, type GlyphSet, type LaneActivity, NERD_GLYPHS, type QuotaUsage } from "./lib/chrome.ts";
+import { configPath, readConfig } from "./lib/config.ts";
 import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
-import {
-	COMPACT_HINT_DEFS,
-	EXPANDED_HINT_DEFS,
-	type HeaderStyles,
-	type Hint,
-	renderSweepLine,
-	renderWelcome,
-	SWEEP_FRAMES,
-} from "./lib/header.ts";
+import { COMPACT_HINT_DEFS, EXPANDED_HINT_DEFS, type HeaderStyles, type Hint, renderWelcome } from "./lib/header.ts";
 import { fetchKimiUsage } from "./lib/kimi.ts";
 import { fetchOpenAiUsage, fetchResetCreditIds, redeemResetCredit } from "./lib/openai.ts";
 import { fetchOpenRouterBalance } from "./lib/openrouter.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
+/** Event-driven quota refresh throttle; turns end often, the provider API is not free. */
+const QUOTA_THROTTLE_MS = 60 * 1000;
+
 /** Streamed tokens per mouth frame: chomp speed follows throughput. */
 const PACMAN_TOKENS_PER_FRAME = 3;
 const REWIND_FRAMES = 6;
 const REWIND_FRAME_MS = 70;
-const SWEEP_FRAME_MS = 60;
-/** Coding Plan quota poll interval; the API has no push, 5 min is fresh enough. */
-const QUOTA_REFRESH_MS = 5 * 60 * 1000;
 
 type RenderRequester = Readonly<{ requestRender: () => void }>;
 
@@ -41,9 +34,9 @@ type ChromeState = Readonly<{
 	speedTurnOutputTokens: number;
 	speedTurnActiveMs: number;
 	tui: RenderRequester | undefined;
-	welcomeTimer: ReturnType<typeof setInterval> | undefined;
+	glyphs: GlyphSet;
 	quota: QuotaUsage | undefined;
-	quotaTimer: ReturnType<typeof setInterval> | undefined;
+	quotaLastAttemptAt: number;
 }>;
 
 const freshState = (): ChromeState => ({
@@ -59,9 +52,9 @@ const freshState = (): ChromeState => ({
 	speedTurnOutputTokens: 0,
 	speedTurnActiveMs: 0,
 	tui: undefined,
-	welcomeTimer: undefined,
+	glyphs: NERD_GLYPHS,
 	quota: undefined,
-	quotaTimer: undefined,
+	quotaLastAttemptAt: 0,
 });
 
 let state = freshState();
@@ -86,13 +79,16 @@ const quotaProvider = (ctx: ExtensionContext): "kimi-coding" | "openai-codex" | 
 	return provider === "kimi-coding" || provider === "openai-codex" || provider === "openrouter" ? provider : undefined;
 };
 
-/** Poll the subscription quota API; failures keep the last good snapshot and stay silent. */
+/** Refresh on activity (turn_end, model_select) at most once per throttle; failures keep the last snapshot. */
 const refreshQuota = async (ctx: ExtensionContext): Promise<void> => {
 	const provider = quotaProvider(ctx);
 	if (!provider) {
 		if (state.quota) patch({ quota: undefined });
 		return;
 	}
+	const now = performance.now();
+	if (now - state.quotaLastAttemptAt < QUOTA_THROTTLE_MS) return;
+	patch({ quotaLastAttemptAt: now });
 	const baseUrl = ctx.model?.baseUrl;
 	if (provider === "kimi-coding" && !baseUrl) return;
 	try {
@@ -177,7 +173,7 @@ const resolveHints = (
 		action,
 	}));
 
-/** Quiet header after the sweep; expandable via the same keybinding as pi's built-in header. */
+/** Quiet welcome header after session start; expandable via the same keybinding as pi's built-in header. */
 const setWelcomeHeader = (ctx: ExtensionContext): void => {
 	ctx.ui.setHeader(() => {
 		let expanded = false;
@@ -200,37 +196,16 @@ const setWelcomeHeader = (ctx: ExtensionContext): void => {
 	});
 };
 
-/** Opening sweep: Pac-Man eats the header lane once, then the quiet welcome header stays. */
-const playWelcome = (ctx: ExtensionContext): void => {
-	if (ctx.mode !== "tui") return;
-	let frame = 0;
-	ctx.ui.setHeader(() => ({
-		render: (width: number) => ["", renderSweepLine(frame, width)],
-		invalidate: () => {},
-	}));
-	patch({
-		welcomeTimer: setInterval(() => {
-			frame += 1;
-			if (frame > SWEEP_FRAMES) {
-				if (state.welcomeTimer) clearInterval(state.welcomeTimer);
-				patch({ welcomeTimer: undefined });
-				setWelcomeHeader(ctx);
-				return;
-			}
-			requestRender();
-		}, SWEEP_FRAME_MS),
-	});
-};
-
-const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext, reason: string): void => {
+const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
 	refreshSnapshot(ctx);
 	refreshSessionUsage(ctx);
 
-	if (ctx.mode === "tui") ctx.ui.setWorkingVisible(false);
-	if (reason === "startup" || reason === "new") playWelcome(ctx);
+	if (ctx.mode === "tui") {
+		ctx.ui.setWorkingVisible(false);
+		setWelcomeHeader(ctx);
+	}
 	void refreshQuota(ctx);
-	if (!state.quotaTimer) patch({ quotaTimer: setInterval(() => void refreshQuota(ctx), QUOTA_REFRESH_MS) });
 	registerRoundedEditor(ctx, {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
@@ -242,6 +217,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext, reason: string)
 			frame: Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0),
 			activity: state.laneActivity,
 		}),
+		glyphs: state.glyphs,
 		onTui: (tui) => {
 			patch({ tui });
 		},
@@ -251,6 +227,8 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext, reason: string)
 };
 
 export default function zContext(pi: ExtensionAPI): void {
+	patch({ glyphs: readConfig(configPath()).asciiFallback ? ASCII_GLYPHS : NERD_GLYPHS });
+
 	pi.registerCommand("openai-codex-reset", {
 		description: "Redeem a banked OpenAI Codex (ChatGPT plan) usage-limit reset",
 		handler: async (_args, ctx) => {
@@ -284,7 +262,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.on("session_start", (event, ctx) => registerChrome(pi, ctx, event.reason));
+	pi.on("session_start", (_event, ctx) => registerChrome(pi, ctx));
 
 	pi.on("context", (_event, ctx) => {
 		if (state.laneActivity !== "idle") changeLaneActivity("thinking");
@@ -354,6 +332,7 @@ export default function zContext(pi: ExtensionAPI): void {
 			tokenSpeed: completedTokenSpeed(state.speedTurnOutputTokens, state.speedTurnActiveMs) ?? state.tokenSpeed,
 		});
 		refreshSessionUsage(ctx);
+		void refreshQuota(ctx);
 		requestRender();
 	});
 
@@ -389,8 +368,6 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
 		if (state.rewindTimer) clearInterval(state.rewindTimer);
-		if (state.welcomeTimer) clearInterval(state.welcomeTimer);
-		if (state.quotaTimer) clearInterval(state.quotaTimer);
 		state = freshState();
 		if (ctx.mode === "tui") {
 			ctx.ui.setWorkingVisible(true);

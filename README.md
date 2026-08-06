@@ -38,7 +38,7 @@ When the active model belongs to a subscription provider, its quota sits beside 
 - **OpenAI Codex (ChatGPT Plus/Pro)**: `5h%` and `7d%` windows from `/wham/usage`, plus a dim `R<n>` count when banked usage-limit resets are available
 - **OpenRouter**: key credit limit window (`1d%`/`7d%`/`1mo%`) and remaining balance `$` from `/api/v1/key`; unlimited keys show today's spend `d$` instead of a balance (account-level credits need a management key, which pi credentials do not hold)
 
-Quota is advisory chrome: polls every 5 minutes, failures keep the last good snapshot, and everything hides when a non-subscription model is active.
+Quota is advisory chrome: refreshed on activity (`turn_end`, `model_select`) at most once a minute, failures keep the last good snapshot, and everything hides when a non-subscription model is active.
 
 ### `/openai-codex-reset`
 
@@ -52,13 +52,15 @@ Top border carries context consumption (lane, `%` with the model's context-windo
 
 ## Startup
 
-On session start, Pac-Man sweeps the header lane once (eating every pellet in ~0.6s), then a quiet welcome header stays: bold `pi` + version on one row, resolved keybinding hints (`esc interrupt · ctrl+c exit · / commands · ! bash · …`) on the next. Keys are read from your actual keybindings, so remaps show correctly, and the expand keybinding toggles a full hint list. No model or cwd repeats — those already live in the editor border and your shell. The sweep plays on `startup` and `/new` only, never on reload.
+A quiet welcome header appears immediately: bold `pi` + version on one row, resolved keybinding hints (`esc interrupt · ctrl+c exit · / commands · ! bash · …`) on the next. Keys are read from your actual keybindings, so remaps show correctly, and the expand keybinding toggles a full hint list. No model or cwd repeats — those already live in the editor border and your shell.
 
 Pairs well with `"quietStartup": true` in `~/.pi/agent/settings.json`, which hides pi's `[Context] [Skills] [Extensions]` loaded-resources rows; resource details remain available via `/status`.
 
 ## Font requirement
 
-Pac-Man `󰮯` and Ghost `󰊠` are Nerd Font Material Design glyphs. Configure your terminal profile to use a **Nerd Font v3+**; installing the font without selecting it in the terminal is not enough. **JetBrainsMono Nerd Font Mono** is recommended because its icons stay single-cell and keep the lane aligned. Without a compatible Nerd Font, the characters may render as empty boxes or fallback symbols; metrics and context calculations still work.
+Pac-Man `󰮯` and Ghost `󰊠` are Nerd Font Material Design glyphs. Configure your terminal profile to use a **Nerd Font v3+**; installing the font without selecting it in the terminal is not enough. **JetBrainsMono Nerd Font Mono** is recommended because its icons stay single-cell and keep the lane aligned.
+
+Terminals without a Nerd Font (SSH into a remote box, a locked-down corporate profile) fall back to ASCII glyphs via one config file — see [Config](#config).
 
 ## Install
 
@@ -69,6 +71,19 @@ pi install -l file:./
 ```
 
 Remove with `pi remove pi-context-bar`.
+
+## Config
+
+One optional file, one optional key — the default is the intended setup:
+
+```jsonc
+// ~/.pi/agent/pi-context-bar.json
+{
+	"asciiFallback": true // terminals without a Nerd Font: C / O / 0 instead of the icons
+}
+```
+
+The file is read once at startup; a missing or corrupt file silently uses defaults.
 
 ## Dev
 
@@ -97,7 +112,7 @@ pi --no-extensions -e ./index.ts --no-session --no-tools -p "Reply ok"
 - Tests use built-in `node:test` and Node coverage
 - Runtime source and tests use separate TypeScript configs
 - Loads as `.ts` via jiti (no build step)
-- Pi core packages stay `*` peers; development and CI test exact Pi `0.83.0`
+- Pi core packages stay `*` peers; development and CI test exact Pi `0.84.0`
 
 ## License
 

@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
-import { PACMAN_FRAMES, PACMAN_GLYPH, PELLET_GLYPH } from "./chrome.ts";
-import { type HeaderStyles, type Hint, renderSweepLine, renderWelcome, SWEEP_FRAMES } from "./header.ts";
+import { type HeaderStyles, type Hint, renderWelcome } from "./header.ts";
 
 const identityStyles: HeaderStyles = {
 	accent: (text) => text,
@@ -16,30 +15,6 @@ const compact: readonly Hint[] = [
 	{ key: "ctrl+c", action: "exit" },
 ];
 const expanded: readonly Hint[] = [...compact, { key: "ctrl+p", action: "select model" }];
-
-describe("sweep line", () => {
-	test("starts full of pellets and ends eaten", () => {
-		const start = stripVTControlCharacters(renderSweepLine(0, 30));
-		const end = stripVTControlCharacters(renderSweepLine(SWEEP_FRAMES, 30));
-		assert.ok(start.includes(PELLET_GLYPH));
-		assert.ok(start.includes(PACMAN_GLYPH));
-		assert.ok(!end.includes(PELLET_GLYPH));
-	});
-
-	test("pacman advances monotonically", () => {
-		const pacmanIndex = (frame: number) => {
-			const glyph = PACMAN_FRAMES[frame % PACMAN_FRAMES.length] ?? PACMAN_GLYPH;
-			return stripVTControlCharacters(renderSweepLine(frame, 40)).indexOf(glyph);
-		};
-		for (let frame = 1; frame <= SWEEP_FRAMES; frame += 1) {
-			assert.ok(pacmanIndex(frame) >= pacmanIndex(frame - 1));
-		}
-	});
-
-	test("handles tiny widths", () => {
-		assert.equal(renderSweepLine(3, 2), "");
-	});
-});
 
 describe("welcome header", () => {
 	test("collapsed shows logo row and one hint row", () => {

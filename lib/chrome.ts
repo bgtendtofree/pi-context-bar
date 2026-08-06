@@ -16,11 +16,27 @@ export const foreground = (hex: string, text: string): string => {
 /** Classic arcade colors stay limited to game elements. */
 export const PACMAN_TEXT = "#FFFF00";
 export const PELLET_TEXT = "#FFB8AE";
-export const PACMAN_FRAMES = ["󰮯", "●"] as const;
-export const PACMAN_GLYPH = PACMAN_FRAMES[0];
+export const PACMAN_GLYPH = "󰮯";
+export const PACMAN_CLOSED_GLYPH = "●";
+export const PACMAN_FRAMES = [PACMAN_GLYPH, PACMAN_CLOSED_GLYPH] as const;
 export const GHOST_GLYPH = "󰊠";
 export const PELLET_GLYPH = "•";
 export const POWER_PELLET_GLYPH = "o";
+
+/** Terminal glyph choices: Nerd Font icons by default, ASCII for terminals without the font. */
+export type GlyphSet = Readonly<{
+	pacmanOpen: string;
+	pacmanClosed: string;
+	ghost: string;
+}>;
+
+export const NERD_GLYPHS: GlyphSet = {
+	pacmanOpen: PACMAN_GLYPH,
+	pacmanClosed: PACMAN_CLOSED_GLYPH,
+	ghost: GHOST_GLYPH,
+};
+
+export const ASCII_GLYPHS: GlyphSet = { pacmanOpen: "C", pacmanClosed: "O", ghost: "0" };
 /** Lane ratios matching the warning/error metric thresholds. */
 export const POWER_PELLET_RATIOS = [0.7, 0.9] as const;
 
@@ -122,10 +138,11 @@ export const renderPacmanLane = (
 	width: number,
 	animationFrame = 0,
 	activity: LaneActivity = "idle",
+	glyphs: GlyphSet = NERD_GLYPHS,
 ): string => {
 	if (width <= 0) return "";
 	const frameIndex = activity === "idle" ? 0 : Math.abs(Math.trunc(animationFrame)) % PACMAN_FRAMES.length;
-	const pacmanGlyph = PACMAN_FRAMES[frameIndex] ?? PACMAN_GLYPH;
+	const pacmanGlyph = frameIndex === 0 ? glyphs.pacmanOpen : glyphs.pacmanClosed;
 	if (width === 1) return foreground(PACMAN_TEXT, pacmanGlyph);
 
 	const cellWidth = 2;
@@ -149,7 +166,7 @@ export const renderPacmanLane = (
 	const ghostCellIndex = ghostColor && consumedCellCount >= 2 ? consumedCellCount - ghostDistance : undefined;
 	const consumed =
 		ghostColor && ghostCellIndex !== undefined
-			? `${" ".repeat(ghostCellIndex * cellWidth)}${coloredCells(ghostColor, GHOST_GLYPH, 1, cellWidth)}${" ".repeat(
+			? `${" ".repeat(ghostCellIndex * cellWidth)}${coloredCells(ghostColor, glyphs.ghost, 1, cellWidth)}${" ".repeat(
 					(consumedCellCount - ghostCellIndex - 1) * cellWidth,
 				)}`
 			: " ".repeat(consumedCellCount * cellWidth);
@@ -165,6 +182,7 @@ export const renderLaneStrip = (
 	animationFrame = 0,
 	activity: LaneActivity = "idle",
 	speed: TokenSpeedSnapshot | null = null,
+	glyphs: GlyphSet = NERD_GLYPHS,
 ): string => {
 	if (width <= 2) return "";
 	const percentValue = snapshot.contextWindow > 0 ? (snapshot.usedTokens / snapshot.contextWindow) * 100 : 0;
@@ -193,6 +211,12 @@ export const renderLaneStrip = (
 			break;
 		}
 	}
-	const lane = renderPacmanLane(snapshot, Math.max(0, laneWidth(pickedPercent, pickedSpeed)), animationFrame, activity);
+	const lane = renderPacmanLane(
+		snapshot,
+		Math.max(0, laneWidth(pickedPercent, pickedSpeed)),
+		animationFrame,
+		activity,
+		glyphs,
+	);
 	return ` ${[lane, pickedPercent, pickedSpeed].filter(Boolean).join(" ")} `;
 };

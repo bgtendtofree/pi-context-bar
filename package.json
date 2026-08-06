@@ -18,6 +18,7 @@
 		"index.ts",
 		"lib/border.ts",
 		"lib/chrome.ts",
+		"lib/config.ts",
 		"lib/context.ts",
 		"lib/header.ts",
 		"lib/kimi.ts",
@@ -48,8 +49,8 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.4",
-		"@earendil-works/pi-coding-agent": "0.83.0",
-		"@earendil-works/pi-tui": "0.83.0",
+		"@earendil-works/pi-coding-agent": "0.84.0",
+		"@earendil-works/pi-tui": "0.84.0",
 		"@types/node": "^24.0.0",
 		"typescript": "7.0.2"
 	}

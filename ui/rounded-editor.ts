@@ -6,6 +6,7 @@ import { editorModelOptions, type ModelInfo, renderLabeledBorder } from "../lib/
 import {
 	type ChromeStyles,
 	freeMetricOptions,
+	type GlyphSet,
 	type LaneActivity,
 	type QuotaUsage,
 	quotaMetricOptions,
@@ -27,6 +28,7 @@ export type RoundedEditorOptions = Readonly<{
 	getModel: () => ModelInfo;
 	getThinkingLevel: () => string;
 	getHealth: () => HealthState;
+	glyphs: GlyphSet;
 	onTui: (tui: TUI) => void;
 }>;
 
@@ -88,7 +90,15 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 					"",
 					(text: string) => this.borderColor(text),
 					(middleWidth) =>
-						renderLaneStrip(health.snapshot, middleWidth, healthStyles, health.frame, health.activity, health.speed),
+						renderLaneStrip(
+							health.snapshot,
+							middleWidth,
+							healthStyles,
+							health.frame,
+							health.activity,
+							health.speed,
+							options.glyphs,
+						),
 				),
 			];
 

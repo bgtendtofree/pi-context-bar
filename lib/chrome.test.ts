@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
+	ASCII_GLYPHS,
 	type ChromeStyles,
 	foreground,
 	formatCost,
@@ -168,6 +169,19 @@ describe("Pac-Man lane", () => {
 			).includes(GHOST_GLYPH),
 			false,
 		);
+	});
+
+	test("swaps in ASCII glyphs for terminals without a Nerd Font", () => {
+		const active = snapshot({ usedTokens: 100, contextWindow: 100 });
+		const open = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 0, "working", ASCII_GLYPHS));
+		const closed = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 1, "working", ASCII_GLYPHS));
+		const ghost = stripVTControlCharacters(renderPacmanLane(active, 18, 0, "tools", ASCII_GLYPHS));
+		assert.ok(open.includes(ASCII_GLYPHS.pacmanOpen));
+		assert.ok(closed.includes(ASCII_GLYPHS.pacmanClosed));
+		assert.ok(ghost.includes(ASCII_GLYPHS.ghost));
+		assert.ok(!open.includes(PACMAN_GLYPH));
+		assert.ok(!closed.includes(PACMAN_FRAMES[1] ?? ""));
+		assert.ok(!ghost.includes(GHOST_GLYPH));
 	});
 
 	test("clamps unknown, negative, and overfull usage", () => {

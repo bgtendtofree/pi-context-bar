@@ -28,7 +28,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 - `lib/chrome.ts` — Pac-Man lane, health metrics, health-row composition
 - `lib/kimi.ts` — Kimi Code (Coding Plan) quota fetch + parse
 - `lib/openai.ts` — OpenAI Codex (ChatGPT plan) quota via /wham/usage, banked reset count
-- `lib/header.ts` — startup sweep frame + quiet welcome header
+- `lib/header.ts` — quiet welcome header
 - `lib/border.ts` — pure model border fitting
 - `ui/rounded-editor.ts` — Pi/TUI editor adapter
 - `index.ts` — extension state, I/O, lifecycle wiring only

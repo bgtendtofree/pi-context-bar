@@ -1,10 +1,4 @@
-/** Pure startup header: Pac-Man sweep frame + quiet welcome lines. */
-
-import { renderPacmanLane } from "./chrome.ts";
-import type { ContextSnapshot } from "./context.ts";
-
-/** Sweep crosses the lane in this many frames (~600ms at 60ms/frame). */
-export const SWEEP_FRAMES = 10;
+/** Pure startup header: quiet welcome lines. */
 
 export type HeaderStyles = Readonly<{
 	accent: (text: string) => string;
@@ -37,14 +31,6 @@ export const EXPANDED_HINT_DEFS = [
 	{ id: "app.message.followUp", action: "queue follow-up" },
 	{ id: "app.clipboard.pasteImage", action: "paste image" },
 ] as const;
-
-/** Sweep frame: Pac-Man eats left → right across the width, frame SWEEP_FRAMES = all eaten. */
-export const renderSweepLine = (frame: number, width: number): string => {
-	if (width <= 2) return "";
-	const ratio = Math.min(1, Math.max(0, frame / SWEEP_FRAMES));
-	const snapshot: ContextSnapshot = { usedTokens: Math.round(ratio * 1000), contextWindow: 1000 };
-	return renderPacmanLane(snapshot, width, frame, "working");
-};
 
 const styledHint = (hint: Hint, styles: HeaderStyles): string =>
 	hint.key ? `${styles.dim(hint.key)} ${styles.muted(hint.action)}` : "";

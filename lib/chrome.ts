@@ -64,9 +64,7 @@ export const formatCost = (cost: number): string => {
 };
 
 /** Dollar balances floor at zero and stay quiet when unknown or empty. */
-export const formatDollarBalance = (dollars: number | undefined): string =>
-	dollars !== undefined && dollars > 0 ? `$${dollars.toFixed(2)}` : "";
-
+/** Color health metrics by usage: error > 90%, warning > 70%, else quiet dim. */
 export const styleUsage = (text: string, percent: number, styles: ChromeStyles): string => {
 	if (percent > 90) return styles.error(text);
 	if (percent > 70) return styles.warning(text);
@@ -103,10 +101,6 @@ export type QuotaUsage = Readonly<{
 	limits: readonly QuotaLimit[];
 	/** Banked usage-limit reset credits (OpenAI Codex plans); absent on providers without resets. */
 	resetCredits?: number;
-	/** Remaining key balance in dollars (OpenRouter limited keys); unlimited keys report dailySpentDollars instead. */
-	balanceDollars?: number;
-	/** Spend in dollars for the current UTC day (OpenRouter unlimited keys). */
-	dailySpentDollars?: number;
 }>;
 
 /** Quota metric variants, widest → tightest, styled at construction. Weekly survives before limits. */
@@ -117,18 +111,9 @@ export const quotaMetricOptions = (usage: QuotaUsage, styles: ChromeStyles): rea
 	const limits = usage.limits
 		.map((limit) => styledUsage(`${limit.label}${Math.round(limit.percent)}%`, limit.percent))
 		.join(styles.dim(" "));
-	// Banked resets and dollar balances are quiet chrome; zero or unknown stays hidden.
+	// Banked resets are quiet chrome; zero or unknown stays hidden.
 	const resets = usage.resetCredits ? styles.dim(`R${usage.resetCredits}`) : "";
-	const balance = styled(formatDollarBalance(usage.balanceDollars), styles.dim);
-	const spent = styled(
-		usage.dailySpentDollars !== undefined ? `d$${usage.dailySpentDollars.toFixed(2)}` : "",
-		styles.dim,
-	);
-	return [
-		[weekly, limits, resets, balance, spent].filter(Boolean).join(styles.dim(" ")),
-		[weekly || resets, balance || spent].filter(Boolean).join(styles.dim(" ")),
-		"",
-	];
+	return [[weekly, limits, resets].filter(Boolean).join(styles.dim(" ")), weekly || resets, ""];
 };
 
 const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>

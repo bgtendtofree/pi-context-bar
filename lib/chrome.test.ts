@@ -8,7 +8,6 @@ import {
 	type ChromeStyles,
 	foreground,
 	formatCost,
-	formatDollarBalance,
 	formatWindowSize,
 	freeMetricOptions,
 	GHOST_GLYPH,
@@ -61,13 +60,6 @@ describe("health metric formatting", () => {
 		assert.equal(formatCost(0), "");
 		assert.equal(formatCost(0.042), "$0.042");
 		assert.equal(formatCost(1.61), "$1.61");
-	});
-
-	test("formats dollar balances", () => {
-		assert.equal(formatDollarBalance(6.75), "$6.75");
-		assert.equal(formatDollarBalance(0.5), "$0.50");
-		assert.equal(formatDollarBalance(0), "");
-		assert.equal(formatDollarBalance(undefined), "");
 	});
 
 	test("builds wide and narrow options", () => {
@@ -314,24 +306,11 @@ describe("quota metric options", () => {
 		assert.deepEqual(options, ["W40% 5h30% 1d12%", "W40%", ""]);
 	});
 
-	test("shows key balance and uses it as the tight fallback", () => {
+	test("keeps quota lane dollar-free: limit percent renders, balance data never shown", () => {
 		const options = quotaMetricOptions(
-			{ weeklyPercent: undefined, limits: [{ label: "7d", percent: 32.5 }], balanceDollars: 6.75 },
+			{ weeklyPercent: undefined, limits: [{ label: "7d", percent: 32.5 }] },
 			identityStyles,
-		);
-		assert.deepEqual(options, ["7d33% $6.75", "$6.75", ""]);
-	});
-
-	test("shows unlimited-key daily spend", () => {
-		const options = quotaMetricOptions(
-			{ weeklyPercent: undefined, limits: [], dailySpentDollars: 0.42 },
-			identityStyles,
-		);
-		assert.deepEqual(options, ["d$0.42", "d$0.42", ""]);
-	});
-
-	test("hides balance when zero or absent", () => {
-		const options = quotaMetricOptions({ weeklyPercent: undefined, limits: [], balanceDollars: 0 }, identityStyles);
-		assert.deepEqual(options, ["", "", ""]);
+		).map(stripVTControlCharacters);
+		assert.deepEqual(options, ["7d33%", "", ""]);
 	});
 });

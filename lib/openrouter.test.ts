@@ -3,22 +3,18 @@ import { describe, test } from "node:test";
 import { fetchOpenRouterBalance, parseOpenRouterKey } from "./openrouter.ts";
 
 describe("OpenRouter key balance parsing", () => {
-	test("parses a limited key into balance, spent, and limit percent", () => {
+	test("parses a limited key into a limit-window percent", () => {
 		const quota = parseOpenRouterKey({
 			data: { label: "My Key", usage: 3.25, limit: 10, limit_remaining: 6.75, limit_reset: "weekly" },
 		});
 		assert.equal(quota.weeklyPercent, undefined);
-		assert.equal(quota.balanceDollars, 6.75);
-		assert.equal(quota.dailySpentDollars, undefined);
 		assert.deepEqual(quota.limits, [{ label: "7d", percent: 32.5 }]);
 	});
 
-	test("unlimited key reports daily spend with no balance", () => {
+	test("unlimited key reports no quota metrics", () => {
 		const quota = parseOpenRouterKey({
 			data: { label: "K", usage: 3.25, usage_daily: 0.42, limit: null, limit_remaining: null, limit_reset: null },
 		});
-		assert.equal(quota.balanceDollars, undefined);
-		assert.equal(quota.dailySpentDollars, 0.42);
 		assert.deepEqual(quota.limits, []);
 	});
 
@@ -26,8 +22,6 @@ describe("OpenRouter key balance parsing", () => {
 		const quota = parseOpenRouterKey({
 			data: { label: "K", usage: 1, usage_daily: 0.5, limit: 10, limit_remaining: null, limit_reset: "daily" },
 		});
-		assert.equal(quota.balanceDollars, undefined);
-		assert.equal(quota.dailySpentDollars, undefined);
 		assert.deepEqual(quota.limits, []);
 	});
 
@@ -65,7 +59,7 @@ describe("OpenRouter key balance parsing", () => {
 			);
 		try {
 			const quota = await fetchOpenRouterBalance("k", "https://openrouter.ai/api/v1/");
-			assert.equal(quota.balanceDollars, 6.75);
+			assert.deepEqual(quota.limits, [{ label: "key", percent: 32.5 }]);
 		} finally {
 			globalThis.fetch = original;
 		}

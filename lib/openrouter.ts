@@ -33,17 +33,11 @@ export const parseOpenRouterKey = (payload: unknown): QuotaUsage => {
 	const data = payload.data;
 	const limit = toNumber(data.limit);
 	const remaining = toNumber(data.limit_remaining);
-	const daily = toNumber(data.usage_daily);
 	const limits: QuotaLimit[] = [];
 	if (limit !== undefined && limit > 0 && remaining !== undefined) {
 		limits.push({ label: resetLabel(data.limit_reset), percent: ((limit - remaining) / limit) * 100 });
 	}
-	return {
-		weeklyPercent: undefined,
-		limits,
-		...(remaining !== undefined ? { balanceDollars: remaining } : {}),
-		...(limit === undefined && daily !== undefined ? { dailySpentDollars: daily } : {}),
-	};
+	return { weeklyPercent: undefined, limits };
 };
 
 /** Fetch key balance; the model base URL is OpenRouter's /api/v1, the key API lives at /key. */

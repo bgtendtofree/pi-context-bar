@@ -3,8 +3,6 @@ import { describe, test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
-	BREATH_STEPS,
-	breathingBorderColor,
 	type ChromeStyles,
 	foreground,
 	formatCost,
@@ -17,6 +15,8 @@ import {
 	PELLET_GLYPH,
 	POWER_PELLET_GLYPH,
 	POWER_PELLET_RATIOS,
+	PULSE_FRAMES,
+	pulseBorderColor,
 	type QuotaUsage,
 	quotaMetricOptions,
 	renderLaneStrip,
@@ -244,25 +244,26 @@ describe("lane strip", () => {
 	});
 });
 
-describe("breathing border", () => {
-	const grayOf = (frame: number): number => Number(/38;5;(\d+)m/.exec(breathingBorderColor(frame)("─"))?.[1]);
+describe("transition pulse", () => {
+	const grayOf = (frame: number): number | undefined => {
+		const styler = pulseBorderColor(frame);
+		return styler === undefined ? undefined : Number(/38;5;(\d+)m/.exec(styler("─"))?.[1]);
+	};
 
 	test("wraps text in a grayscale foreground and resets", () => {
-		const styled = breathingBorderColor(0)("─");
+		const styled = pulseBorderColor(0)?.("─") ?? "";
 		assert.ok(styled.startsWith("\x1b[38;5;"));
 		assert.ok(styled.endsWith("─\x1b[39m"));
 	});
 
-	test("bottoms out at frame zero and peaks mid-cycle", () => {
-		assert.equal(grayOf(0), 239);
-		assert.equal(grayOf(BREATH_STEPS / 2), 247);
-		assert.equal(grayOf(BREATH_STEPS), 239);
-	});
-
-	test("moves monotonically through the inhale half", () => {
-		for (let frame = 1; frame <= BREATH_STEPS / 2; frame += 1) {
-			assert.ok(grayOf(frame) >= grayOf(frame - 1));
+	test("flashes bright first, dims monotonically, then returns to the theme", () => {
+		assert.equal(grayOf(0), 255);
+		for (let frame = 1; frame < PULSE_FRAMES; frame += 1) {
+			assert.ok((grayOf(frame) ?? 0) < (grayOf(frame - 1) ?? 0));
 		}
+		assert.equal(pulseBorderColor(-1), undefined);
+		assert.equal(pulseBorderColor(PULSE_FRAMES), undefined);
+		assert.equal(pulseBorderColor(PULSE_FRAMES + 1), undefined);
 	});
 });
 

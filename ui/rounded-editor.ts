@@ -4,10 +4,10 @@ import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { editorModelOptions, type ModelInfo, renderLabeledBorder } from "../lib/border.ts";
 import {
-	breathingBorderColor,
 	type ChromeStyles,
 	freeMetricOptions,
 	type LaneActivity,
+	pulseBorderColor,
 	type QuotaUsage,
 	quotaMetricOptions,
 	renderLaneStrip,
@@ -22,7 +22,7 @@ export type HealthState = Readonly<{
 	speed: TokenSpeedSnapshot | null;
 	frame: number;
 	activity: LaneActivity;
-	breathFrame: number;
+	pulseFrame: number;
 }>;
 
 export type RoundedEditorOptions = Readonly<{
@@ -66,10 +66,8 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 			const { editor: lines, autocomplete } = splitEditorRender(rendered);
 
 			const health = options.getHealth();
-			const borderColor =
-				health.activity === "idle"
-					? (text: string) => this.borderColor(text)
-					: breathingBorderColor(health.breathFrame);
+			const pulse = pulseBorderColor(health.pulseFrame);
+			const borderColor = (text: string): string => (pulse ? pulse(text) : this.borderColor(text));
 			const healthStyles: ChromeStyles = {
 				dim: (text) => ctx.ui.theme.fg("dim", text),
 				warning: (text) => ctx.ui.theme.fg("warning", text),

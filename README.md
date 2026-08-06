@@ -11,7 +11,7 @@ Slash-command autocomplete stays above the rounded editor instead of expanding i
 ╰─ gpt-5.6-sol · medium ─────────────────────────────── CH98%  $1.61 ──╯
 ```
 
-Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle. While the agent works, the rounded border itself breathes — a slow grayscale sine on the frame — so slow turns still read as alive; the border returns to the theme color the moment the agent goes idle.
+Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle. The border stays static theme-colored while working, flashing bright once for ~240ms on every activity transition (start, thinking, tools) — a transient cue instead of continuous animation, so the chrome reads alive without constant motion.
 
 ## Why
 

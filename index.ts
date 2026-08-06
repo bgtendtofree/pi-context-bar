@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { keyText, VERSION } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
-import type { LaneActivity, QuotaUsage } from "./lib/chrome.ts";
+import { type LaneActivity, PULSE_FRAMES, type QuotaUsage } from "./lib/chrome.ts";
 import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
 import {
 	COMPACT_HINT_DEFS,
@@ -22,7 +22,7 @@ import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 const PACMAN_TOKENS_PER_FRAME = 3;
 const REWIND_FRAMES = 6;
 const REWIND_FRAME_MS = 70;
-const BREATH_FRAME_MS = 150;
+const PULSE_FRAME_MS = 60;
 const SWEEP_FRAME_MS = 60;
 /** Coding Plan quota poll interval; the API has no push, 5 min is fresh enough. */
 const QUOTA_REFRESH_MS = 5 * 60 * 1000;
@@ -36,8 +36,9 @@ type ChromeState = Readonly<{
 	rewind: Readonly<{ usedTokens: number; frame: number }> | undefined;
 	rewindTimer: ReturnType<typeof setInterval> | undefined;
 	laneActivity: LaneActivity;
-	breathFrame: number;
-	breathTimer: ReturnType<typeof setInterval> | undefined;
+	/** -1 while idle or after the flash; 0…PULSE_FRAMES-1 while the transition flash is showing. */
+	pulseFrame: number;
+	pulseTimer: ReturnType<typeof setInterval> | undefined;
 	tokenSpeed: TokenSpeedSnapshot | null;
 	speedStreamTokens: number;
 	speedStreamStartedAt: number | undefined;
@@ -56,8 +57,8 @@ const freshState = (): ChromeState => ({
 	rewind: undefined,
 	rewindTimer: undefined,
 	laneActivity: "idle",
-	breathFrame: 0,
-	breathTimer: undefined,
+	pulseFrame: -1,
+	pulseTimer: undefined,
 	tokenSpeed: null,
 	speedStreamTokens: 0,
 	speedStreamStartedAt: undefined,
@@ -124,22 +125,28 @@ const currentModel = (ctx: ExtensionContext): ModelInfo => {
 
 const requestRender = (): void => state.tui?.requestRender();
 
+/** Flash the border once on every activity transition; the border is static theme the rest of the time. */
 const changeLaneActivity = (next: LaneActivity): boolean => {
 	if (state.laneActivity === next) return false;
 	patch({ laneActivity: next });
+	if (state.pulseTimer) clearInterval(state.pulseTimer);
 	if (next === "idle") {
-		if (state.breathTimer) clearInterval(state.breathTimer);
-		patch({ breathTimer: undefined, breathFrame: 0 });
+		patch({ pulseTimer: undefined, pulseFrame: -1 });
 		return true;
 	}
-	if (!state.breathTimer) {
-		patch({
-			breathTimer: setInterval(() => {
-				patch({ breathFrame: state.breathFrame + 1 });
-				requestRender();
-			}, BREATH_FRAME_MS),
-		});
-	}
+	patch({ pulseFrame: 0 });
+	patch({
+		pulseTimer: setInterval(() => {
+			const pulseFrame = state.pulseFrame + 1;
+			if (pulseFrame >= PULSE_FRAMES) {
+				if (state.pulseTimer) clearInterval(state.pulseTimer);
+				patch({ pulseTimer: undefined, pulseFrame: -1 });
+			} else {
+				patch({ pulseFrame });
+			}
+			requestRender();
+		}, PULSE_FRAME_MS),
+	});
 	return true;
 };
 
@@ -258,7 +265,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext, reason: string)
 			speed: state.tokenSpeed,
 			frame: Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0),
 			activity: state.laneActivity,
-			breathFrame: state.breathFrame,
+			pulseFrame: state.pulseFrame,
 		}),
 		onTui: (tui) => {
 			patch({ tui });
@@ -407,7 +414,7 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
 		if (state.rewindTimer) clearInterval(state.rewindTimer);
-		if (state.breathTimer) clearInterval(state.breathTimer);
+		if (state.pulseTimer) clearInterval(state.pulseTimer);
 		if (state.welcomeTimer) clearInterval(state.welcomeTimer);
 		if (state.quotaTimer) clearInterval(state.quotaTimer);
 		state = freshState();

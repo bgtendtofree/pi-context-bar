@@ -1,20 +1,11 @@
 /** OpenAI Codex (ChatGPT Plus/Pro) quota: fetch and parse wham/usage rate-limit windows into the shared QuotaUsage shape. */
 
-import type { QuotaLimit, QuotaUsage } from "./chrome.ts";
-
-type JsonObject = Readonly<Record<string, unknown>>;
+import { EMPTY_QUOTA, type QuotaLimit, type QuotaUsage } from "./chrome.ts";
+import { isObject, type JsonObject, toNumber } from "./json.ts";
 
 const DEFAULT_BASE_URL = "https://chatgpt.com/backend-api";
 /** JWT claim namespace carrying the ChatGPT account id (same claim pi extracts at login). */
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
-
-const isObject = (value: unknown): value is JsonObject =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-const toNumber = (value: unknown): number | undefined => {
-	const parsed = Number(value);
-	return Number.isFinite(parsed) ? parsed : undefined;
-};
 
 /** ChatGPT account id from the OAuth access token; the wham/usage API requires it as a header. */
 export const openAiAccountId = (token: string): string | undefined => {
@@ -46,7 +37,7 @@ const windowPercent = (window: JsonObject): number | undefined => toNumber(windo
 
 /** The /wham/usage payload: rate_limit.primary_window (5h) + secondary_window (7d), each {used_percent, limit_window_seconds}. */
 export const parseOpenAiUsage = (payload: unknown): QuotaUsage => {
-	if (!isObject(payload)) return { weeklyPercent: undefined, limits: [] };
+	if (!isObject(payload)) return EMPTY_QUOTA;
 	const rateLimit = isObject(payload.rate_limit) ? payload.rate_limit : payload;
 	const limits: QuotaLimit[] = [];
 	for (const [index, key] of ["primary_window", "secondary_window"].entries()) {

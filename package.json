@@ -21,6 +21,7 @@
 		"lib/config.ts",
 		"lib/context.ts",
 		"lib/header.ts",
+		"lib/json.ts",
 		"lib/kimi.ts",
 		"lib/openai.ts",
 		"lib/openrouter.ts",

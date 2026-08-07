@@ -1,17 +1,7 @@
 /** OpenRouter balance: fetch and parse /api/v1/key (key limit + remaining) into the shared QuotaUsage shape. */
 
-import type { QuotaLimit, QuotaUsage } from "./chrome.ts";
-
-type JsonObject = Readonly<Record<string, unknown>>;
-
-const isObject = (value: unknown): value is JsonObject =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-const toNumber = (value: unknown): number | undefined => {
-	if (value === null || value === undefined) return undefined;
-	const parsed = Number(value);
-	return Number.isFinite(parsed) ? parsed : undefined;
-};
+import { EMPTY_QUOTA, type QuotaLimit, type QuotaUsage } from "./chrome.ts";
+import { isObject, toNumber } from "./json.ts";
 
 /** Reset-window label for the key limit: daily → 1d, weekly → 7d, monthly → 1mo, none → key. */
 const resetLabel = (reset: unknown): string => {
@@ -29,7 +19,7 @@ const resetLabel = (reset: unknown): string => {
 
 /** The /key payload: per-key `usage` against an optional credit `limit`; unlimited keys report both as null. */
 export const parseOpenRouterKey = (payload: unknown): QuotaUsage => {
-	if (!isObject(payload) || !isObject(payload.data)) return { weeklyPercent: undefined, limits: [] };
+	if (!isObject(payload) || !isObject(payload.data)) return EMPTY_QUOTA;
 	const data = payload.data;
 	const limit = toNumber(data.limit);
 	const remaining = toNumber(data.limit_remaining);

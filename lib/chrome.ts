@@ -64,7 +64,6 @@ export const formatCost = (cost: number): string => {
 	return `$${cost >= 1 ? cost.toFixed(2) : cost.toFixed(3)}`;
 };
 
-/** Dollar balances floor at zero and stay quiet when unknown or empty. */
 /** Color health metrics by usage: error > 90%, warning > 70%, else quiet dim. */
 export const styleUsage = (text: string, percent: number, styles: ChromeStyles): string => {
 	if (percent > 90) return styles.error(text);
@@ -115,6 +114,9 @@ export type QuotaUsage = Readonly<{
 	/** Banked usage-limit reset credits (OpenAI Codex plans); absent on providers without resets. */
 	resetCredits?: number;
 }>;
+
+/** Empty snapshot for absent or unparseable payloads. */
+export const EMPTY_QUOTA: QuotaUsage = { weeklyPercent: undefined, limits: [] };
 
 /** Quota metric variants, widest → tightest, styled at construction. Weekly survives before limits. */
 export const quotaMetricOptions = (usage: QuotaUsage, styles: ChromeStyles): readonly string[] => {

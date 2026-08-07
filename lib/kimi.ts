@@ -1,16 +1,7 @@
 /** Kimi Code (Coding Plan) quota: fetch and parse weekly usage + rate-limit windows into the shared QuotaUsage shape. */
 
-import type { QuotaLimit, QuotaUsage } from "./chrome.ts";
-
-type JsonObject = Readonly<Record<string, unknown>>;
-
-const isObject = (value: unknown): value is JsonObject =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-const toNumber = (value: unknown): number | undefined => {
-	const parsed = Number(value);
-	return Number.isFinite(parsed) ? parsed : undefined;
-};
+import { EMPTY_QUOTA, type QuotaLimit, type QuotaUsage } from "./chrome.ts";
+import { isObject, type JsonObject, toNumber } from "./json.ts";
 
 const usedPercent = (data: JsonObject): number | undefined => {
 	const limit = toNumber(data.limit);
@@ -39,7 +30,7 @@ const shortName = (data: JsonObject, fallback: string): string => {
 
 /** The /usages payload: weekly summary under `usage`, rate-limit windows under `limits`. */
 export const parseKimiUsage = (payload: unknown): QuotaUsage => {
-	if (!isObject(payload)) return { weeklyPercent: undefined, limits: [] };
+	if (!isObject(payload)) return EMPTY_QUOTA;
 	const weeklyPercent = isObject(payload.usage) ? usedPercent(payload.usage) : undefined;
 	const limits: QuotaLimit[] = [];
 	if (Array.isArray(payload.limits)) {

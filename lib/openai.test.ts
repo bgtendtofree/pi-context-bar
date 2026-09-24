@@ -31,14 +31,14 @@ test("quota refresh throttle can be bypassed after a reset", () => {
 	assert.equal(shouldRefreshQuota(59_999, 60_000, true), true);
 });
 
-type MockResponse = Readonly<{ ok: boolean; status?: number; json: () => Promise<unknown> }>;
+const jsonResponse = (payload: unknown, status = 200): Response => new Response(JSON.stringify(payload), { status });
 
 /** Stub global fetch for one test; node:test restores it on test end. */
-const mockFetch = (t: TestContext, response: MockResponse): Array<{ url: unknown; init: unknown }> => {
+const mockFetch = (t: TestContext, response: Response | (() => Response)): Array<{ url: unknown; init: unknown }> => {
 	const calls: Array<{ url: unknown; init: unknown }> = [];
 	t.mock.method(globalThis, "fetch", async (url: unknown, init: unknown) => {
 		calls.push({ url, init });
-		return response;
+		return typeof response === "function" ? response() : response;
 	});
 	return calls;
 };
@@ -161,52 +161,91 @@ describe("openAiAccountId", () => {
 
 describe("openai fetch functions", () => {
 	test("fetchOpenAiUsage hits wham/usage with bearer + account id and parses windows", async (t) => {
-		const calls = mockFetch(t, { ok: true, json: async () => usagePayload });
+		const calls = mockFetch(t, jsonResponse(usagePayload));
 		const usage = await fetchOpenAiUsage(authedToken, "https://chatgpt.com/backend-api/codex/responses");
 		assert.equal(usage.limits.length, 2);
 		assert.equal(usage.resetCredits, 2);
 		assert.equal(calls[0]?.url, "https://chatgpt.com/backend-api/wham/usage");
-		const headers = (calls[0] as { init: { headers: Record<string, string> } }).init.headers;
-		assert.equal(headers.Authorization, `Bearer ${authedToken}`);
-		assert.equal(headers["ChatGPT-Account-Id"], "acc_123");
+		const call = calls[0];
+		assert.ok(call);
+		const init = call.init as RequestInit;
+		const headers = new Headers(init.headers);
+		assert.equal(headers.get("Authorization"), `Bearer ${authedToken}`);
+		assert.equal(headers.get("ChatGPT-Account-Id"), "acc_123");
+		assert.equal(init.redirect, "manual");
+		assert.ok(init.signal instanceof AbortSignal);
 	});
 
 	test("fetchResetCredits lists redeemable credits", async (t) => {
-		const calls = mockFetch(t, { ok: true, json: async () => [{ credit_id: "c1" }] });
+		const calls = mockFetch(t, jsonResponse([{ credit_id: "c1" }]));
 		assert.deepEqual(await fetchResetCredits(authedToken), [{ id: "c1" }]);
 		assert.equal(calls[0]?.url, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits");
 	});
 
 	test("redeemResetCredit posts an idempotent consume and returns the outcome code", async (t) => {
-		const calls = mockFetch(t, { ok: true, json: async () => ({ code: "already_redeemed" }) });
+		const calls = mockFetch(t, jsonResponse({ code: "already_redeemed" }));
 		const outcome = await redeemResetCredit(authedToken, "c1");
 		assert.equal(outcome, "already_redeemed");
 		assert.equal(calls[0]?.url, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume");
-		const body = JSON.parse(String((calls[0] as { init: { body: string } }).init.body));
+		const call = calls[0];
+		assert.ok(call);
+		const body = JSON.parse(String((call.init as RequestInit).body));
 		assert.equal(body.credit_id, "c1");
 		assert.ok(typeof body.redeem_request_id === "string" && body.redeem_request_id.length > 0);
 	});
 
 	test("redeemResetCredit does not claim success when response body lacks code", async (t) => {
-		mockFetch(t, { ok: true, json: async () => ({}) });
+		mockFetch(t, jsonResponse({}));
 		assert.equal(await redeemResetCredit(authedToken, "c1"), "unknown");
 	});
 
 	test("redeemResetCredit reports unknown for a non-JSON success body", async (t) => {
-		mockFetch(t, { ok: true, json: async () => Promise.reject(new Error("invalid JSON")) });
+		mockFetch(t, new Response("invalid JSON"));
 		assert.equal(await redeemResetCredit(authedToken, "c1"), "unknown");
 	});
 
 	test("fetch failures throw", async (t) => {
-		mockFetch(t, { ok: false, status: 401, json: async () => ({}) });
+		mockFetch(t, () => new Response(null, { status: 401 }));
 		await assert.rejects(fetchOpenAiUsage(authedToken), /401/);
 		await assert.rejects(fetchResetCredits(authedToken), /401/);
 		await assert.rejects(redeemResetCredit(authedToken, "c1"), /401/);
 	});
 
 	test("tokens without an account id throw before any request", async (t) => {
-		const calls = mockFetch(t, { ok: true, json: async () => ({}) });
+		const calls = mockFetch(t, jsonResponse({}));
 		await assert.rejects(fetchOpenAiUsage("bad-token"), /chatgpt_account_id/);
 		assert.equal(calls.length, 0);
+	});
+
+	test("rejects custom, proxied, and malformed endpoints before sending credentials", async (t) => {
+		const calls = mockFetch(t, jsonResponse(usagePayload));
+		for (const baseUrl of [
+			"https://evil.example/backend-api/codex/responses",
+			"http://chatgpt.com/backend-api/codex/responses",
+			"https://chatgpt.com.attacker.example/backend-api/codex/responses",
+			"https://user@chatgpt.com/backend-api/codex/responses",
+			"https://chatgpt.com/proxy/codex/responses",
+			"https://chatgpt.com/backend-api/codex/responses?forward=1",
+			"not a URL",
+		]) {
+			await assert.rejects(fetchOpenAiUsage(authedToken, baseUrl), /official ChatGPT endpoint/);
+		}
+		assert.equal(calls.length, 0);
+	});
+
+	test("does not follow redirects", async (t) => {
+		const calls = mockFetch(
+			t,
+			() => new Response(null, { status: 302, headers: { Location: "https://evil.example/" } }),
+		);
+		await assert.rejects(fetchOpenAiUsage(authedToken), /OpenAI usage API 302/);
+		const call = calls[0];
+		assert.ok(call);
+		assert.equal((call.init as RequestInit).redirect, "manual");
+	});
+
+	test("bounds response body size", async (t) => {
+		mockFetch(t, new Response(new Uint8Array(64 * 1024 + 1)));
+		await assert.rejects(fetchOpenAiUsage(authedToken), /response exceeds size limit/);
 	});
 });

@@ -5,6 +5,9 @@ import { isObject, type JsonObject, toNumber } from "./json.ts";
 
 const DEFAULT_BASE_URL = "https://chatgpt.com/backend-api";
 const QUOTA_THROTTLE_MS = 60_000;
+const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_RESPONSE_BYTES = 64 * 1024;
+const OFFICIAL_ORIGIN = "https://chatgpt.com";
 /** JWT claim namespace carrying the ChatGPT account id (same claim pi extracts at login). */
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 
@@ -56,8 +59,27 @@ export const parseOpenAiUsage = (payload: unknown): QuotaUsage => {
 	return { weeklyPercent: undefined, limits, ...(resetCredits !== undefined ? { resetCredits } : {}) };
 };
 
-const codexBase = (baseUrl?: string): string =>
-	(baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "").replace(/\/codex(\/responses)?$/, "");
+const codexBase = (baseUrl?: string): string => {
+	if (baseUrl === undefined) return DEFAULT_BASE_URL;
+	let url: URL;
+	try {
+		url = new URL(baseUrl);
+	} catch {
+		throw new Error("OpenAI Codex quota requires the official ChatGPT endpoint");
+	}
+	const path = url.pathname.replace(/\/+$/, "").replace(/\/codex(\/responses)?$/, "");
+	if (
+		url.origin !== OFFICIAL_ORIGIN ||
+		url.username ||
+		url.password ||
+		url.search ||
+		url.hash ||
+		path !== "/backend-api"
+	) {
+		throw new Error("OpenAI Codex quota requires the official ChatGPT endpoint");
+	}
+	return DEFAULT_BASE_URL;
+};
 
 const whamHeaders = (apiKey: string): Record<string, string> => {
 	const accountId = openAiAccountId(apiKey);
@@ -65,11 +87,50 @@ const whamHeaders = (apiKey: string): Record<string, string> => {
 	return { Authorization: `Bearer ${apiKey}`, "ChatGPT-Account-Id": accountId };
 };
 
+const requestJson = async (url: string, label: string, init: RequestInit): Promise<Response> => {
+	const response = await fetch(url, {
+		...init,
+		redirect: "manual",
+		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+	});
+	if (!response.ok) {
+		await response.body?.cancel().catch(() => undefined);
+		throw new Error(`${label} ${response.status}`);
+	}
+	return response;
+};
+
+const readJson = async (response: Response): Promise<unknown> => {
+	const reader = response.body?.getReader();
+	if (!reader) throw new Error("OpenAI response body is empty");
+	const decoder = new TextDecoder();
+	let bytes = 0;
+	let text = "";
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) {
+				text += decoder.decode();
+				return JSON.parse(text) as unknown;
+			}
+			bytes += value.byteLength;
+			if (bytes > MAX_RESPONSE_BYTES) {
+				await reader.cancel().catch(() => undefined);
+				throw new Error("OpenAI response exceeds size limit");
+			}
+			text += decoder.decode(value, { stream: true });
+		}
+	} finally {
+		reader.releaseLock();
+	}
+};
+
 /** Fetch ChatGPT plan quota; model base URLs point at …/codex/responses, the usage API lives at /wham/usage. */
 export const fetchOpenAiUsage = async (apiKey: string, baseUrl?: string): Promise<QuotaUsage> => {
-	const response = await fetch(`${codexBase(baseUrl)}/wham/usage`, { headers: whamHeaders(apiKey) });
-	if (!response.ok) throw new Error(`OpenAI usage API ${response.status}`);
-	return parseOpenAiUsage(await response.json());
+	const response = await requestJson(`${codexBase(baseUrl)}/wham/usage`, "OpenAI usage API", {
+		headers: whamHeaders(apiKey),
+	});
+	return parseOpenAiUsage(await readJson(response));
 };
 
 export type ResetCredit = Readonly<{ id: string; expiresAt?: number }>;
@@ -101,20 +162,27 @@ export const parseResetCredits = (payload: unknown): readonly ResetCredit[] => {
 
 /** List banked usage-limit reset credits. */
 export const fetchResetCredits = async (apiKey: string, baseUrl?: string): Promise<readonly ResetCredit[]> => {
-	const response = await fetch(`${codexBase(baseUrl)}/wham/rate-limit-reset-credits`, { headers: whamHeaders(apiKey) });
-	if (!response.ok) throw new Error(`OpenAI reset credits API ${response.status}`);
-	return parseResetCredits(await response.json());
+	const response = await requestJson(
+		`${codexBase(baseUrl)}/wham/rate-limit-reset-credits`,
+		"OpenAI reset credits API",
+		{ headers: whamHeaders(apiKey) },
+	);
+	return parseResetCredits(await readJson(response));
 };
 
 /** Redeem one banked reset; returns the outcome code (reset / nothing_to_reset / no_credit / already_redeemed). */
 export const redeemResetCredit = async (apiKey: string, creditId: string, baseUrl?: string): Promise<string> => {
-	const response = await fetch(`${codexBase(baseUrl)}/wham/rate-limit-reset-credits/consume`, {
-		method: "POST",
-		headers: { ...whamHeaders(apiKey), "Content-Type": "application/json" },
-		// redeem_request_id is an idempotency key: a retried consume with the same id is not spent twice
-		body: JSON.stringify({ credit_id: creditId, redeem_request_id: crypto.randomUUID() }),
-	});
-	if (!response.ok) throw new Error(`OpenAI reset consume API ${response.status}`);
-	const body: unknown = await response.json().catch(() => undefined);
+	const response = await requestJson(
+		`${codexBase(baseUrl)}/wham/rate-limit-reset-credits/consume`,
+		"OpenAI reset consume API",
+		{
+			method: "POST",
+			headers: { ...whamHeaders(apiKey), "Content-Type": "application/json" },
+			// redeem_request_id is an idempotency key: a retried consume with the same id is not spent twice
+			body: JSON.stringify({ credit_id: creditId, redeem_request_id: crypto.randomUUID() }),
+		},
+	);
+	// A successful POST may have consumed the reset even if its response cannot be decoded.
+	const body = await readJson(response).catch(() => undefined);
 	return isObject(body) && typeof body.code === "string" ? body.code : "unknown";
 };

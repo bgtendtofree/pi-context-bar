@@ -42,7 +42,7 @@ Quota is advisory chrome: refreshed on activity (`turn_end`, `model_select`) at 
 
 Redeems one banked OpenAI usage-limit reset (refreshes eligible 5h/weekly windows). It selects soonest-expiring reset first, shows its expiry before confirmation, and refreshes quota immediately after the consume response.
 
-**Compatibility caveat:** this uses ChatGPT's internal `/wham/rate-limit-reset-credits` endpoints, not a public stable API; OpenAI may change them. The supported Codex app-server API exposes richer reset details, but Pi extensions do not currently expose that interface. The command confirms before its mutating POST and sends a UUID idempotency key.
+**Compatibility caveat:** this uses ChatGPT's internal `/wham/rate-limit-reset-credits` endpoints, not a public stable API; OpenAI may change them. Requests are limited to the official `https://chatgpt.com` origin, reject redirects, time out after 15 seconds, and cap response bodies at 64 KiB. Before consuming a reset, the command re-resolves Pi's OAuth token and cancels if account changed. Confirmation precedes the mutating POST; each consume sends a UUID idempotency key.
 
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 

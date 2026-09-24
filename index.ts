@@ -5,7 +5,13 @@ import { ASCII_GLYPHS, type GlyphSet, type LaneActivity, NERD_GLYPHS, type Quota
 import { configPath, readConfig } from "./lib/config.ts";
 import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
 import { COMPACT_HINT_DEFS, EXPANDED_HINT_DEFS, type HeaderStyles, type Hint, renderWelcome } from "./lib/header.ts";
-import { fetchOpenAiUsage, fetchResetCredits, redeemResetCredit, shouldRefreshQuota } from "./lib/openai.ts";
+import {
+	fetchOpenAiUsage,
+	fetchResetCredits,
+	openAiAccountId,
+	redeemResetCredit,
+	shouldRefreshQuota,
+} from "./lib/openai.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
 
@@ -222,6 +228,8 @@ export default function zContext(pi: ExtensionAPI): void {
 					ctx.ui.notify("No OpenAI Codex credentials", "warning");
 					return;
 				}
+				const accountId = openAiAccountId(key);
+				if (!accountId) throw new Error("OpenAI token has no chatgpt_account_id");
 				const baseUrl = ctx.model?.baseUrl;
 				const credits = await fetchResetCredits(key, baseUrl);
 				const credit = credits[0];
@@ -238,7 +246,12 @@ export default function zContext(pi: ExtensionAPI): void {
 					`Consume soonest-expiring reset (${credits.length} available)?${expiry} This resets your current 5h/weekly window.`,
 				);
 				if (!confirmed) return;
-				const outcome = await redeemResetCredit(key, credit.id, baseUrl);
+				const currentKey = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
+				if (ctx.model?.provider !== "openai-codex" || !currentKey || openAiAccountId(currentKey) !== accountId) {
+					ctx.ui.notify("OpenAI Codex account changed; reset cancelled", "warning");
+					return;
+				}
+				const outcome = await redeemResetCredit(currentKey, credit.id, ctx.model.baseUrl);
 				ctx.ui.notify(`OpenAI reset: ${outcome}`, outcome === "reset" ? "info" : "warning");
 				await refreshQuota(ctx, true);
 			} catch (error) {

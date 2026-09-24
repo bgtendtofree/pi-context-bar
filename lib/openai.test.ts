@@ -5,6 +5,7 @@ import {
 	fetchResetCredits,
 	openAiAccountId,
 	parseOpenAiUsage,
+	parsePendingReset,
 	parseResetCredits,
 	redeemResetCredit,
 	shouldRefreshQuota,
@@ -159,6 +160,17 @@ describe("openAiAccountId", () => {
 	});
 });
 
+test("parsePendingReset accepts complete records and rejects incomplete ones", () => {
+	assert.deepEqual(parsePendingReset({ accountId: "a", creditId: "c", requestId: "r" }), {
+		accountId: "a",
+		creditId: "c",
+		requestId: "r",
+	});
+	for (const value of [null, {}, { accountId: "a", creditId: "c" }, { accountId: "", creditId: "c", requestId: "r" }]) {
+		assert.equal(parsePendingReset(value), undefined);
+	}
+});
+
 describe("openai fetch functions", () => {
 	test("fetchOpenAiUsage hits wham/usage with bearer + account id and parses windows", async (t) => {
 		const calls = mockFetch(t, jsonResponse(usagePayload));
@@ -183,32 +195,35 @@ describe("openai fetch functions", () => {
 	});
 
 	test("redeemResetCredit posts an idempotent consume and returns the outcome code", async (t) => {
-		const calls = mockFetch(t, jsonResponse({ code: "already_redeemed" }));
-		const outcome = await redeemResetCredit(authedToken, "c1");
+		const calls = mockFetch(t, () => jsonResponse({ code: "already_redeemed" }));
+		const requestId = "stable-request-id";
+		const outcome = await redeemResetCredit(authedToken, "c1", requestId);
+		const retriedOutcome = await redeemResetCredit(authedToken, "c1", requestId);
 		assert.equal(outcome, "already_redeemed");
-		assert.equal(calls[0]?.url, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume");
-		const call = calls[0];
-		assert.ok(call);
-		const body = JSON.parse(String((call.init as RequestInit).body));
-		assert.equal(body.credit_id, "c1");
-		assert.ok(typeof body.redeem_request_id === "string" && body.redeem_request_id.length > 0);
+		assert.equal(retriedOutcome, "already_redeemed");
+		for (const call of calls) {
+			assert.equal(call.url, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume");
+			const body = JSON.parse(String((call.init as RequestInit).body));
+			assert.equal(body.credit_id, "c1");
+			assert.equal(body.redeem_request_id, requestId);
+		}
 	});
 
 	test("redeemResetCredit does not claim success when response body lacks code", async (t) => {
 		mockFetch(t, jsonResponse({}));
-		assert.equal(await redeemResetCredit(authedToken, "c1"), "unknown");
+		assert.equal(await redeemResetCredit(authedToken, "c1", "request-1"), "unknown");
 	});
 
 	test("redeemResetCredit reports unknown for a non-JSON success body", async (t) => {
 		mockFetch(t, new Response("invalid JSON"));
-		assert.equal(await redeemResetCredit(authedToken, "c1"), "unknown");
+		assert.equal(await redeemResetCredit(authedToken, "c1", "request-1"), "unknown");
 	});
 
 	test("fetch failures throw", async (t) => {
 		mockFetch(t, () => new Response(null, { status: 401 }));
 		await assert.rejects(fetchOpenAiUsage(authedToken), /401/);
 		await assert.rejects(fetchResetCredits(authedToken), /401/);
-		await assert.rejects(redeemResetCredit(authedToken, "c1"), /401/);
+		await assert.rejects(redeemResetCredit(authedToken, "c1", "request-1"), /401/);
 	});
 
 	test("tokens without an account id throw before any request", async (t) => {

@@ -1,3 +1,5 @@
+import { readFile, unlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { keyText, VERSION } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
@@ -9,6 +11,8 @@ import {
 	fetchOpenAiUsage,
 	fetchResetCredits,
 	openAiAccountId,
+	type PendingReset,
+	parsePendingReset,
 	redeemResetCredit,
 	shouldRefreshQuota,
 } from "./lib/openai.ts";
@@ -59,6 +63,43 @@ const freshState = (): ChromeState => ({
 });
 
 let state = freshState();
+
+const pendingResetPath = (): string => join(dirname(configPath()), "pi-context-bar-reset-pending.json");
+
+const errorCode = (error: unknown): string | undefined => {
+	if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+	return typeof error.code === "string" ? error.code : undefined;
+};
+
+const readPendingReset = async (): Promise<PendingReset | undefined> => {
+	let contents: string;
+	try {
+		contents = await readFile(pendingResetPath(), "utf8");
+	} catch (error) {
+		if (errorCode(error) === "ENOENT") return undefined;
+		throw error;
+	}
+	let payload: unknown;
+	try {
+		payload = JSON.parse(contents) as unknown;
+	} catch {
+		throw new Error("Pending reset record is corrupt; verify reset status before using forget-pending");
+	}
+	const pending = parsePendingReset(payload);
+	if (!pending) throw new Error("Pending reset record is invalid; verify reset status before using forget-pending");
+	return pending;
+};
+
+const savePendingReset = (pending: PendingReset): Promise<void> =>
+	writeFile(pendingResetPath(), JSON.stringify(pending), { encoding: "utf8", flag: "wx", mode: 0o600 });
+
+const clearPendingReset = async (): Promise<void> => {
+	try {
+		await unlink(pendingResetPath());
+	} catch (error) {
+		if (errorCode(error) !== "ENOENT") throw error;
+	}
+};
 
 const patch = (next: Partial<ChromeState>): void => {
 	state = { ...state, ...next };
@@ -217,11 +258,33 @@ export default function zContext(pi: ExtensionAPI): void {
 
 	pi.registerCommand("openai-codex-reset", {
 		description: "Redeem a banked OpenAI Codex (ChatGPT plan) usage-limit reset",
-		handler: async (_args, ctx) => {
+		handler: async (args, ctx) => {
+			if (args.trim() === "forget-pending") {
+				const confirmed = await ctx.ui.confirm(
+					"Forget pending reset request?",
+					"Only do this after checking usage. If the previous request succeeded, a new reset could spend another credit.",
+				);
+				if (!confirmed) return;
+				try {
+					await clearPendingReset();
+					ctx.ui.notify("Pending reset request forgotten", "warning");
+				} catch (error) {
+					ctx.ui.notify(
+						`Could not clear pending reset: ${error instanceof Error ? error.message : String(error)}`,
+						"error",
+					);
+				}
+				return;
+			}
+			if (args.trim()) {
+				ctx.ui.notify("Usage: /openai-codex-reset [forget-pending]", "warning");
+				return;
+			}
 			if (ctx.model?.provider !== "openai-codex") {
 				ctx.ui.notify("Active model is not openai-codex", "warning");
 				return;
 			}
+			let postStarted = false;
 			try {
 				const key = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
 				if (!key) {
@@ -230,6 +293,37 @@ export default function zContext(pi: ExtensionAPI): void {
 				}
 				const accountId = openAiAccountId(key);
 				if (!accountId) throw new Error("OpenAI token has no chatgpt_account_id");
+				const pending = await readPendingReset();
+				if (pending) {
+					if (pending.accountId !== accountId) {
+						ctx.ui.notify(
+							"A reset is pending for another account; switch accounts before retrying or forget it after checking usage",
+							"warning",
+						);
+						return;
+					}
+					const confirmed = await ctx.ui.confirm(
+						"Retry pending OpenAI reset?",
+						"Previous result was uncertain. Retry same reset and request ID; no new credit will be selected.",
+					);
+					if (!confirmed) return;
+					const currentKey = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
+					if (ctx.model?.provider !== "openai-codex" || !currentKey || openAiAccountId(currentKey) !== accountId) {
+						ctx.ui.notify("OpenAI Codex account changed; retry cancelled", "warning");
+						return;
+					}
+					postStarted = true;
+					const outcome = await redeemResetCredit(currentKey, pending.creditId, pending.requestId, ctx.model.baseUrl);
+					if (outcome !== "unknown") await clearPendingReset();
+					ctx.ui.notify(
+						outcome === "unknown"
+							? "OpenAI reset outcome unknown; rerun command to retry same request"
+							: `OpenAI reset: ${outcome}`,
+						outcome === "reset" ? "info" : "warning",
+					);
+					await refreshQuota(ctx, true);
+					return;
+				}
 				const baseUrl = ctx.model?.baseUrl;
 				const credits = await fetchResetCredits(key, baseUrl);
 				const credit = credits[0];
@@ -251,11 +345,34 @@ export default function zContext(pi: ExtensionAPI): void {
 					ctx.ui.notify("OpenAI Codex account changed; reset cancelled", "warning");
 					return;
 				}
-				const outcome = await redeemResetCredit(currentKey, credit.id, ctx.model.baseUrl);
-				ctx.ui.notify(`OpenAI reset: ${outcome}`, outcome === "reset" ? "info" : "warning");
+				const operation: PendingReset = { accountId, creditId: credit.id, requestId: crypto.randomUUID() };
+				try {
+					await savePendingReset(operation);
+				} catch (error) {
+					if (errorCode(error) === "EEXIST") {
+						ctx.ui.notify("Another reset request is pending; rerun command to retry it", "warning");
+						return;
+					}
+					throw error;
+				}
+				postStarted = true;
+				const outcome = await redeemResetCredit(currentKey, operation.creditId, operation.requestId, ctx.model.baseUrl);
+				if (outcome !== "unknown") await clearPendingReset();
+				ctx.ui.notify(
+					outcome === "unknown"
+						? "OpenAI reset outcome unknown; rerun command to retry same request"
+						: `OpenAI reset: ${outcome}`,
+					outcome === "reset" ? "info" : "warning",
+				);
 				await refreshQuota(ctx, true);
 			} catch (error) {
-				ctx.ui.notify(`OpenAI reset failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+				const message = error instanceof Error ? error.message : String(error);
+				ctx.ui.notify(
+					postStarted
+						? `OpenAI reset outcome uncertain; request saved. Rerun command to retry same request. ${message}`
+						: `OpenAI reset failed: ${message}`,
+					"error",
+				);
 			}
 		},
 	});

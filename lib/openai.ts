@@ -134,6 +134,23 @@ export const fetchOpenAiUsage = async (apiKey: string, baseUrl?: string): Promis
 };
 
 export type ResetCredit = Readonly<{ id: string; expiresAt?: number }>;
+export type PendingReset = Readonly<{ accountId: string; creditId: string; requestId: string }>;
+
+export const parsePendingReset = (payload: unknown): PendingReset | undefined => {
+	if (!isObject(payload)) return undefined;
+	const { accountId, creditId, requestId } = payload;
+	if (
+		typeof accountId !== "string" ||
+		!accountId ||
+		typeof creditId !== "string" ||
+		!creditId ||
+		typeof requestId !== "string" ||
+		!requestId
+	) {
+		return undefined;
+	}
+	return { accountId, creditId, requestId };
+};
 
 /** Parse redeemable credits, consuming soonest-expiring reset first. */
 export const parseResetCredits = (payload: unknown): readonly ResetCredit[] => {
@@ -170,19 +187,23 @@ export const fetchResetCredits = async (apiKey: string, baseUrl?: string): Promi
 	return parseResetCredits(await readJson(response));
 };
 
-/** Redeem one banked reset; returns the outcome code (reset / nothing_to_reset / no_credit / already_redeemed). */
-export const redeemResetCredit = async (apiKey: string, creditId: string, baseUrl?: string): Promise<string> => {
+/** Redeem one banked reset with caller-owned idempotency so retries reuse same request ID. */
+export const redeemResetCredit = async (
+	apiKey: string,
+	creditId: string,
+	requestId: string,
+	baseUrl?: string,
+): Promise<string> => {
 	const response = await requestJson(
 		`${codexBase(baseUrl)}/wham/rate-limit-reset-credits/consume`,
 		"OpenAI reset consume API",
 		{
 			method: "POST",
 			headers: { ...whamHeaders(apiKey), "Content-Type": "application/json" },
-			// redeem_request_id is an idempotency key: a retried consume with the same id is not spent twice
-			body: JSON.stringify({ credit_id: creditId, redeem_request_id: crypto.randomUUID() }),
+			body: JSON.stringify({ credit_id: creditId, redeem_request_id: requestId }),
 		},
 	);
 	// A successful POST may have consumed the reset even if its response cannot be decoded.
 	const body = await readJson(response).catch(() => undefined);
-	return isObject(body) && typeof body.code === "string" ? body.code : "unknown";
+	return isObject(body) && typeof body.code === "string" && body.code ? body.code : "unknown";
 };

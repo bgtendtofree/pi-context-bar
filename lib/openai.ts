@@ -4,6 +4,7 @@ import { EMPTY_QUOTA, type QuotaLimit, type QuotaUsage } from "./chrome.ts";
 import { isObject, type JsonObject, toNumber } from "./json.ts";
 
 const DEFAULT_BASE_URL = "https://chatgpt.com/backend-api";
+const QUOTA_THROTTLE_MS = 60_000;
 /** JWT claim namespace carrying the ChatGPT account id (same claim pi extracts at login). */
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 
@@ -34,6 +35,9 @@ const windowLabel = (window: JsonObject, fallback: string): string => {
 };
 
 const windowPercent = (window: JsonObject): number | undefined => toNumber(window.used_percent ?? window.usedPercent);
+
+export const shouldRefreshQuota = (lastAttemptAt: number, now: number, force = false): boolean =>
+	force || now - lastAttemptAt >= QUOTA_THROTTLE_MS;
 
 /** The /wham/usage payload: rate_limit.primary_window (5h) + secondary_window (7d), each {used_percent, limit_window_seconds}. */
 export const parseOpenAiUsage = (payload: unknown): QuotaUsage => {
@@ -68,31 +72,38 @@ export const fetchOpenAiUsage = async (apiKey: string, baseUrl?: string): Promis
 	return parseOpenAiUsage(await response.json());
 };
 
-/** Ids of redeemable banked reset credits; the payload schema is undocumented, so accept common array shapes. */
-export const parseResetCreditIds = (payload: unknown): readonly string[] => {
+export type ResetCredit = Readonly<{ id: string; expiresAt?: number }>;
+
+/** Parse redeemable credits, consuming soonest-expiring reset first. */
+export const parseResetCredits = (payload: unknown): readonly ResetCredit[] => {
 	const items = Array.isArray(payload)
 		? payload
 		: isObject(payload)
 			? [payload.credits, payload.reset_credits, payload.rate_limit_reset_credits, payload.data].find(Array.isArray)
 			: undefined;
 	if (!items) return [];
-	const ids: string[] = [];
+	const credits: ResetCredit[] = [];
 	for (const item of items) {
 		if (!isObject(item)) continue;
 		const id = item.credit_id ?? item.id;
 		if (typeof id !== "string" || !id) continue;
 		const status = String(item.status ?? "").toLowerCase();
 		if (status === "consumed" || status === "redeemed" || status === "expired") continue;
-		ids.push(id);
+		const rawExpiry = item.expires_at ?? item.expiresAt;
+		const expiry = typeof rawExpiry === "string" ? Date.parse(rawExpiry) : Number.NaN;
+		credits.push({ id, ...(Number.isFinite(expiry) ? { expiresAt: expiry } : {}) });
 	}
-	return ids;
+	return credits.sort((a, b) => {
+		if (a.expiresAt === undefined) return b.expiresAt === undefined ? 0 : 1;
+		return b.expiresAt === undefined ? -1 : a.expiresAt - b.expiresAt;
+	});
 };
 
 /** List banked usage-limit reset credits. */
-export const fetchResetCreditIds = async (apiKey: string, baseUrl?: string): Promise<readonly string[]> => {
+export const fetchResetCredits = async (apiKey: string, baseUrl?: string): Promise<readonly ResetCredit[]> => {
 	const response = await fetch(`${codexBase(baseUrl)}/wham/rate-limit-reset-credits`, { headers: whamHeaders(apiKey) });
 	if (!response.ok) throw new Error(`OpenAI reset credits API ${response.status}`);
-	return parseResetCreditIds(await response.json());
+	return parseResetCredits(await response.json());
 };
 
 /** Redeem one banked reset; returns the outcome code (reset / nothing_to_reset / no_credit / already_redeemed). */
@@ -105,5 +116,5 @@ export const redeemResetCredit = async (apiKey: string, creditId: string, baseUr
 	});
 	if (!response.ok) throw new Error(`OpenAI reset consume API ${response.status}`);
 	const body: unknown = await response.json().catch(() => undefined);
-	return isObject(body) && typeof body.code === "string" ? body.code : "reset";
+	return isObject(body) && typeof body.code === "string" ? body.code : "unknown";
 };

@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { describe, type TestContext, test } from "node:test";
 import {
 	fetchOpenAiUsage,
-	fetchResetCreditIds,
+	fetchResetCredits,
 	openAiAccountId,
 	parseOpenAiUsage,
-	parseResetCreditIds,
+	parseResetCredits,
 	redeemResetCredit,
+	shouldRefreshQuota,
 } from "./openai.ts";
 
 // Real /wham/usage response shape (2026-05, trimmed): primary 5h + secondary 7d windows, plan_type, optional credits.
@@ -23,6 +24,12 @@ const usagePayload = {
 const fakeJwt = (payload: unknown): string => `x.${Buffer.from(JSON.stringify(payload)).toString("base64")}.y`;
 
 const authedToken = fakeJwt({ "https://api.openai.com/auth": { chatgpt_account_id: "acc_123" } });
+
+test("quota refresh throttle can be bypassed after a reset", () => {
+	assert.equal(shouldRefreshQuota(0, 59_999), false);
+	assert.equal(shouldRefreshQuota(0, 60_000), true);
+	assert.equal(shouldRefreshQuota(59_999, 60_000, true), true);
+});
 
 type MockResponse = Readonly<{ ok: boolean; status?: number; json: () => Promise<unknown> }>;
 
@@ -85,17 +92,18 @@ describe("parseOpenAiUsage", () => {
 	});
 });
 
-describe("parseResetCreditIds", () => {
+describe("parseResetCredits", () => {
 	test("accepts a top-level array of credits", () => {
-		assert.deepEqual(
-			parseResetCreditIds([{ credit_id: "c1" }, { id: "c2" }, { credit_id: "c3", status: "available" }]),
-			["c1", "c2", "c3"],
-		);
+		assert.deepEqual(parseResetCredits([{ credit_id: "c1" }, { id: "c2" }, { credit_id: "c3", status: "available" }]), [
+			{ id: "c1" },
+			{ id: "c2" },
+			{ id: "c3" },
+		]);
 	});
 
 	test("unwraps common container keys", () => {
-		assert.deepEqual(parseResetCreditIds({ credits: [{ credit_id: "c1" }] }), ["c1"]);
-		assert.deepEqual(parseResetCreditIds({ rate_limit_reset_credits: [{ id: "c2" }] }), ["c2"]);
+		assert.deepEqual(parseResetCredits({ credits: [{ credit_id: "c1" }] }), [{ id: "c1" }]);
+		assert.deepEqual(parseResetCredits({ rate_limit_reset_credits: [{ id: "c2" }] }), [{ id: "c2" }]);
 	});
 
 	test("skips spent credits and entries without ids", () => {
@@ -107,12 +115,29 @@ describe("parseResetCreditIds", () => {
 			"junk",
 			{ credit_id: "keep", status: "available" },
 		];
-		assert.deepEqual(parseResetCreditIds(payload), ["keep"]);
+		assert.deepEqual(parseResetCredits(payload), [{ id: "keep" }]);
+	});
+
+	test("puts soonest-expiring reset first and unknown expiries last", () => {
+		assert.deepEqual(
+			parseResetCredits({
+				credits: [
+					{ id: "later", expires_at: "2026-08-01T00:00:00Z" },
+					{ id: "unknown" },
+					{ id: "soon", expires_at: "2026-07-01T00:00:00Z" },
+				],
+			}),
+			[
+				{ id: "soon", expiresAt: Date.parse("2026-07-01T00:00:00Z") },
+				{ id: "later", expiresAt: Date.parse("2026-08-01T00:00:00Z") },
+				{ id: "unknown" },
+			],
+		);
 	});
 
 	test("returns empty for garbage", () => {
 		for (const payload of [undefined, null, 42, "nope", {}, { credits: "x" }, { other: [] }]) {
-			assert.deepEqual(parseResetCreditIds(payload), []);
+			assert.deepEqual(parseResetCredits(payload), []);
 		}
 	});
 });
@@ -146,9 +171,9 @@ describe("openai fetch functions", () => {
 		assert.equal(headers["ChatGPT-Account-Id"], "acc_123");
 	});
 
-	test("fetchResetCreditIds lists redeemable credits", async (t) => {
+	test("fetchResetCredits lists redeemable credits", async (t) => {
 		const calls = mockFetch(t, { ok: true, json: async () => [{ credit_id: "c1" }] });
-		assert.deepEqual(await fetchResetCreditIds(authedToken), ["c1"]);
+		assert.deepEqual(await fetchResetCredits(authedToken), [{ id: "c1" }]);
 		assert.equal(calls[0]?.url, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits");
 	});
 
@@ -162,15 +187,20 @@ describe("openai fetch functions", () => {
 		assert.ok(typeof body.redeem_request_id === "string" && body.redeem_request_id.length > 0);
 	});
 
-	test("redeemResetCredit defaults to reset when the body has no code", async (t) => {
+	test("redeemResetCredit does not claim success when response body lacks code", async (t) => {
 		mockFetch(t, { ok: true, json: async () => ({}) });
-		assert.equal(await redeemResetCredit(authedToken, "c1"), "reset");
+		assert.equal(await redeemResetCredit(authedToken, "c1"), "unknown");
+	});
+
+	test("redeemResetCredit reports unknown for a non-JSON success body", async (t) => {
+		mockFetch(t, { ok: true, json: async () => Promise.reject(new Error("invalid JSON")) });
+		assert.equal(await redeemResetCredit(authedToken, "c1"), "unknown");
 	});
 
 	test("fetch failures throw", async (t) => {
 		mockFetch(t, { ok: false, status: 401, json: async () => ({}) });
 		await assert.rejects(fetchOpenAiUsage(authedToken), /401/);
-		await assert.rejects(fetchResetCreditIds(authedToken), /401/);
+		await assert.rejects(fetchResetCredits(authedToken), /401/);
 		await assert.rejects(redeemResetCredit(authedToken, "c1"), /401/);
 	});
 

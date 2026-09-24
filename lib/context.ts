@@ -23,7 +23,7 @@ export const cacheHitRate = (usage: AssistantUsage): number | undefined => {
 };
 
 /** Subscription plans bill by plan, not per token; their catalog rates are reference prices, not bills. */
-const PLAN_PROVIDERS = new Set(["kimi-coding", "openai-codex", "ln"]);
+const PLAN_PROVIDERS = new Set(["openai-codex", "ln"]);
 
 export const accumulateSessionUsage = (entries: readonly SessionEntry[]): SessionUsage => {
 	let cost = 0;

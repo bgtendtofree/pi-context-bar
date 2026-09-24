@@ -98,9 +98,9 @@ describe("session usage", () => {
 		assert.equal(accumulateSessionUsage([assistantEntry("one", assistantUsage())]).cacheHitRateAvg, undefined);
 	});
 
-	test("excludes subscription-plan assistant cost but keeps its CH", () => {
+	test("excludes OpenAI subscription cost but keeps its CH", () => {
 		const result = accumulateSessionUsage([
-			assistantEntry("plan", assistantUsage({ input: 10, cacheRead: 90 }, 0.5), "kimi-coding"),
+			assistantEntry("plan", assistantUsage({ input: 10, cacheRead: 90 }, 0.5), "openai-codex"),
 			assistantEntry("billed", assistantUsage({ input: 20, output: 5, cacheRead: 80 }, 0.01)),
 		]);
 		assert.ok(Math.abs(result.cost - 0.01) < 1e-10);

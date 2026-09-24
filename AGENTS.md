@@ -11,7 +11,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 - Health chrome lives inside the editor borders; no extra rows
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
 - Editor top border: Pac-Man lane (auto-fits window width, no cap) + context `%` beside lane + quiet live `t/s` at the right end
-- Editor bottom border: model/thinking + Kimi quota beside it on the left, `CH`/`$` right; never path or Git
+- Editor bottom border: model/thinking + OpenAI Codex quota beside it on the left, `CH`/`$` right; never path or Git
 - Health metrics: `%` + quiet live `t/s` (top border) · `CH` + optional `$` (bottom right)
 - Classic palette: cream pellets, yellow solid Nerd Font Pac-Man, phase-colored ghost
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets
@@ -26,8 +26,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 
 - `lib/context.ts` — native context snapshot types and session usage
 - `lib/chrome.ts` — Pac-Man lane, health metrics, health-row composition
-- `lib/kimi.ts` — Kimi Code (Coding Plan) quota fetch + parse
-- `lib/openai.ts` — OpenAI Codex (ChatGPT plan) quota via /wham/usage, banked reset count
+- `lib/openai.ts` — OpenAI Codex quota, expiry-aware banked reset
 - `lib/header.ts` — quiet welcome header
 - `lib/border.ts` — pure model border fitting
 - `ui/rounded-editor.ts` — Pi/TUI editor adapter
@@ -36,7 +35,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 
 ## Stack
 
-Node.js 24.18.0 via project mise config + ES2024 + npm + TypeScript 7 + Biome. Runtime source and tests use separate TypeScript configs. Extension loads as `.ts` source.
+Node.js 24.19.0 via project mise config + ES2024 + npm + TypeScript 7 + Biome. Runtime source and tests use separate TypeScript configs. Extension loads as `.ts` source.
 
 ## Tests
 

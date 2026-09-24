@@ -5,14 +5,9 @@ import { ASCII_GLYPHS, type GlyphSet, type LaneActivity, NERD_GLYPHS, type Quota
 import { configPath, readConfig } from "./lib/config.ts";
 import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
 import { COMPACT_HINT_DEFS, EXPANDED_HINT_DEFS, type HeaderStyles, type Hint, renderWelcome } from "./lib/header.ts";
-import { fetchKimiUsage } from "./lib/kimi.ts";
-import { fetchOpenAiUsage, fetchResetCreditIds, redeemResetCredit } from "./lib/openai.ts";
-import { fetchOpenRouterBalance } from "./lib/openrouter.ts";
+import { fetchOpenAiUsage, fetchResetCredits, redeemResetCredit, shouldRefreshQuota } from "./lib/openai.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerRoundedEditor } from "./ui/rounded-editor.ts";
-
-/** Event-driven quota refresh throttle; turns end often, the provider API is not free. */
-const QUOTA_THROTTLE_MS = 60 * 1000;
 
 /** Streamed tokens per mouth frame: chomp speed follows throughput. */
 const PACMAN_TOKENS_PER_FRAME = 3;
@@ -73,35 +68,20 @@ const refreshSessionUsage = (ctx: ExtensionContext): void => {
 	patch({ usage: accumulateSessionUsage(ctx.sessionManager.getEntries()) });
 };
 
-/** Quota belongs to the active model's provider; a non-subscription model hides and stops polling it. */
-const quotaProvider = (ctx: ExtensionContext): "kimi-coding" | "openai-codex" | "openrouter" | undefined => {
-	const provider = ctx.model?.provider;
-	return provider === "kimi-coding" || provider === "openai-codex" || provider === "openrouter" ? provider : undefined;
-};
-
-/** Refresh on activity (turn_end, model_select) at most once per throttle; failures keep the last snapshot. */
-const refreshQuota = async (ctx: ExtensionContext): Promise<void> => {
-	const provider = quotaProvider(ctx);
-	if (!provider) {
+/** Refresh OpenAI quota on activity, at most once per throttle; failures keep the last snapshot. */
+const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void> => {
+	if (ctx.model?.provider !== "openai-codex") {
 		if (state.quota) patch({ quota: undefined });
 		return;
 	}
 	const now = performance.now();
-	if (now - state.quotaLastAttemptAt < QUOTA_THROTTLE_MS) return;
+	if (!shouldRefreshQuota(state.quotaLastAttemptAt, now, force)) return;
 	patch({ quotaLastAttemptAt: now });
 	const baseUrl = ctx.model?.baseUrl;
-	if (provider === "kimi-coding" && !baseUrl) return;
 	try {
-		const key = await ctx.modelRegistry.getApiKeyForProvider(provider);
+		const key = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
 		if (!key) return;
-		patch({
-			quota:
-				provider === "openai-codex"
-					? await fetchOpenAiUsage(key, baseUrl)
-					: provider === "openrouter"
-						? await fetchOpenRouterBalance(key, baseUrl ?? "https://openrouter.ai/api/v1")
-						: await fetchKimiUsage(key, baseUrl ?? ""),
-		});
+		patch({ quota: await fetchOpenAiUsage(key, baseUrl) });
 		requestRender();
 	} catch {
 		// ponytail: quota is advisory chrome; a failed poll must never break the editor
@@ -243,19 +223,24 @@ export default function zContext(pi: ExtensionAPI): void {
 					return;
 				}
 				const baseUrl = ctx.model?.baseUrl;
-				const ids = await fetchResetCreditIds(key, baseUrl);
-				if (ids.length === 0) {
+				const credits = await fetchResetCredits(key, baseUrl);
+				const credit = credits[0];
+				if (!credit) {
 					ctx.ui.notify("No banked OpenAI resets available", "info");
 					return;
 				}
+				const expiry =
+					credit.expiresAt !== undefined
+						? ` The selected reset expires ${new Date(credit.expiresAt).toLocaleString()}.`
+						: "";
 				const confirmed = await ctx.ui.confirm(
 					"Redeem OpenAI reset?",
-					`Consume 1 of ${ids.length} banked usage-limit resets? This resets your current 5h/weekly window.`,
+					`Consume soonest-expiring reset (${credits.length} available)?${expiry} This resets your current 5h/weekly window.`,
 				);
 				if (!confirmed) return;
-				const outcome = await redeemResetCredit(key, ids[0] ?? "", baseUrl);
+				const outcome = await redeemResetCredit(key, credit.id, baseUrl);
 				ctx.ui.notify(`OpenAI reset: ${outcome}`, outcome === "reset" ? "info" : "warning");
-				await refreshQuota(ctx);
+				await refreshQuota(ctx, true);
 			} catch (error) {
 				ctx.ui.notify(`OpenAI reset failed: ${error instanceof Error ? error.message : String(error)}`, "error");
 			}

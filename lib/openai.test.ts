@@ -27,6 +27,7 @@ const fakeJwt = (payload: unknown): string => `x.${Buffer.from(JSON.stringify(pa
 const authedToken = fakeJwt({ "https://api.openai.com/auth": { chatgpt_account_id: "acc_123" } });
 
 test("quota refresh throttle can be bypassed after a reset", () => {
+	assert.equal(shouldRefreshQuota(undefined, 10_000), true);
 	assert.equal(shouldRefreshQuota(0, 59_999), false);
 	assert.equal(shouldRefreshQuota(0, 60_000), true);
 	assert.equal(shouldRefreshQuota(59_999, 60_000, true), true);

@@ -41,7 +41,8 @@ type ChromeState = Readonly<{
 	tui: RenderRequester | undefined;
 	glyphs: GlyphSet;
 	quota: QuotaUsage | undefined;
-	quotaLastAttemptAt: number;
+	quotaAccountId: string | undefined;
+	quotaLastAttemptAt: number | undefined;
 }>;
 
 const freshState = (): ChromeState => ({
@@ -59,10 +60,12 @@ const freshState = (): ChromeState => ({
 	tui: undefined,
 	glyphs: NERD_GLYPHS,
 	quota: undefined,
-	quotaLastAttemptAt: 0,
+	quotaAccountId: undefined,
+	quotaLastAttemptAt: undefined,
 });
 
 let state = freshState();
+let quotaLookupId = 0;
 
 const pendingResetPath = (): string => join(dirname(configPath()), "pi-context-bar-reset-pending.json");
 
@@ -118,17 +121,32 @@ const refreshSessionUsage = (ctx: ExtensionContext): void => {
 /** Refresh OpenAI quota on activity, at most once per throttle; failures keep the last snapshot. */
 const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void> => {
 	if (ctx.model?.provider !== "openai-codex") {
-		if (state.quota) patch({ quota: undefined });
+		quotaLookupId++;
+		patch({ quota: undefined, quotaAccountId: undefined, quotaLastAttemptAt: undefined });
 		return;
 	}
-	const now = performance.now();
-	if (!shouldRefreshQuota(state.quotaLastAttemptAt, now, force)) return;
-	patch({ quotaLastAttemptAt: now });
+	const lookupId = ++quotaLookupId;
 	const baseUrl = ctx.model?.baseUrl;
 	try {
 		const key = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
-		if (!key) return;
-		patch({ quota: await fetchOpenAiUsage(key, baseUrl) });
+		if (lookupId !== quotaLookupId || ctx.model?.provider !== "openai-codex") return;
+		const accountId = key ? openAiAccountId(key) : undefined;
+		if (accountId !== state.quotaAccountId) {
+			patch({ quota: undefined, quotaAccountId: accountId, quotaLastAttemptAt: undefined });
+			requestRender();
+		}
+		if (!key || !accountId) return;
+		const now = performance.now();
+		if (!shouldRefreshQuota(state.quotaLastAttemptAt, now, force)) return;
+		patch({ quotaLastAttemptAt: now });
+		const quota = await fetchOpenAiUsage(key, baseUrl);
+		if (
+			ctx.model?.provider !== "openai-codex" ||
+			state.quotaAccountId !== accountId ||
+			state.quotaLastAttemptAt !== now
+		)
+			return;
+		patch({ quota });
 		requestRender();
 	} catch {
 		// ponytail: quota is advisory chrome; a failed poll must never break the editor
@@ -458,6 +476,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 	pi.on("model_select", (_event, ctx) => {
+		refreshSnapshot(ctx);
 		void refreshQuota(ctx);
 		requestRender();
 	});
@@ -482,6 +501,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
+		quotaLookupId++;
 		if (state.rewindTimer) clearInterval(state.rewindTimer);
 		state = freshState();
 		if (ctx.mode === "tui") {

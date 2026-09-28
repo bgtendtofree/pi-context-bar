@@ -39,8 +39,8 @@ const windowLabel = (window: JsonObject, fallback: string): string => {
 
 const windowPercent = (window: JsonObject): number | undefined => toNumber(window.used_percent ?? window.usedPercent);
 
-export const shouldRefreshQuota = (lastAttemptAt: number, now: number, force = false): boolean =>
-	force || now - lastAttemptAt >= QUOTA_THROTTLE_MS;
+export const shouldRefreshQuota = (lastAttemptAt: number | undefined, now: number, force = false): boolean =>
+	force || lastAttemptAt === undefined || now - lastAttemptAt >= QUOTA_THROTTLE_MS;
 
 /** The /wham/usage payload: rate_limit.primary_window (5h) + secondary_window (7d), each {used_percent, limit_window_seconds}. */
 export const parseOpenAiUsage = (payload: unknown): QuotaUsage => {

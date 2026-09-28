@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { type HeaderStyles, type Hint, renderWelcome } from "./header.ts";
 
 const identityStyles: HeaderStyles = {
@@ -40,5 +41,14 @@ describe("welcome header", () => {
 		const hints: readonly Hint[] = [{ key: "", action: "nothing" }];
 		const lines = renderWelcome(version, hints, hints, true, 80, identityStyles);
 		assert.equal(lines.length, 2);
+	});
+
+	test("keeps collapsed and expanded lines inside narrow widths", () => {
+		for (const width of [1, 5, 40]) {
+			for (const expandedState of [false, true]) {
+				const lines = renderWelcome(version, compact, expanded, expandedState, width, identityStyles);
+				assert.ok(lines.every((line) => visibleWidth(line) <= width));
+			}
+		}
 	});
 });

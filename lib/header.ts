@@ -1,5 +1,7 @@
 /** Pure startup header: quiet welcome lines. */
 
+import { truncateToWidth } from "@earendil-works/pi-tui";
+
 export type HeaderStyles = Readonly<{
 	accent: (text: string) => string;
 	dim: (text: string) => string;
@@ -51,11 +53,14 @@ export const renderWelcome = (
 	styles: HeaderStyles,
 ): readonly string[] => {
 	if (width <= 0) return [];
-	const logo = styles.accent("pi") + styles.dim(` v${version}`);
+	const logo = truncateToWidth(styles.accent("pi") + styles.dim(` v${version}`), width);
 	if (!expanded) {
 		const hints = width >= 40 ? hintLine(compactHints, styles) : "";
-		return hints ? ["", logo, hints] : ["", logo];
+		return hints ? ["", logo, truncateToWidth(hints, width)] : ["", logo];
 	}
-	const rows = expandedHints.map((hint) => styledHint(hint, styles)).filter(Boolean);
+	const rows = expandedHints
+		.map((hint) => styledHint(hint, styles))
+		.filter(Boolean)
+		.map((row) => truncateToWidth(row, width));
 	return ["", logo, ...rows];
 };

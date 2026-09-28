@@ -51,4 +51,16 @@ describe("welcome header", () => {
 			}
 		}
 	});
+
+	test("includes only complete keybinding hints when width is tight", () => {
+		const hints: readonly Hint[] = [
+			{ key: "esc", action: "interrupt" },
+			{ key: "ctrl+c", action: "exit" },
+			{ key: "ctrl+p", action: "select an especially long model name" },
+		];
+		const collapsed = renderWelcome(version, hints, hints, false, 40, identityStyles);
+		assert.equal(collapsed[2], "esc interrupt · ctrl+c exit");
+		const expandedLines = renderWelcome(version, hints, hints, true, 20, identityStyles);
+		assert.deepEqual(expandedLines.slice(2), ["esc interrupt", "ctrl+c exit"]);
+	});
 });

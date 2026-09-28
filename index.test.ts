@@ -19,6 +19,8 @@ test("quota belongs to active account and model switches update context immediat
 		},
 	} as unknown as ExtensionAPI;
 	let accountKey = token("A");
+	let leafId: string | null = null;
+	let entryReads = 0;
 	let model = {
 		provider: "openai-codex",
 		id: "gpt-test",
@@ -35,7 +37,13 @@ test("quota belongs to active account and model switches update context immediat
 			return model;
 		},
 		getContextUsage: () => ({ tokens: 20_000, contextWindow: model.contextWindow }),
-		sessionManager: { getEntries: () => [] },
+		sessionManager: {
+			getEntries: () => {
+				entryReads++;
+				return [];
+			},
+			getLeafId: () => leafId,
+		},
 		modelRegistry: { getApiKeyForProvider: async () => accountKey },
 		ui: {
 			theme: { fg: (_color: string, text: string) => text, bold: (text: string) => text },
@@ -102,5 +110,14 @@ test("quota belongs to active account and model switches update context immediat
 	handlers.get("model_select")?.({}, ctx);
 	await setImmediate();
 	assert.match(render(), /5h80%/);
+
+	leafId = "turn-1";
+	handlers.get("turn_end")?.({}, ctx);
+	assert.equal(entryReads, 2);
+	handlers.get("agent_end")?.({}, ctx);
+	assert.equal(entryReads, 2);
+	leafId = "late-entry";
+	handlers.get("agent_end")?.({}, ctx);
+	assert.equal(entryReads, 3);
 	handlers.get("session_shutdown")?.({}, ctx);
 });

@@ -29,6 +29,7 @@ type RenderRequester = Readonly<{ requestRender: () => void }>;
 type ChromeState = Readonly<{
 	context: ContextSnapshot;
 	usage: SessionUsage;
+	usageLeafId: string | null | undefined;
 	chompTokens: number;
 	rewind: Readonly<{ usedTokens: number; frame: number }> | undefined;
 	rewindTimer: ReturnType<typeof setInterval> | undefined;
@@ -48,6 +49,7 @@ type ChromeState = Readonly<{
 const freshState = (): ChromeState => ({
 	context: { usedTokens: 0, contextWindow: 0 },
 	usage: { cost: 0, cacheHitRate: undefined, cacheHitRateAvg: undefined },
+	usageLeafId: undefined,
 	chompTokens: 0,
 	rewind: undefined,
 	rewindTimer: undefined,
@@ -115,7 +117,11 @@ const refreshSnapshot = (ctx: ExtensionContext): void => {
 };
 
 const refreshSessionUsage = (ctx: ExtensionContext): void => {
-	patch({ usage: accumulateSessionUsage(ctx.sessionManager.getEntries()) });
+	// ponytail: full scan per new entry; track deltas only if long sessions show lag
+	patch({
+		usage: accumulateSessionUsage(ctx.sessionManager.getEntries()),
+		usageLeafId: ctx.sessionManager.getLeafId(),
+	});
 };
 
 /** Refresh OpenAI quota on activity, at most once per throttle; failures keep the last snapshot. */
@@ -472,7 +478,7 @@ export default function zContext(pi: ExtensionAPI): void {
 	pi.on("agent_end", (_event, ctx) => {
 		changeLaneActivity("idle");
 		refreshSnapshot(ctx);
-		refreshSessionUsage(ctx);
+		if (state.usageLeafId !== ctx.sessionManager.getLeafId()) refreshSessionUsage(ctx);
 		requestRender();
 	});
 	pi.on("model_select", (_event, ctx) => {

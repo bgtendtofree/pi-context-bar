@@ -1,6 +1,6 @@
 /** Pure startup header: quiet welcome lines. */
 
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 export type HeaderStyles = Readonly<{
 	accent: (text: string) => string;
@@ -37,11 +37,17 @@ export const EXPANDED_HINT_DEFS = [
 const styledHint = (hint: Hint, styles: HeaderStyles): string =>
 	hint.key ? `${styles.dim(hint.key)} ${styles.muted(hint.action)}` : "";
 
-const hintLine = (hints: readonly Hint[], styles: HeaderStyles): string =>
-	hints
-		.map((hint) => styledHint(hint, styles))
-		.filter(Boolean)
-		.join(styles.dim(" · "));
+const hintLine = (hints: readonly Hint[], styles: HeaderStyles, width: number): string => {
+	let line = "";
+	for (const hint of hints) {
+		const text = styledHint(hint, styles);
+		if (!text) continue;
+		const next = line ? `${line}${styles.dim(" · ")}${text}` : text;
+		if (visibleWidth(next) > width) continue;
+		line = next;
+	}
+	return line;
+};
 
 /** Quiet welcome lines. Collapsed: logo row + one hint row. Expanded: logo row + hint list. */
 export const renderWelcome = (
@@ -55,12 +61,12 @@ export const renderWelcome = (
 	if (width <= 0) return [];
 	const logo = truncateToWidth(styles.accent("pi") + styles.dim(` v${version}`), width);
 	if (!expanded) {
-		const hints = width >= 40 ? hintLine(compactHints, styles) : "";
-		return hints ? ["", logo, truncateToWidth(hints, width)] : ["", logo];
+		const hints = width >= 40 ? hintLine(compactHints, styles, width) : "";
+		return hints ? ["", logo, hints] : ["", logo];
 	}
 	const rows = expandedHints
 		.map((hint) => styledHint(hint, styles))
 		.filter(Boolean)
-		.map((row) => truncateToWidth(row, width));
+		.filter((row) => visibleWidth(row) <= width);
 	return ["", logo, ...rows];
 };

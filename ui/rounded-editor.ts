@@ -1,7 +1,7 @@
 import { stripVTControlCharacters } from "node:util";
 import { CustomEditor, type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { editorModelOptions, type ModelInfo, renderLabeledBorder } from "../lib/border.ts";
 import {
 	type ChromeStyles,
@@ -66,6 +66,8 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 
 	class ContextBarEditor extends CustomEditor {
 		private bottomBorder = "";
+		private hiddenAbove = 0;
+		private hiddenBelow = 0;
 		private popupRows = 0;
 		private editorRows = 0;
 
@@ -75,7 +77,13 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 			options.onTui(tui);
 		}
 
+		override renderTopBorder(width: number, hiddenLineCount: number): string {
+			this.hiddenAbove = hiddenLineCount;
+			return super.renderTopBorder(width, hiddenLineCount);
+		}
+
 		override renderBottomBorder(width: number, hiddenLineCount: number): string {
+			this.hiddenBelow = hiddenLineCount;
 			this.bottomBorder = super.renderBottomBorder(width, hiddenLineCount);
 			return this.bottomBorder;
 		}
@@ -102,6 +110,12 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 				warning: (text) => ctx.ui.theme.fg("warning", text),
 				error: (text) => ctx.ui.theme.fg("error", text),
 			};
+			const scrollUp =
+				this.hiddenAbove && width >= 12
+					? healthStyles.dim(truncateToWidth(`↑${this.hiddenAbove}`, Math.floor(width / 4), ""))
+					: "";
+			const scrollDown = this.hiddenBelow ? healthStyles.dim(`↓${this.hiddenBelow}`) : "";
+			const scrollReserve = scrollDown ? 1 : 0;
 			const prompt = `${ctx.ui.theme.fg("accent", "›")} `;
 			const wrap = (line: string, left: string, right: string, prefix: string): string => {
 				const borderLike = stripVTControlCharacters(line).endsWith("─");
@@ -117,7 +131,7 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 					width,
 					"╭",
 					"╮",
-					"",
+					scrollUp,
 					"",
 					(text: string) => this.borderColor(text),
 					(middleWidth) =>
@@ -142,7 +156,7 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 				.flatMap((model) => quota.map((quotaText) => ({ model, quotaText })))
 				.find(
 					({ model, quotaText }) =>
-						2 + visibleWidth(model) + (quotaText ? visibleWidth(quotaText) + 1 : 0) + 3 + 1 <= width,
+						2 + visibleWidth(model) + (quotaText ? visibleWidth(quotaText) + 1 : 0) + 3 + 1 + scrollReserve <= width,
 				);
 			const modelLabel = picked ? styleModelLabel(picked.model, ctx) : "";
 			const leftLabel = picked?.model && picked.quotaText ? `${modelLabel} ${picked.quotaText}` : modelLabel;
@@ -151,9 +165,23 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 				: 1;
 			const metrics =
 				freeMetricOptions(health.usage, healthStyles).find(
-					(value) => value === "" || visibleWidth(value) + 4 <= width - 2 - usedByModel,
+					(value) => value === "" || visibleWidth(value) + 4 <= width - 2 - usedByModel - scrollReserve,
 				) ?? "";
-			result.push(renderLabeledBorder(width, "╰", "╯", leftLabel, metrics, (text: string) => this.borderColor(text)));
+			result.push(
+				renderLabeledBorder(
+					width,
+					"╰",
+					"╯",
+					leftLabel,
+					metrics,
+					(text: string) => this.borderColor(text),
+					(space) => {
+						if (!scrollDown || space < 1) return "";
+						const label = truncateToWidth(scrollDown, space, "");
+						return this.borderColor("─".repeat(Math.floor((space - visibleWidth(label)) / 2))) + label;
+					},
+				),
+			);
 			const popup = autocomplete.map((line) => `  ${line}${" ".repeat(Math.max(0, width - visibleWidth(line) - 2))}`);
 			return [...popup, ...result];
 		}

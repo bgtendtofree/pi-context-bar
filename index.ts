@@ -5,7 +5,13 @@ import { keyText, VERSION } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
 import { ASCII_GLYPHS, type GlyphSet, type LaneActivity, NERD_GLYPHS, type QuotaUsage } from "./lib/chrome.ts";
 import { configPath, readConfig } from "./lib/config.ts";
-import { accumulateSessionUsage, type ContextSnapshot, type SessionUsage } from "./lib/context.ts";
+import {
+	accumulateSessionUsage,
+	type ContextSnapshot,
+	latestAssistantResponse,
+	type SessionUsage,
+	SUBSCRIPTION_TURN_ENTRY,
+} from "./lib/context.ts";
 import { COMPACT_HINT_DEFS, EXPANDED_HINT_DEFS, type HeaderStyles, type Hint, renderWelcome } from "./lib/header.ts";
 import {
 	fetchOpenAiUsage,
@@ -30,6 +36,8 @@ type ChromeState = Readonly<{
 	context: ContextSnapshot;
 	usage: SessionUsage;
 	usageLeafId: string | null | undefined;
+	routed: NonNullable<ModelInfo>["routed"];
+	subscriptionTurn: boolean;
 	chompTokens: number;
 	rewind: Readonly<{ usedTokens: number; frame: number }> | undefined;
 	rewindTimer: ReturnType<typeof setInterval> | undefined;
@@ -50,6 +58,8 @@ const freshState = (): ChromeState => ({
 	context: { usedTokens: 0, contextWindow: 0 },
 	usage: { cost: 0, cacheHitRate: undefined, cacheHitRateAvg: undefined },
 	usageLeafId: undefined,
+	routed: undefined,
+	subscriptionTurn: false,
 	chompTokens: 0,
 	rewind: undefined,
 	rewindTimer: undefined,
@@ -113,7 +123,12 @@ const patch = (next: Partial<ChromeState>): void => {
 const refreshSnapshot = (ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
 	const usage = ctx.getContextUsage();
-	patch({ context: { usedTokens: usage?.tokens ?? 0, contextWindow: usage?.contextWindow ?? 0 } });
+	const response =
+		ctx.model?.api === "pi-virtual" ? latestAssistantResponse(ctx.sessionManager.getBranch()) : undefined;
+	patch({
+		context: { usedTokens: usage?.tokens ?? 0, contextWindow: usage?.contextWindow ?? 0 },
+		routed: response ? { id: response.model, thinkingLevel: response.thinkingLevel } : undefined,
+	});
 };
 
 const refreshSessionUsage = (ctx: ExtensionContext): void => {
@@ -124,9 +139,13 @@ const refreshSessionUsage = (ctx: ExtensionContext): void => {
 	});
 };
 
+/** New OpenAI OAuth and virtual selections cannot redeem legacy ChatGPT resets. */
+const isCodexModel = (ctx: ExtensionContext): boolean =>
+	ctx.model?.provider === "openai-codex" && ctx.model.api !== "pi-virtual";
+
 /** Refresh OpenAI quota on activity, at most once per throttle; failures keep the last snapshot. */
 const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void> => {
-	if (ctx.model?.provider !== "openai-codex") {
+	if (!isCodexModel(ctx)) {
 		quotaLookupId++;
 		patch({ quota: undefined, quotaAccountId: undefined, quotaLastAttemptAt: undefined });
 		return;
@@ -135,7 +154,7 @@ const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void>
 	const baseUrl = ctx.model?.baseUrl;
 	try {
 		const key = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
-		if (lookupId !== quotaLookupId || ctx.model?.provider !== "openai-codex") return;
+		if (lookupId !== quotaLookupId || !isCodexModel(ctx)) return;
 		const accountId = key ? openAiAccountId(key) : undefined;
 		if (accountId !== state.quotaAccountId) {
 			patch({ quota: undefined, quotaAccountId: accountId, quotaLastAttemptAt: undefined });
@@ -146,12 +165,7 @@ const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void>
 		if (!shouldRefreshQuota(state.quotaLastAttemptAt, now, force)) return;
 		patch({ quotaLastAttemptAt: now });
 		const quota = await fetchOpenAiUsage(key, baseUrl);
-		if (
-			ctx.model?.provider !== "openai-codex" ||
-			state.quotaAccountId !== accountId ||
-			state.quotaLastAttemptAt !== now
-		)
-			return;
+		if (!isCodexModel(ctx) || state.quotaAccountId !== accountId || state.quotaLastAttemptAt !== now) return;
 		patch({ quota });
 		requestRender();
 	} catch {
@@ -161,7 +175,7 @@ const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void>
 
 const currentModel = (ctx: ExtensionContext): ModelInfo => {
 	const model = ctx.model;
-	return model ? { id: model.id, reasoning: Boolean(model.reasoning) } : null;
+	return model ? { id: model.id, reasoning: Boolean(model.reasoning), routed: state.routed } : null;
 };
 
 const requestRender = (): void => state.tui?.requestRender();
@@ -181,6 +195,7 @@ const resetTurnSpeed = (): void => {
 		speedTurnOutputTokens: 0,
 		speedTurnActiveMs: 0,
 		chompTokens: 0,
+		subscriptionTurn: false,
 	});
 };
 
@@ -304,8 +319,8 @@ export default function zContext(pi: ExtensionAPI): void {
 				ctx.ui.notify("Usage: /openai-codex-reset [forget-pending]", "warning");
 				return;
 			}
-			if (ctx.model?.provider !== "openai-codex") {
-				ctx.ui.notify("Active model is not openai-codex", "warning");
+			if (!isCodexModel(ctx)) {
+				ctx.ui.notify("Active model is not a physical openai-codex model", "warning");
 				return;
 			}
 			let postStarted = false;
@@ -332,12 +347,12 @@ export default function zContext(pi: ExtensionAPI): void {
 					);
 					if (!confirmed) return;
 					const currentKey = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
-					if (ctx.model?.provider !== "openai-codex" || !currentKey || openAiAccountId(currentKey) !== accountId) {
+					if (!isCodexModel(ctx) || !currentKey || openAiAccountId(currentKey) !== accountId) {
 						ctx.ui.notify("OpenAI Codex account changed; retry cancelled", "warning");
 						return;
 					}
 					postStarted = true;
-					const outcome = await redeemResetCredit(currentKey, pending.creditId, pending.requestId, ctx.model.baseUrl);
+					const outcome = await redeemResetCredit(currentKey, pending.creditId, pending.requestId, ctx.model?.baseUrl);
 					if (outcome !== "unknown") await clearPendingReset();
 					ctx.ui.notify(
 						outcome === "unknown"
@@ -365,7 +380,7 @@ export default function zContext(pi: ExtensionAPI): void {
 				);
 				if (!confirmed) return;
 				const currentKey = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
-				if (ctx.model?.provider !== "openai-codex" || !currentKey || openAiAccountId(currentKey) !== accountId) {
+				if (!isCodexModel(ctx) || !currentKey || openAiAccountId(currentKey) !== accountId) {
 					ctx.ui.notify("OpenAI Codex account changed; reset cancelled", "warning");
 					return;
 				}
@@ -380,7 +395,12 @@ export default function zContext(pi: ExtensionAPI): void {
 					throw error;
 				}
 				postStarted = true;
-				const outcome = await redeemResetCredit(currentKey, operation.creditId, operation.requestId, ctx.model.baseUrl);
+				const outcome = await redeemResetCredit(
+					currentKey,
+					operation.creditId,
+					operation.requestId,
+					ctx.model?.baseUrl,
+				);
 				if (outcome !== "unknown") await clearPendingReset();
 				ctx.ui.notify(
 					outcome === "unknown"
@@ -418,9 +438,21 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 
-	pi.on("message_start", (event) => {
+	pi.on("message_start", (event, ctx) => {
 		if (event.message.role !== "assistant") return;
-		patch({ speedStreamTokens: 0, speedStreamStartedAt: undefined });
+		const model =
+			event.message.provider === "openai"
+				? ctx.modelRegistry.find(event.message.provider, event.message.model)
+				: undefined;
+		patch({
+			speedStreamTokens: 0,
+			speedStreamStartedAt: undefined,
+			subscriptionTurn: Boolean(
+				model &&
+					ctx.modelRegistry.isUsingOAuth(model) &&
+					ctx.modelRegistry.getProvider(model.provider)?.auth.oauth?.isSubscription,
+			),
+		});
 	});
 
 	pi.on("message_update", (event) => {
@@ -466,19 +498,27 @@ export default function zContext(pi: ExtensionAPI): void {
 	pi.on("tool_execution_start", () => {
 		if (changeLaneActivity("tools")) requestRender();
 	});
-	pi.on("turn_end", (_event, ctx) => {
+	pi.on("turn_end", (event, ctx) => {
+		if (state.subscriptionTurn && event.message.role === "assistant") {
+			pi.appendEntry(SUBSCRIPTION_TURN_ENTRY, { messageEntryId: event.messageEntryId });
+		}
 		patch({
 			tokenSpeed: completedTokenSpeed(state.speedTurnOutputTokens, state.speedTurnActiveMs) ?? state.tokenSpeed,
+			subscriptionTurn: false,
 		});
+		refreshSnapshot(ctx);
 		refreshSessionUsage(ctx);
 		void refreshQuota(ctx);
 		requestRender();
 	});
 
 	pi.on("agent_end", (_event, ctx) => {
-		changeLaneActivity("idle");
 		refreshSnapshot(ctx);
 		if (state.usageLeafId !== ctx.sessionManager.getLeafId()) refreshSessionUsage(ctx);
+		requestRender();
+	});
+	pi.on("agent_settled", () => {
+		changeLaneActivity("idle");
 		requestRender();
 	});
 	pi.on("model_select", (_event, ctx) => {

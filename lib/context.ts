@@ -1,6 +1,7 @@
 /** Native context snapshot and provider-reported session usage. */
 
 import type { SessionEntry, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
+import { isObject } from "./json.ts";
 
 export type ContextSnapshot = Readonly<{
 	usedTokens: number;
@@ -15,7 +16,25 @@ export type SessionUsage = Readonly<{
 	cacheHitRateAvg: number | undefined;
 }>;
 
-export type AssistantUsage = Extract<SessionMessageEntry["message"], { role: "assistant" }>["usage"];
+export type AssistantMessage = Extract<SessionMessageEntry["message"], { role: "assistant" }>;
+export type AssistantUsage = AssistantMessage["usage"];
+
+/** Durable request-time billing identity; never infer old OpenAI bills from today's login. */
+export const SUBSCRIPTION_TURN_ENTRY = "pi-context-bar/subscription-turn";
+
+export const latestAssistantResponse = (entries: readonly SessionEntry[]): AssistantMessage | undefined => {
+	for (let index = entries.length - 1; index >= 0; index--) {
+		const entry = entries[index];
+		if (
+			entry?.type === "message" &&
+			entry.message.role === "assistant" &&
+			entry.message.stopReason !== "error" &&
+			entry.message.stopReason !== "aborted"
+		)
+			return entry.message;
+	}
+	return undefined;
+};
 
 export const cacheHitRate = (usage: AssistantUsage): number | undefined => {
 	const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
@@ -26,6 +45,16 @@ export const cacheHitRate = (usage: AssistantUsage): number | undefined => {
 const PLAN_PROVIDERS = new Set(["openai-codex", "ln"]);
 
 export const accumulateSessionUsage = (entries: readonly SessionEntry[]): SessionUsage => {
+	const subscriptions = new Set<string>();
+	for (const entry of entries) {
+		if (
+			entry.type === "custom" &&
+			entry.customType === SUBSCRIPTION_TURN_ENTRY &&
+			isObject(entry.data) &&
+			typeof entry.data.messageEntryId === "string"
+		)
+			subscriptions.add(entry.data.messageEntryId);
+	}
 	let cost = 0;
 	let hitRate: number | undefined;
 	let promptTokens = 0;
@@ -34,7 +63,7 @@ export const accumulateSessionUsage = (entries: readonly SessionEntry[]): Sessio
 	for (const entry of entries) {
 		if (entry.type === "message" && entry.message.role === "assistant") {
 			const usage = entry.message.usage;
-			if (!PLAN_PROVIDERS.has(entry.message.provider)) cost += usage.cost.total;
+			if (!PLAN_PROVIDERS.has(entry.message.provider) && !subscriptions.has(entry.id)) cost += usage.cost.total;
 			const rate = cacheHitRate(usage);
 			if (rate !== undefined) {
 				hitRate = rate;
@@ -42,6 +71,8 @@ export const accumulateSessionUsage = (entries: readonly SessionEntry[]): Sessio
 				promptTokens += usage.input + usage.cacheRead + usage.cacheWrite;
 				cacheReadTokens += usage.cacheRead;
 			}
+		} else if (entry.type === "usage") {
+			if (!PLAN_PROVIDERS.has(entry.provider)) cost += entry.usage.cost.total;
 		} else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
 			// ponytail: toolResult carries no provider; counted as billed — image/tool-model calls on plan providers are rare
 			cost += entry.message.usage.cost.total;

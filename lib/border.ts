@@ -5,6 +5,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 export type ModelInfo = Readonly<{
 	id: string;
 	reasoning: boolean;
+	routed?: Readonly<{ id: string; thinkingLevel: string | undefined }> | undefined;
 }> | null;
 
 export const editorModelOptions = (model: ModelInfo, thinkingLevel: string): readonly string[] => {
@@ -15,9 +16,26 @@ export const editorModelOptions = (model: ModelInfo, thinkingLevel: string): rea
 	const thinking = model.reasoning && thinkingLevel !== "off" ? thinkingLevel : "";
 	const withThinking = thinking ? `${id} · ${thinking}` : id;
 	const shortWithThinking = thinking ? `${shortId} · ${thinking}` : shortId;
+	const routed = model.routed;
+	const routedId = routed?.id.split("/").at(-1) ?? "";
+	const routedThinking = routed?.thinkingLevel && routed.thinkingLevel !== "off" ? ` · ${routed.thinkingLevel}` : "";
+	const routeOptions = routed
+		? [
+				`${withThinking} → ${routed.id}${routedThinking}`,
+				`${shortWithThinking} → ${routedId}${routedThinking}`,
+				`${shortId} → ${routedId}`,
+				`${shortId} → ${routedId.length > 16 ? `${routedId.slice(0, 15)}…` : routedId}`,
+			]
+		: [];
 
 	return Array.from(
-		new Set([withThinking, shortWithThinking, shortId, shortId.length > 16 ? `${shortId.slice(0, 15)}…` : shortId]),
+		new Set([
+			...routeOptions,
+			withThinking,
+			shortWithThinking,
+			shortId,
+			shortId.length > 16 ? `${shortId.slice(0, 15)}…` : shortId,
+		]),
 	);
 };
 

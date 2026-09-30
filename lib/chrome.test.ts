@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { parseColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	ASCII_GLYPHS,
 	type ChromeStyles,
@@ -195,6 +195,20 @@ describe("Pac-Man lane", () => {
 });
 
 describe("lane strip", () => {
+	test("delegates arcade colors without changing layout or adding backgrounds", () => {
+		const paint = (hex: string, text: string): string => styleText(text, { fg: parseColor(hex) }, "256color");
+		const active = snapshot({ usedTokens: 100_000 });
+		const strip = renderLaneStrip(active, 60, { ...identityStyles, foreground: paint }, 0, "tools");
+		assert.ok(strip.includes("\x1b[38;5;"));
+		assert.ok(!strip.includes("\x1b[38;2;"));
+		assert.ok(!strip.includes("\x1b[48;"));
+		assert.equal(
+			stripVTControlCharacters(strip),
+			stripVTControlCharacters(renderLaneStrip(active, 60, identityStyles, 0, "tools")),
+		);
+		assert.equal(renderPacmanLane(active, 1, 0, "idle", ASCII_GLYPHS, paint), paint("#FFFF00", "C"));
+	});
+
 	test("fills the width with lane, percent, and quiet speed", () => {
 		const strip = stripVTControlCharacters(
 			renderLaneStrip(dominantSnapshot, 40, identityStyles, 0, "idle", { tokensPerSecond: 42.25, estimated: true }),

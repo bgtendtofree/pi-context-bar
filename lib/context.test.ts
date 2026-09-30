@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { SessionEntry, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
-import { type AssistantUsage, accumulateSessionUsage, cacheHitRate } from "./context.ts";
+import {
+	type AssistantUsage,
+	accumulateSessionUsage,
+	cacheHitRate,
+	latestAssistantResponse,
+	SUBSCRIPTION_TURN_ENTRY,
+} from "./context.ts";
 
 const assistantUsage = (partial: Partial<Omit<AssistantUsage, "cost">> = {}, totalCost = 0): AssistantUsage => ({
 	input: 0,
@@ -57,7 +63,61 @@ const summaryEntry = (id: string, usage: AssistantUsage): SessionEntry => ({
 	usage,
 });
 
+const subscriptionEntry = (messageEntryId: unknown): Extract<SessionEntry, { type: "custom" }> => ({
+	type: "custom",
+	id: "billing",
+	parentId: null,
+	timestamp: "",
+	customType: SUBSCRIPTION_TURN_ENTRY,
+	data: { messageEntryId },
+});
+
 describe("session usage", () => {
+	test("keeps mixed OpenAI API bills while excluding recorded subscription turns", () => {
+		const result = accumulateSessionUsage([
+			assistantEntry("before", assistantUsage({}, 0.2), "openai"),
+			assistantEntry("sub", assistantUsage({ input: 10, cacheRead: 90 }, 0.5), "openai"),
+			subscriptionEntry("sub"),
+			assistantEntry("after", assistantUsage({}, 0.3), "openai"),
+			toolResultEntry("classifier", assistantUsage({}, 0.04)),
+		]);
+		assert.ok(Math.abs(result.cost - 0.54) < 1e-10);
+		assert.equal(result.cacheHitRate, 90);
+		assert.equal(result.cacheHitRateAvg, 90);
+	});
+
+	test("ignores malformed and unrelated billing records", () => {
+		const result = accumulateSessionUsage([
+			assistantEntry("bill", assistantUsage({}, 0.2), "openai"),
+			{ ...subscriptionEntry("bill"), customType: "another-extension" },
+			...([null, [], {}, { messageEntryId: 0 }] as const).map((data) => ({ ...subscriptionEntry("bill"), data })),
+			subscriptionEntry("not-a-message"),
+		]);
+		assert.equal(result.cost, 0.2);
+	});
+
+	test("includes standalone usage without changing assistant cache metrics", () => {
+		const warm = {
+			type: "usage" as const,
+			id: "warm",
+			parentId: null,
+			timestamp: "",
+			kind: "cache_warm",
+			provider: "test",
+			model: "test",
+			usage: assistantUsage({ cacheRead: 100 }, 0.03),
+		};
+		const result = accumulateSessionUsage([
+			assistantEntry("one", assistantUsage({ input: 20, cacheRead: 80 }, 0.01)),
+			warm,
+			{ ...warm, id: "unknown", kind: "future-operation", usage: assistantUsage({}, 0.04) },
+			{ ...warm, id: "plan", provider: "openai-codex" },
+		]);
+		assert.ok(Math.abs(result.cost - 0.08) < 1e-10);
+		assert.equal(result.cacheHitRate, 80);
+		assert.equal(result.cacheHitRateAvg, 80);
+	});
+
 	test("computes cache hit rate", () => {
 		assert.equal(cacheHitRate(assistantUsage({ input: 10, cacheRead: 90 })), 90);
 		assert.equal(cacheHitRate(assistantUsage()), undefined);
@@ -115,4 +175,20 @@ describe("session usage", () => {
 		]);
 		assert.ok(Math.abs(result.cost - 0.06) < 1e-10);
 	});
+});
+
+test("routed response follows supplied branch and skips failures and aborts", () => {
+	const routed = assistantEntry("routed", assistantUsage());
+	assert.equal(routed.message.role, "assistant");
+	if (routed.message.role !== "assistant") throw new Error("Expected assistant fixture");
+	const failed: SessionMessageEntry = { ...routed, id: "failed", message: { ...routed.message, stopReason: "error" } };
+	const aborted: SessionMessageEntry = {
+		...routed,
+		id: "aborted",
+		message: { ...routed.message, stopReason: "aborted" },
+	};
+	assert.equal(latestAssistantResponse([routed, subscriptionEntry("routed"), failed, aborted]), routed.message);
+	assert.equal(latestAssistantResponse([failed, aborted]), undefined);
+	assert.equal(latestAssistantResponse([toolResultEntry("tool", assistantUsage())]), undefined);
+	assert.equal(latestAssistantResponse([]), undefined);
 });

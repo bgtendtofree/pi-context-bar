@@ -1,7 +1,7 @@
 import { stripVTControlCharacters } from "node:util";
 import { CustomEditor, type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { parseColor, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { editorModelOptions, type ModelInfo, renderLabeledBorder } from "../lib/border.ts";
 import {
 	type ChromeStyles,
@@ -56,9 +56,14 @@ export const remapEditorMouse = (event: TuiMouseEvent, popupRows: number, editor
 };
 
 const styleModelLabel = (label: string, ctx: ExtensionContext): string => {
-	const separator = label.lastIndexOf(" · ");
-	if (separator < 0) return ctx.ui.theme.fg(label === "no-model" ? "muted" : "accent", label);
-	return ctx.ui.theme.fg("accent", label.slice(0, separator)) + ctx.ui.theme.fg("dim", label.slice(separator));
+	return label
+		.split(" → ")
+		.map((part) => {
+			const separator = part.lastIndexOf(" · ");
+			if (separator < 0) return ctx.ui.theme.fg(part === "no-model" ? "muted" : "accent", part);
+			return ctx.ui.theme.fg("accent", part.slice(0, separator)) + ctx.ui.theme.fg("dim", part.slice(separator));
+		})
+		.join(ctx.ui.theme.fg("dim", " → "));
 };
 
 export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEditorOptions): void => {
@@ -109,6 +114,7 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 				dim: (text) => ctx.ui.theme.fg("dim", text),
 				warning: (text) => ctx.ui.theme.fg("warning", text),
 				error: (text) => ctx.ui.theme.fg("error", text),
+				foreground: (hex, text) => ctx.ui.theme.style(text, { fg: parseColor(hex) }),
 			};
 			const scrollUp =
 				this.hiddenAbove && width >= 12

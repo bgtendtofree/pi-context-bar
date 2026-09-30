@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { type Color, styleText, type TerminalColorMode, visibleWidth } from "@earendil-works/pi-tui";
 import { ASCII_GLYPHS } from "../lib/chrome.ts";
 import { registerRoundedEditor, remapEditorMouse, splitEditorRender } from "./rounded-editor.ts";
 
@@ -42,10 +42,14 @@ test("remaps popup clicks above editor and cursor clicks inside padded shell", (
 
 test("long editor keeps both native scroll counts inside rounded borders", () => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
+	let colorMode: TerminalColorMode = "256color";
 	const ctx = {
 		mode: "tui",
 		ui: {
-			theme: { fg: (_color: string, text: string) => text },
+			theme: {
+				fg: (_color: string, text: string) => text,
+				style: (text: string, options: { fg: Color }) => styleText(text, options, colorMode),
+			},
 			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
 				if (factory) {
 					const tui = { requestRender: () => {}, terminal: { rows: 20 } } as unknown as TUI;
@@ -70,6 +74,11 @@ test("long editor keeps both native scroll counts inside rounded borders", () =>
 		onTui: () => {},
 	});
 	assert.ok(editor);
+	assert.ok(editor.render(80)[0]?.includes("\x1b[38;5;"));
+	assert.ok(!editor.render(80)[0]?.includes("\x1b[38;2;"));
+	colorMode = "truecolor";
+	assert.ok(editor.render(80)[0]?.includes("\x1b[38;2;"));
+	colorMode = "256color";
 	editor.setText(Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n"));
 	const scrolledDown = editor.render(80).map(stripVTControlCharacters);
 	assert.match(scrolledDown[0] ?? "", /↑\d+/);

@@ -1,17 +1,11 @@
 /** Pure Pac-Man lane, health metric formatting, and one-line layout. */
 
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { parseColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
 import { formatTokenSpeed, type TokenSpeedSnapshot } from "./speed.ts";
 
-/** True-color foreground escape; classic arcade colors stay limited to game elements. */
-export const foreground = (hex: string, text: string): string => {
-	const value = Number.parseInt(hex.replace(/^#/, ""), 16);
-	const red = (value >> 16) & 0xff;
-	const green = (value >> 8) & 0xff;
-	const blue = value & 0xff;
-	return `\x1b[38;2;${red};${green};${blue}m${text}\x1b[39m`;
-};
+/** Native color formatting for standalone renders; the editor supplies its active theme. */
+export const foreground = (hex: string, text: string): string => styleText(text, { fg: parseColor(hex) }, "truecolor");
 
 /** Classic arcade colors stay limited to game elements. */
 export const PACMAN_TEXT = "#FFFF00";
@@ -53,6 +47,7 @@ export type ChromeStyles = Readonly<{
 	dim: (text: string) => string;
 	warning: (text: string) => string;
 	error: (text: string) => string;
+	foreground?: typeof foreground;
 }>;
 
 /** Compact context-window size: 200_000 → 200K, 512 → 512. */
@@ -131,8 +126,13 @@ export const quotaMetricOptions = (usage: QuotaUsage, styles: ChromeStyles): rea
 	return [[weekly, limits, resets].filter(Boolean).join(styles.dim(" ")), weekly || resets, ""];
 };
 
-const coloredCells = (color: string, glyph: string, count: number, cellWidth: number): string =>
-	foreground(color, `${glyph}${" ".repeat(cellWidth - 1)}`.repeat(Math.max(0, count)));
+const coloredCells = (
+	color: string,
+	glyph: string,
+	count: number,
+	cellWidth: number,
+	paint: typeof foreground,
+): string => paint(color, `${glyph}${" ".repeat(cellWidth - 1)}`.repeat(Math.max(0, count)));
 
 /** Fixed-width truthful lane: empty consumed space, Pac-Man boundary, remaining pellets. */
 export const renderPacmanLane = (
@@ -141,18 +141,19 @@ export const renderPacmanLane = (
 	animationFrame = 0,
 	activity: LaneActivity = "idle",
 	glyphs: GlyphSet = NERD_GLYPHS,
+	paint: typeof foreground = foreground,
 ): string => {
 	if (width <= 0) return "";
 	const frameIndex = activity === "idle" ? 0 : Math.abs(Math.trunc(animationFrame)) % PACMAN_FRAMES.length;
 	const pacmanGlyph = frameIndex === 0 ? glyphs.pacmanOpen : glyphs.pacmanClosed;
-	if (width === 1) return foreground(PACMAN_TEXT, pacmanGlyph);
+	if (width === 1) return paint(PACMAN_TEXT, pacmanGlyph);
 
 	const cellWidth = 2;
 	const cellCount = Math.max(1, Math.floor(width / cellWidth));
 	const ratio = snapshot.contextWindow > 0 ? Math.min(1, Math.max(0, snapshot.usedTokens / snapshot.contextWindow)) : 0;
 	const consumedCellCount = Math.round(ratio * Math.max(0, cellCount - 1));
 	const pelletCellCount = Math.max(0, cellCount - consumedCellCount - 1);
-	const pacman = coloredCells(PACMAN_TEXT, pacmanGlyph, 1, cellWidth);
+	const pacman = coloredCells(PACMAN_TEXT, pacmanGlyph, 1, cellWidth, paint);
 	const powerCells = new Set(
 		POWER_PELLET_RATIOS.map((powerRatio) => Math.round(powerRatio * Math.max(0, cellCount - 1))),
 	);
@@ -161,14 +162,14 @@ export const renderPacmanLane = (
 		(_, index) =>
 			`${powerCells.has(consumedCellCount + 1 + index) ? POWER_PELLET_GLYPH : PELLET_GLYPH}${" ".repeat(cellWidth - 1)}`,
 	).join("");
-	const pellets = foreground(PELLET_TEXT, pelletCells);
+	const pellets = paint(PELLET_TEXT, pelletCells);
 	const ghostColor = activity === "idle" ? undefined : LANE_ACTIVITY_TEXT[activity];
 	const preferredGhostDistance = Math.floor(Math.abs(Math.trunc(animationFrame)) / 2) % 2 === 0 ? 2 : 3;
 	const ghostDistance = Math.min(preferredGhostDistance, consumedCellCount);
 	const ghostCellIndex = ghostColor && consumedCellCount >= 2 ? consumedCellCount - ghostDistance : undefined;
 	const consumed =
 		ghostColor && ghostCellIndex !== undefined
-			? `${" ".repeat(ghostCellIndex * cellWidth)}${coloredCells(ghostColor, glyphs.ghost, 1, cellWidth)}${" ".repeat(
+			? `${" ".repeat(ghostCellIndex * cellWidth)}${coloredCells(ghostColor, glyphs.ghost, 1, cellWidth, paint)}${" ".repeat(
 					(consumedCellCount - ghostCellIndex - 1) * cellWidth,
 				)}`
 			: " ".repeat(consumedCellCount * cellWidth);
@@ -219,6 +220,7 @@ export const renderLaneStrip = (
 		animationFrame,
 		activity,
 		glyphs,
+		styles.foreground ?? foreground,
 	);
 	return ` ${[lane, pickedPercent, pickedSpeed].filter(Boolean).join(" ")} `;
 };

@@ -13,6 +13,8 @@ Slash-command autocomplete stays above the rounded editor instead of expanding i
 
 Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle. The border stays static theme-colored throughout — the chomping mouth and the ghost carry activity, and chomp speed is driven by live token throughput, so a slow turn is directly visible as slow chomping.
 
+Arcade colors use Pi's active theme renderer, including truecolor/256-color capability overrides. Classic hues stay unchanged, with no background blocks. Semantic border and metric colors follow live theme changes. The ghost rests at `agent_settled`, not an intermediate `agent_end` that may still retry or continue.
+
 ## Why
 
 `nano-context` has a great segmented bar, but its custom footer drops default pi stats (especially **cache hit `CH%`**) and stacks 3 chrome lines total.
@@ -30,13 +32,17 @@ Pac-Man moves left → right using Pi's native context usage. Eaten pellets beco
 
 Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pellets, and the active ghost keep classic arcade colors.
 
+With a virtual model selected, the bottom border shows `auto · high → physical-model · medium` for the latest successful response on the active branch. Narrow borders drop thinking and route detail before the selected model. Context limits still come directly from Pi, which accounts for the routed physical model.
+
+Session cost includes standalone usage entries (such as cache warming) and nested model work reported by tool results. New OpenAI ChatGPT assistant turns record their request-time billing identity in non-context custom entries, so switching between OpenAI API keys and ChatGPT login never reclassifies earlier bills. Legacy `openai-codex` and `ln` reference costs remain excluded. Other providers keep their existing cost semantics, since subscription OAuth can include billed extra usage. Older untagged turns and tool/summary usage retain their reported costs; these are catalog estimates, not provider invoices.
+
 ## Subscription quota
 
 OpenAI Codex subscription quota sits beside the model label:
 
 - **OpenAI Codex (ChatGPT Plus/Pro)**: `5h%` and `7d%` windows from `/wham/usage`, plus a dim `R<n>` count when banked usage-limit resets are available
 
-Quota is advisory chrome: refreshed on activity (`turn_end`, `model_select`) at most once a minute, failures keep the last good snapshot, and it hides unless an OpenAI Codex model is active.
+Quota is advisory chrome: refreshed on activity (`turn_end`, `model_select`) at most once a minute, failures keep the last good snapshot, and it hides unless a physical legacy `openai-codex` model is active. Pi's new `/login openai` ChatGPT authentication uses different API credentials; quota and reset support are not assumed compatible with it. Virtual selections also keep legacy quota/reset disabled.
 
 ### `/openai-codex-reset`
 

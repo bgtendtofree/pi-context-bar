@@ -4,6 +4,41 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { editorModelOptions, renderLabeledBorder } from "./border.ts";
 
 describe("editor model labels", () => {
+	test("shows virtual selection and routed thinking before narrow fallbacks", () => {
+		const options = editorModelOptions(
+			{
+				id: "router/auto",
+				reasoning: true,
+				routed: { id: "openai/gpt-test", thinkingLevel: "medium" },
+			},
+			"high",
+		);
+		assert.equal(options[0], "router/auto · high → openai/gpt-test · medium");
+		assert.ok(options.includes("auto → gpt-test"));
+		assert.ok(options.includes("auto"));
+		assert.equal(
+			editorModelOptions(
+				{
+					id: "auto",
+					reasoning: false,
+					routed: { id: "a-very-long-physical-model", thinkingLevel: "off" },
+				},
+				"high",
+			)[0],
+			"auto → a-very-long-physical-model",
+		);
+		assert.ok(
+			editorModelOptions(
+				{
+					id: "auto",
+					reasoning: false,
+					routed: { id: "a-very-long-physical-model", thinkingLevel: undefined },
+				},
+				"off",
+			).includes("auto → a-very-long-phy…"),
+		);
+	});
+
 	test("keeps model before optional thinking", () => {
 		assert.deepEqual(editorModelOptions(null, "high"), ["no-model", "?"]);
 		const options = editorModelOptions({ id: "anthropic/claude-opus", reasoning: true }, "high");

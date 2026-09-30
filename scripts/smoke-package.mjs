@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const PI_VERSION = manifest.devDependencies["@earendil-works/pi-coding-agent"];
 // Guard: every runtime source file must ship in the tarball; a missing file breaks the installed extension silently.
 const shipped = new Set(manifest.files);
 const missing = ["lib", "ui"].flatMap((dir) =>
@@ -26,16 +27,33 @@ const packOutput = execFileSync("npm", ["pack", "--json", "--pack-destination", 
 	stdio: ["ignore", "pipe", "inherit"],
 });
 const [{ filename }] = JSON.parse(packOutput);
-// ponytail: bare --prefix install — npm creates the host manifest/node_modules and auto-installs peers
-execFileSync("npm", ["install", "--no-audit", "--no-fund", "--omit=dev", join(cwd, filename)], {
-	cwd,
-	stdio: "inherit",
-});
+execFileSync(
+	"npm",
+	[
+		"install",
+		"--no-audit",
+		"--no-fund",
+		"--omit=dev",
+		`@earendil-works/pi-coding-agent@${PI_VERSION}`,
+		join(cwd, filename),
+	],
+	{
+		cwd,
+		stdio: "inherit",
+	},
+);
 
 const installedPackage = join(cwd, "node_modules", ...manifest.name.split("/"));
-const piBinary = join(cwd, "node_modules", ".bin", process.platform === "win32" ? "pi.cmd" : "pi");
-execFileSync(piBinary, ["--offline", "--no-extensions", "-e", installedPackage, "--list-models"], {
+// --list-models exits before Pi reports runtime extension errors.
+const smoke = `
+import assert from "node:assert/strict";
+import { discoverAndLoadExtensions } from "@earendil-works/pi-coding-agent";
+const result = await discoverAndLoadExtensions([process.argv[1]], process.cwd(), "./agent");
+assert.deepEqual(result.errors, []);
+assert.equal(result.extensions.length, ${manifest.pi.extensions.length});
+`;
+execFileSync(process.execPath, ["--input-type=module", "-e", smoke, installedPackage], {
 	cwd,
 	stdio: "inherit",
 });
-console.log(`Packed runtime smoke passed: ${manifest.name} on Node ${process.versions.node}`);
+console.log(`Packed runtime smoke passed: ${manifest.name} with Pi ${PI_VERSION} on Node ${process.versions.node}`);

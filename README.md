@@ -112,7 +112,7 @@ pi --no-extensions -e ./index.ts --no-session --no-tools -p "Reply ok"
 - Tests use built-in `node:test` and Node coverage
 - Runtime source and tests use separate TypeScript configs
 - Loads as `.ts` via jiti (no build step)
-- Pi core packages stay `*` peers; development and CI test exact Pi `0.87.1`
+- Pi core packages stay `*` peers; development and CI test exact Pi `0.99.1`
 
 ## License
 

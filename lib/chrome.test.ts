@@ -9,6 +9,7 @@ import {
 	DARK_ARCADE,
 	foreground,
 	formatCost,
+	formatDuration,
 	formatWindowSize,
 	freeMetricOptions,
 	GHOST_GLYPH,
@@ -65,6 +66,15 @@ describe("health metric formatting", () => {
 		assert.equal(formatCost(0), "");
 		assert.equal(formatCost(0.042), "$0.042");
 		assert.equal(formatCost(1.61), "$1.61");
+	});
+
+	test("formats remaining time for quota windows and resets", () => {
+		const now = Date.parse("2026-07-01T00:00:00Z");
+		const left = (iso: string): number => Date.parse(iso) - now;
+		assert.equal(formatDuration(left("2026-07-01T00:12:00Z")), "12m");
+		assert.equal(formatDuration(left("2026-07-01T05:10:00Z")), "5h 10m");
+		assert.equal(formatDuration(left("2026-07-03T03:30:00Z")), "2d 3h");
+		assert.equal(formatDuration(0), "expired");
 	});
 
 	test("builds wide and narrow options", () => {
@@ -348,6 +358,29 @@ describe("quota metric options", () => {
 		assert.equal(options[1], "");
 	});
 
+	test("appends remaining time to each window when the provider reports a reset", () => {
+		const now = Date.parse("2026-07-01T00:00:00Z");
+		const usageWithReset: QuotaUsage = {
+			weeklyPercent: undefined,
+			limits: [
+				{ label: "5h", percent: 30, resetAt: now + 150 * 60_000 },
+				{ label: "7d", percent: 12, resetAt: now + 5 * 86_400_000 + 15 * 3_600_000 },
+			],
+		};
+		const options = quotaMetricOptions(usageWithReset, identityStyles, now).map(stripVTControlCharacters);
+		assert.deepEqual(options, ["5h30% ↻2h 30m 7d12% ↻5d 15h", "5h30% 7d12%", ""]);
+	});
+
+	test("drops a past window reset instead of showing zero", () => {
+		const now = Date.parse("2026-07-01T00:00:00Z");
+		const options = quotaMetricOptions(
+			{ weeklyPercent: undefined, limits: [{ label: "5h", percent: 30, resetAt: now - 1000 }] },
+			identityStyles,
+			now,
+		).map(stripVTControlCharacters);
+		assert.deepEqual(options, ["5h30%", ""]);
+	});
+
 	test("escalates color with usage level", () => {
 		const options = quotaMetricOptions({ weeklyPercent: 95, limits: [{ label: "5h", percent: 80 }] }, markedStyles);
 		assert.equal(options[0], "<e>W95%</e><d> </d><w>5h80%</w>");
@@ -373,6 +406,6 @@ describe("quota metric options", () => {
 			{ weeklyPercent: undefined, limits: [{ label: "7d", percent: 32.5 }] },
 			identityStyles,
 		).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["7d33%", "", ""]);
+		assert.deepEqual(options, ["7d33%", ""]);
 	});
 });

@@ -40,7 +40,7 @@ Session cost includes standalone usage entries (such as cache warming) and neste
 
 OpenAI Codex subscription quota sits beside the model label:
 
-- **OpenAI Codex (ChatGPT Plus/Pro)**: `5h%` and `7d%` windows from `/wham/usage`, plus a dim `R<n>` count when banked usage-limit resets are available
+- **OpenAI Codex (ChatGPT Plus/Pro)**: `5h%` and `7d%` windows from `/wham/usage`, each followed by a dim `↻2h 30m` time to its reset, plus a dim `R<n>` count when banked usage-limit resets are available
 
 Quota is advisory chrome: refreshed on activity (`turn_end`, `model_select`) at most once a minute, failures keep the last good snapshot, and it hides unless a physical legacy `openai-codex` model is active. Pi's new `/login openai` ChatGPT authentication uses different API credentials; quota and reset support are not assumed compatible with it. Virtual selections also keep legacy quota/reset disabled.
 

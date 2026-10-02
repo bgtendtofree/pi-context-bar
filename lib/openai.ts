@@ -39,6 +39,12 @@ const windowLabel = (window: JsonObject, fallback: string): string => {
 
 const windowPercent = (window: JsonObject): number | undefined => toNumber(window.used_percent ?? window.usedPercent);
 
+/** Window reset as epoch ms; the API reports `reset_at` in seconds. */
+const windowResetAt = (window: JsonObject): number | undefined => {
+	const seconds = toNumber(window.reset_at ?? window.resetAt);
+	return seconds !== undefined && seconds > 0 ? seconds * 1000 : undefined;
+};
+
 export const shouldRefreshQuota = (lastAttemptAt: number | undefined, now: number, force = false): boolean =>
 	force || lastAttemptAt === undefined || now - lastAttemptAt >= QUOTA_THROTTLE_MS;
 
@@ -52,7 +58,12 @@ export const parseOpenAiUsage = (payload: unknown): QuotaUsage => {
 		if (!isObject(window)) continue;
 		const percent = windowPercent(window);
 		if (percent === undefined) continue;
-		limits.push({ label: windowLabel(window, `L${index + 1}`), percent });
+		const resetAt = windowResetAt(window);
+		limits.push({
+			label: windowLabel(window, `L${index + 1}`),
+			percent,
+			...(resetAt !== undefined ? { resetAt } : {}),
+		});
 	}
 	const resetContainer = payload.rate_limit_reset_credits;
 	const resetCredits = isObject(resetContainer) ? toNumber(resetContainer.available_count) : undefined;
@@ -135,16 +146,6 @@ export const fetchOpenAiUsage = async (apiKey: string, baseUrl?: string): Promis
 
 export type ResetCredit = Readonly<{ id: string; expiresAt?: number }>;
 export type PendingReset = Readonly<{ accountId: string; creditId: string; requestId: string }>;
-
-/** Relative time to a banked reset's expiry: "2d 3h", "5h 10m", "12m", or "expired". */
-export const formatResetTimeLeft = (expiresAt: number, now: number): string => {
-	const minutes = Math.floor((expiresAt - now) / 60_000);
-	if (minutes <= 0) return "expired";
-	if (minutes < 60) return `${minutes}m`;
-	const hours = Math.floor(minutes / 60);
-	if (hours < 24) return `${hours}h ${minutes % 60}m`;
-	return `${Math.floor(hours / 24)}d ${hours % 24}h`;
-};
 
 export const parsePendingReset = (payload: unknown): PendingReset | undefined => {
 	if (!isObject(payload)) return undefined;

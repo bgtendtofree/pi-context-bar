@@ -86,6 +86,16 @@ export const formatCost = (cost: number): string => {
 	return `$${cost >= 1 ? cost.toFixed(2) : cost.toFixed(3)}`;
 };
 
+/** Compact remaining time: "2d 3h", "5h 10m", "12m", or "expired" once past. */
+export const formatDuration = (ms: number): string => {
+	const minutes = Math.floor(ms / 60_000);
+	if (minutes <= 0) return "expired";
+	if (minutes < 60) return `${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ${minutes % 60}m`;
+	return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+};
+
 /** Color health metrics by usage: error > 90%, warning > 70%, else quiet dim. */
 export const styleUsage = (text: string, percent: number, styles: ChromeStyles): string => {
 	if (percent > 90) return styles.error(text);
@@ -126,6 +136,8 @@ export type QuotaLimit = Readonly<{
 	label: string;
 	/** Used percent 0–100 of this limit window. */
 	percent: number;
+	/** Epoch ms when this window resets; undefined when the provider omits it. */
+	resetAt?: number;
 }>;
 
 /** Shared subscription-quota snapshot; each provider parser fills the parts its plan reports. */
@@ -141,16 +153,35 @@ export type QuotaUsage = Readonly<{
 export const EMPTY_QUOTA: QuotaUsage = { weeklyPercent: undefined, limits: [] };
 
 /** Quota metric variants, widest → tightest, styled at construction. Weekly survives before limits. */
-export const quotaMetricOptions = (usage: QuotaUsage, styles: ChromeStyles): readonly string[] => {
+export const quotaMetricOptions = (usage: QuotaUsage, styles: ChromeStyles, now = Date.now()): readonly string[] => {
 	const styledUsage = (text: string, percent: number): string => styleUsage(text, percent, styles);
 	const weekly =
 		usage.weeklyPercent !== undefined ? styledUsage(`W${Math.round(usage.weeklyPercent)}%`, usage.weeklyPercent) : "";
-	const limits = usage.limits
-		.map((limit) => styledUsage(`${limit.label}${Math.round(limit.percent)}%`, limit.percent))
-		.join(styles.dim(" "));
+	const renderLimits = (withReset: boolean): string =>
+		usage.limits
+			.map((limit) => {
+				const base = styledUsage(`${limit.label}${Math.round(limit.percent)}%`, limit.percent);
+				const remaining = limit.resetAt !== undefined ? limit.resetAt - now : undefined;
+				const reset =
+					withReset && remaining !== undefined && remaining > 0
+						? ` ${styles.dim(`↻${formatDuration(remaining)}`)}`
+						: "";
+				return base + reset;
+			})
+			.join(styles.dim(" "));
+	const limits = renderLimits(true);
+	const plainLimits = renderLimits(false);
 	// Banked resets are quiet chrome; zero or unknown stays hidden.
 	const resets = usage.resetCredits ? styles.dim(`R${usage.resetCredits}`) : "";
-	return [[weekly, limits, resets].filter(Boolean).join(styles.dim(" ")), weekly || resets, ""];
+	const candidates = [
+		[weekly, limits, resets].filter(Boolean).join(styles.dim(" ")),
+		...(limits === plainLimits ? [] : [[weekly, plainLimits, resets].filter(Boolean).join(styles.dim(" "))]),
+		weekly || resets,
+		"",
+	];
+	const options: string[] = [];
+	for (const value of candidates) if (options.at(-1) !== value) options.push(value);
+	return options;
 };
 
 const coloredCells = (

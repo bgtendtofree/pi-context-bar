@@ -3,7 +3,14 @@ import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { keyText, VERSION } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
-import { ASCII_GLYPHS, type GlyphSet, type LaneActivity, NERD_GLYPHS, type QuotaUsage } from "./lib/chrome.ts";
+import {
+	ASCII_GLYPHS,
+	formatDuration,
+	type GlyphSet,
+	type LaneActivity,
+	NERD_GLYPHS,
+	type QuotaUsage,
+} from "./lib/chrome.ts";
 import { configPath, readConfig } from "./lib/config.ts";
 import {
 	accumulateSessionUsage,
@@ -16,7 +23,6 @@ import { COMPACT_HINT_DEFS, EXPANDED_HINT_DEFS, type HeaderStyles, type Hint, re
 import {
 	fetchOpenAiUsage,
 	fetchResetCredits,
-	formatResetTimeLeft,
 	openAiAccountId,
 	type PendingReset,
 	parsePendingReset,
@@ -377,7 +383,7 @@ export default function zContext(pi: ExtensionAPI): void {
 						const when =
 							value.expiresAt === undefined
 								? "no expiry"
-								: `expires in ${formatResetTimeLeft(value.expiresAt, now)} (${new Date(value.expiresAt).toLocaleString()})`;
+								: `expires in ${formatDuration(value.expiresAt - now)} (${new Date(value.expiresAt).toLocaleString()})`;
 						return `  ${index + 1}. ${when}${index === 0 ? "  ← selected" : ""}`;
 					})
 					.join("\n");

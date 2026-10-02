@@ -16,6 +16,7 @@ import { COMPACT_HINT_DEFS, EXPANDED_HINT_DEFS, type HeaderStyles, type Hint, re
 import {
 	fetchOpenAiUsage,
 	fetchResetCredits,
+	formatResetTimeLeft,
 	openAiAccountId,
 	type PendingReset,
 	parsePendingReset,
@@ -370,13 +371,19 @@ export default function zContext(pi: ExtensionAPI): void {
 					ctx.ui.notify("No banked OpenAI resets available", "info");
 					return;
 				}
-				const expiry =
-					credit.expiresAt !== undefined
-						? ` The selected reset expires ${new Date(credit.expiresAt).toLocaleString()}.`
-						: "";
+				const now = Date.now();
+				const creditLines = credits
+					.map((value, index) => {
+						const when =
+							value.expiresAt === undefined
+								? "no expiry"
+								: `expires in ${formatResetTimeLeft(value.expiresAt, now)} (${new Date(value.expiresAt).toLocaleString()})`;
+						return `  ${index + 1}. ${when}${index === 0 ? "  ← selected" : ""}`;
+					})
+					.join("\n");
 				const confirmed = await ctx.ui.confirm(
 					"Redeem OpenAI reset?",
-					`Consume soonest-expiring reset (${credits.length} available)?${expiry} This resets your current 5h/weekly window.`,
+					`${credits.length} banked reset${credits.length === 1 ? "" : "s"}, soonest-expiring first:\n${creditLines}\n\nRedeem the selected reset? This resets your current 5h/weekly window.`,
 				);
 				if (!confirmed) return;
 				const currentKey = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");

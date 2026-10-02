@@ -30,7 +30,7 @@ Arcade colors use Pi's active theme renderer, including truecolor/256-color capa
 | Pac-Man lane | empty consumed space → phase ghost while running → yellow Pac-Man → cream remaining pellets |
 | Right-aligned metrics | native `%` · optional token speed `t/s` |
 
-Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pellets, and the active ghost keep classic arcade colors.
+Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pellets, and the active ghost keep classic arcade colors on dark terminals; on light terminals the palette darkens (goldenrod Pac-Man, sienna pellets, muted ghost phases) from the theme's `appearance` so the warm hues stay readable.
 
 With a virtual model selected, the bottom border shows `auto · high → physical-model · medium` for the latest successful response on the active branch. Narrow borders drop thinking and route detail before the selected model. Context limits still come directly from Pi, which accounts for the routed physical model.
 
@@ -46,7 +46,7 @@ Quota is advisory chrome: refreshed on activity (`turn_end`, `model_select`) at 
 
 ### `/openai-codex-reset`
 
-Redeems one banked OpenAI usage-limit reset (refreshes eligible 5h/weekly windows). It selects soonest-expiring reset first, shows its expiry before confirmation, and refreshes quota immediately after the consume response.
+Redeems one banked OpenAI usage-limit reset (refreshes eligible 5h/weekly windows). It selects soonest-expiring reset first and lists every banked reset with its remaining time and absolute expiry (marking the selected one) before confirmation, then refreshes quota immediately after the consume response.
 
 **Compatibility caveat:** this uses ChatGPT's internal `/wham/rate-limit-reset-credits` endpoints, not a public stable API; OpenAI may change them. Requests are limited to the official `https://chatgpt.com` origin, reject redirects, time out after 15 seconds, and cap response bodies at 64 KiB. Before consuming a reset, the command re-resolves Pi's OAuth token and cancels if account changed. Confirmation precedes the mutating POST. If outcome is uncertain, a pending record stores selected credit and idempotency key under Pi's agent directory; rerunning the command retries the same request. Use `/openai-codex-reset forget-pending` only after checking usage—forgetting an applied request can allow another reset to be spent.
 

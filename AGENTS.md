@@ -13,7 +13,7 @@ Rounded input shell plus one quiet health row below editor. No multi-line footer
 - Editor top border: Pac-Man lane (auto-fits window width, no cap) + context `%` beside lane + quiet live `t/s` at the right end
 - Editor bottom border: model/thinking + OpenAI Codex quota beside it on the left, `CH`/`$` right; never path or Git
 - Health metrics: `%` + quiet live `t/s` (top border) · `CH` + optional `$` (bottom right)
-- Classic palette: cream pellets, yellow solid Nerd Font Pac-Man, phase-colored ghost
+- Classic dark palette (cream pellets, yellow solid Nerd Font Pac-Man, phase-colored ghost); light terminals switch to darkened variants via `theme.appearance`
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets
 - No background color blocks; healthy text stays dim; only warning/error states gain color
 - Chomp driven by streamed tokens: mouth speed = throughput, static when idle (no timers)

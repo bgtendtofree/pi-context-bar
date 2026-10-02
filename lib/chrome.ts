@@ -43,11 +43,38 @@ export const LANE_ACTIVITY_TEXT = {
 
 export type LaneActivity = "idle" | keyof typeof LANE_ACTIVITY_TEXT;
 
+/** Arcade colors for the lane; classic warm hues on dark, darkened variants on light terminals. */
+export type ArcadePalette = Readonly<{
+	pacman: string;
+	pellet: string;
+	ghosts: Readonly<Record<keyof typeof LANE_ACTIVITY_TEXT, string>>;
+}>;
+
+/** Classic arcade palette: bright yellow Pac-Man, cream pellets, saturated ghost phase colors. */
+export const DARK_ARCADE: ArcadePalette = {
+	pacman: PACMAN_TEXT,
+	pellet: PELLET_TEXT,
+	ghosts: LANE_ACTIVITY_TEXT,
+};
+
+/** Light-terminal palette: yellow/cream vanish on pale backgrounds, so darken to goldenrod and sienna. */
+const LIGHT_ARCADE: ArcadePalette = {
+	pacman: "#B8860B",
+	pellet: "#9C4A1E",
+	ghosts: { working: "#C2181B", thinking: "#B25E00", assistant: "#00707D", tools: "#3B4FB5" },
+};
+
+/** Lane palette for a theme appearance; unknown appearances keep the classic dark palette. */
+export const arcadePalette = (appearance: "dark" | "light" | undefined): ArcadePalette =>
+	appearance === "light" ? LIGHT_ARCADE : DARK_ARCADE;
+
 export type ChromeStyles = Readonly<{
 	dim: (text: string) => string;
 	warning: (text: string) => string;
 	error: (text: string) => string;
 	foreground?: typeof foreground;
+	/** Theme background the chrome paints on; light switches the lane to the darkened arcade palette. */
+	appearance?: "dark" | "light";
 }>;
 
 /** Compact context-window size: 200_000 → 200K, 512 → 512. */
@@ -142,18 +169,19 @@ export const renderPacmanLane = (
 	activity: LaneActivity = "idle",
 	glyphs: GlyphSet = NERD_GLYPHS,
 	paint: typeof foreground = foreground,
+	palette: ArcadePalette = DARK_ARCADE,
 ): string => {
 	if (width <= 0) return "";
 	const frameIndex = activity === "idle" ? 0 : Math.abs(Math.trunc(animationFrame)) % PACMAN_FRAMES.length;
 	const pacmanGlyph = frameIndex === 0 ? glyphs.pacmanOpen : glyphs.pacmanClosed;
-	if (width === 1) return paint(PACMAN_TEXT, pacmanGlyph);
+	if (width === 1) return paint(palette.pacman, pacmanGlyph);
 
 	const cellWidth = 2;
 	const cellCount = Math.max(1, Math.floor(width / cellWidth));
 	const ratio = snapshot.contextWindow > 0 ? Math.min(1, Math.max(0, snapshot.usedTokens / snapshot.contextWindow)) : 0;
 	const consumedCellCount = Math.round(ratio * Math.max(0, cellCount - 1));
 	const pelletCellCount = Math.max(0, cellCount - consumedCellCount - 1);
-	const pacman = coloredCells(PACMAN_TEXT, pacmanGlyph, 1, cellWidth, paint);
+	const pacman = coloredCells(palette.pacman, pacmanGlyph, 1, cellWidth, paint);
 	const powerCells = new Set(
 		POWER_PELLET_RATIOS.map((powerRatio) => Math.round(powerRatio * Math.max(0, cellCount - 1))),
 	);
@@ -162,8 +190,8 @@ export const renderPacmanLane = (
 		(_, index) =>
 			`${powerCells.has(consumedCellCount + 1 + index) ? POWER_PELLET_GLYPH : PELLET_GLYPH}${" ".repeat(cellWidth - 1)}`,
 	).join("");
-	const pellets = paint(PELLET_TEXT, pelletCells);
-	const ghostColor = activity === "idle" ? undefined : LANE_ACTIVITY_TEXT[activity];
+	const pellets = paint(palette.pellet, pelletCells);
+	const ghostColor = activity === "idle" ? undefined : palette.ghosts[activity];
 	const preferredGhostDistance = Math.floor(Math.abs(Math.trunc(animationFrame)) / 2) % 2 === 0 ? 2 : 3;
 	const ghostDistance = Math.min(preferredGhostDistance, consumedCellCount);
 	const ghostCellIndex = ghostColor && consumedCellCount >= 2 ? consumedCellCount - ghostDistance : undefined;
@@ -221,6 +249,7 @@ export const renderLaneStrip = (
 		activity,
 		glyphs,
 		styles.foreground ?? foreground,
+		arcadePalette(styles.appearance),
 	);
 	return ` ${[lane, pickedPercent, pickedSpeed].filter(Boolean).join(" ")} `;
 };

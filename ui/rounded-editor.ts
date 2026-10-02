@@ -115,6 +115,7 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 				warning: (text) => ctx.ui.theme.fg("warning", text),
 				error: (text) => ctx.ui.theme.fg("error", text),
 				foreground: (hex, text) => ctx.ui.theme.style(text, { fg: parseColor(hex) }),
+				appearance: ctx.ui.theme.appearance,
 			};
 			const scrollUp =
 				this.hiddenAbove && width >= 12

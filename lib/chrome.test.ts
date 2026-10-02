@@ -4,16 +4,21 @@ import { stripVTControlCharacters } from "node:util";
 import { parseColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	ASCII_GLYPHS,
+	arcadePalette,
 	type ChromeStyles,
+	DARK_ARCADE,
 	foreground,
 	formatCost,
 	formatWindowSize,
 	freeMetricOptions,
 	GHOST_GLYPH,
 	LANE_ACTIVITY_TEXT,
+	NERD_GLYPHS,
 	PACMAN_FRAMES,
 	PACMAN_GLYPH,
+	PACMAN_TEXT,
 	PELLET_GLYPH,
+	PELLET_TEXT,
 	POWER_PELLET_GLYPH,
 	POWER_PELLET_RATIOS,
 	type QuotaUsage,
@@ -191,6 +196,39 @@ describe("Pac-Man lane", () => {
 		assert.equal(negative.startsWith(PACMAN_GLYPH), true);
 		const overfull = stripVTControlCharacters(renderPacmanLane(snapshot({ usedTokens: 200, contextWindow: 100 }), 10));
 		assert.equal(overfull.trimEnd().endsWith(PACMAN_GLYPH), true);
+	});
+});
+
+describe("arcade palette", () => {
+	test("keeps classic colors on dark and unknown appearances", () => {
+		assert.equal(arcadePalette("dark"), DARK_ARCADE);
+		assert.equal(arcadePalette(undefined), DARK_ARCADE);
+	});
+
+	test("darkens Pac-Man and pellets for light terminals", () => {
+		const light = arcadePalette("light");
+		assert.notEqual(light.pacman, PACMAN_TEXT);
+		assert.notEqual(light.pellet, PELLET_TEXT);
+		const colors: string[] = [];
+		const paint = (hex: string, text: string): string => {
+			colors.push(hex);
+			return text;
+		};
+		renderPacmanLane(snapshot({ usedTokens: 0 }), 12, 0, "idle", NERD_GLYPHS, paint, light);
+		assert.ok(colors.includes(light.pacman));
+		assert.ok(colors.includes(light.pellet));
+	});
+
+	test("renderLaneStrip paints the darkened lane under a light appearance", () => {
+		const light = arcadePalette("light");
+		const colors: string[] = [];
+		const paint = (hex: string, text: string): string => {
+			colors.push(hex);
+			return text;
+		};
+		renderLaneStrip(snapshot({ usedTokens: 0 }), 30, { ...identityStyles, foreground: paint, appearance: "light" });
+		assert.ok(colors.includes(light.pacman));
+		assert.ok(colors.includes(light.pellet));
 	});
 });
 

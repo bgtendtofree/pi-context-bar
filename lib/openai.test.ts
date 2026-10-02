@@ -3,6 +3,7 @@ import { describe, type TestContext, test } from "node:test";
 import {
 	fetchOpenAiUsage,
 	fetchResetCredits,
+	formatResetTimeLeft,
 	openAiAccountId,
 	parseOpenAiUsage,
 	parsePendingReset,
@@ -141,6 +142,20 @@ describe("parseResetCredits", () => {
 		for (const payload of [undefined, null, 42, "nope", {}, { credits: "x" }, { other: [] }]) {
 			assert.deepEqual(parseResetCredits(payload), []);
 		}
+	});
+});
+
+describe("formatResetTimeLeft", () => {
+	const now = Date.parse("2026-07-01T00:00:00Z");
+	const at = (iso: string): number => Date.parse(iso);
+	test("formats minutes, hours, and days with hours left", () => {
+		assert.equal(formatResetTimeLeft(at("2026-07-01T00:12:00Z"), now), "12m");
+		assert.equal(formatResetTimeLeft(at("2026-07-01T05:10:00Z"), now), "5h 10m");
+		assert.equal(formatResetTimeLeft(at("2026-07-03T03:30:00Z"), now), "2d 3h");
+	});
+	test("reports past and sub-minute expiries as expired", () => {
+		assert.equal(formatResetTimeLeft(at("2026-07-01T00:00:00Z"), now), "expired");
+		assert.equal(formatResetTimeLeft(at("2026-06-30T00:00:00Z"), now), "expired");
 	});
 });
 

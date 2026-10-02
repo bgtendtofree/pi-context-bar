@@ -136,6 +136,16 @@ export const fetchOpenAiUsage = async (apiKey: string, baseUrl?: string): Promis
 export type ResetCredit = Readonly<{ id: string; expiresAt?: number }>;
 export type PendingReset = Readonly<{ accountId: string; creditId: string; requestId: string }>;
 
+/** Relative time to a banked reset's expiry: "2d 3h", "5h 10m", "12m", or "expired". */
+export const formatResetTimeLeft = (expiresAt: number, now: number): string => {
+	const minutes = Math.floor((expiresAt - now) / 60_000);
+	if (minutes <= 0) return "expired";
+	if (minutes < 60) return `${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ${minutes % 60}m`;
+	return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+};
+
 export const parsePendingReset = (payload: unknown): PendingReset | undefined => {
 	if (!isObject(payload)) return undefined;
 	const { accountId, creditId, requestId } = payload;

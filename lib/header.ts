@@ -35,7 +35,7 @@ export const EXPANDED_HINT_DEFS = [
 ] as const;
 
 const styledHint = (hint: Hint, styles: HeaderStyles): string =>
-	hint.key ? `${styles.dim(hint.key)} ${styles.muted(hint.action)}` : "";
+	hint.key ? `${styles.muted(hint.key)} ${styles.dim(hint.action)}` : "";
 
 const hintLine = (hints: readonly Hint[], styles: HeaderStyles, width: number): string => {
 	let line = "";
@@ -59,14 +59,19 @@ export const renderWelcome = (
 	styles: HeaderStyles,
 ): readonly string[] => {
 	if (width <= 0) return [];
-	const logo = truncateToWidth(styles.accent("pi") + styles.dim(` v${version}`), width);
+	// Match the editor's border + prompt columns; leave room for the logo on tiny terminals.
+	const padding = Math.min(3, width - 1);
+	const prefix = " ".repeat(padding);
+	const contentWidth = width - padding;
+	const logo = prefix + truncateToWidth(styles.accent("pi") + styles.dim(` v${version}`), contentWidth);
 	if (!expanded) {
-		const hints = width >= 40 ? hintLine(compactHints, styles, width) : "";
-		return hints ? ["", logo, hints] : ["", logo];
+		const hints = width >= 40 ? hintLine(compactHints, styles, contentWidth) : "";
+		return hints ? ["", logo, prefix + hints] : ["", logo];
 	}
 	const rows = expandedHints
 		.map((hint) => styledHint(hint, styles))
 		.filter(Boolean)
-		.filter((row) => visibleWidth(row) <= width);
+		.filter((row) => visibleWidth(row) <= contentWidth)
+		.map((row) => prefix + row);
 	return ["", logo, ...rows];
 };

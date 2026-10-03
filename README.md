@@ -6,7 +6,7 @@ Model, cache hit, and cost live in the rounded editor border — zero extra chro
 Slash-command autocomplete stays above the rounded editor instead of expanding inside it.
 
 ```
-╭─ 󰮯 • • • o • • • 15.7% (200K)  ~42.3t/s ──────────────────────────╮
+╭─ 󰮯 • • • ○ • • • 15.7% (200K)  ~42.3t/s ──────────────────────────╮
 │ ›                                                                            │
 ╰─ gpt-5.6-sol · medium ─────────────────────────────── CH98%  $1.61 ──╯
 ```
@@ -31,6 +31,8 @@ Arcade colors use Pi's active theme renderer, including truecolor/256-color capa
 | Right-aligned metrics | native `%` · optional token speed `t/s` |
 
 Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pellets, and the active ghost keep classic arcade colors on dark terminals; on light terminals the palette darkens (goldenrod Pac-Man, sienna pellets, muted ghost phases) from the theme's `appearance` so the warm hues stay readable.
+
+Model names use muted foreground, with thinking levels dim and the input prompt accented. Context-window size stays dim even when usage warns. Wide lanes (80+ columns) space cells three columns apart instead of two, without capping the track; circular `○` power pellets mark the 70% / 90% thresholds.
 
 With a virtual model selected, the bottom border shows `auto · high → physical-model · medium` for the latest successful response on the active branch. Narrow borders drop thinking and route detail before the selected model. Context limits still come directly from Pi, which accounts for the routed physical model.
 
@@ -62,7 +64,7 @@ Top border carries context consumption (lane, `%` with the model's context-windo
 
 ## Startup
 
-A quiet welcome header appears immediately: bold `pi` + version on one row, resolved keybinding hints (`esc interrupt · ctrl+c exit · / commands · ! bash · …`) on the next. Keys are read from your actual keybindings, so remaps show correctly, and the expand keybinding toggles a full hint list. No model or cwd repeats — those already live in the editor border and your shell.
+A quiet welcome header appears immediately: bold `pi` + version on one row, resolved keybinding hints (`esc interrupt · ctrl+c exit · / commands · ! bash · …`) on the next. Both rows align with the editor's input text, with keys in muted foreground and descriptions dim. Keys are read from your actual keybindings, so remaps show correctly, and the expand keybinding toggles a full hint list. No model or cwd repeats — those already live in the editor border and your shell.
 
 Pairs well with `"quietStartup": true` in `~/.pi/agent/settings.json`, which hides pi's `[Context] [Skills] [Extensions]` loaded-resources rows; resource details remain available via `/status`.
 

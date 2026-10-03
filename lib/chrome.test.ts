@@ -148,6 +148,23 @@ describe("Pac-Man lane", () => {
 		assert.equal(closed.split(PELLET_GLYPH).length - 1, 2);
 	});
 
+	test("loosens wide-lane spacing without capping width or changing usage ratios", () => {
+		assert.equal(POWER_PELLET_GLYPH, "○");
+		for (const width of [79, 80, 81, 120, 200]) {
+			const cellWidth = width >= 80 ? 3 : 2;
+			const lastCell = Math.floor(width / cellWidth) - 1;
+			for (const usedTokens of [0, 50, 100]) {
+				const lane = stripVTControlCharacters(renderPacmanLane(snapshot({ usedTokens, contextWindow: 100 }), width));
+				assert.equal(visibleWidth(lane), width);
+				assert.equal(lane.indexOf(PACMAN_GLYPH), Math.round((usedTokens / 100) * lastCell) * cellWidth);
+				if (usedTokens === 0) assert.ok(lane.startsWith(`${PACMAN_GLYPH}${" ".repeat(cellWidth - 1)}`));
+			}
+		}
+		const wide = stripVTControlCharacters(renderPacmanLane(snapshot(), 120));
+		assert.equal(wide.split(PELLET_GLYPH).length - 1, 37);
+		assert.equal(wide.split(POWER_PELLET_GLYPH).length - 1, 2);
+	});
+
 	test("pins open-mouth Pac-Man while idle", () => {
 		assert.ok(stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 1)).includes(PACMAN_GLYPH));
 		assert.ok(!stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 1)).includes(PACMAN_FRAMES[1]));
@@ -280,9 +297,13 @@ describe("lane strip", () => {
 		assert.ok(strip.includes("15.6% (372K)"));
 	});
 
-	test("accents unhealthy usage percent", () => {
-		assert.ok(renderLaneStrip(snapshot({ usedTokens: 150_000 }), 30, markedStyles).includes("<w>75.0% (200K)</w>"));
-		assert.ok(renderLaneStrip(snapshot({ usedTokens: 190_000 }), 30, markedStyles).includes("<e>95.0% (200K)</e>"));
+	test("accents only unhealthy percent while keeping window size dim", () => {
+		assert.ok(
+			renderLaneStrip(snapshot({ usedTokens: 150_000 }), 80, markedStyles).includes("<w>75.0%</w> <d>(200K)</d>"),
+		);
+		assert.ok(
+			renderLaneStrip(snapshot({ usedTokens: 190_000 }), 80, markedStyles).includes("<e>95.0%</e> <d>(200K)</d>"),
+		);
 	});
 
 	test("formats window sizes compactly", () => {

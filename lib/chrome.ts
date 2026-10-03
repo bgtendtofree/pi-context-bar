@@ -15,7 +15,7 @@ export const PACMAN_CLOSED_GLYPH = "●";
 export const PACMAN_FRAMES = [PACMAN_GLYPH, PACMAN_CLOSED_GLYPH] as const;
 export const GHOST_GLYPH = "󰊠";
 export const PELLET_GLYPH = "•";
-export const POWER_PELLET_GLYPH = "o";
+export const POWER_PELLET_GLYPH = "○";
 
 /** Terminal glyph choices: Nerd Font icons by default, ASCII for terminals without the font. */
 export type GlyphSet = Readonly<{
@@ -208,7 +208,8 @@ export const renderPacmanLane = (
 	const pacmanGlyph = frameIndex === 0 ? glyphs.pacmanOpen : glyphs.pacmanClosed;
 	if (width === 1) return paint(palette.pacman, pacmanGlyph);
 
-	const cellWidth = 2;
+	// Wide lanes breathe more; narrow lanes keep finer usage resolution.
+	const cellWidth = width >= 80 ? 3 : 2;
 	const cellCount = Math.max(1, Math.floor(width / cellWidth));
 	const ratio = snapshot.contextWindow > 0 ? Math.min(1, Math.max(0, snapshot.usedTokens / snapshot.contextWindow)) : 0;
 	const consumedCellCount = Math.round(ratio * Math.max(0, cellCount - 1));
@@ -250,13 +251,11 @@ export const renderLaneStrip = (
 	if (width <= 2) return "";
 	const percentValue = snapshot.contextWindow > 0 ? (snapshot.usedTokens / snapshot.contextWindow) * 100 : 0;
 	const styledPercent = (text: string): string => styled(text, (value) => styleUsage(value, percentValue, styles));
+	const percent = styledPercent(`${percentValue.toFixed(1)}%`);
 	// Window size rides with the percent it is the denominator of; tight strips fall back to plain %.
 	const percentOptions =
 		snapshot.contextWindow > 0
-			? [
-					styledPercent(`${percentValue.toFixed(1)}% (${formatWindowSize(snapshot.contextWindow)})`),
-					styledPercent(`${percentValue.toFixed(1)}%`),
-				]
+			? [`${percent} ${styles.dim(`(${formatWindowSize(snapshot.contextWindow)})`)}`, percent]
 			: [];
 	const speedText = styled(formatTokenSpeed(speed), styles.dim);
 	const laneWidth = (percent: string | undefined, speed: string | undefined): number =>

@@ -41,15 +41,19 @@ test("remaps popup clicks above editor and cursor clicks inside padded shell", (
 	assert.deepEqual(remapEditorMouse({ ...event, y: 3 }, 2, 5), { ...event, x: 2, y: 1, width: 36 });
 });
 
-test("long editor keeps both native scroll counts inside rounded borders", () => {
+test("rounded editor keeps quiet labels, aligned input, and native scroll counts", () => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
 	let colorMode: TerminalColorMode = "256color";
 	let speed: TokenSpeedSnapshot | null = null;
+	const semanticColors = new Map<string, string>();
 	const ctx = {
 		mode: "tui",
 		ui: {
 			theme: {
-				fg: (_color: string, text: string) => text,
+				fg: (color: string, text: string) => {
+					semanticColors.set(text, color);
+					return text;
+				},
 				style: (text: string, options: { fg: Color }) => styleText(text, options, colorMode),
 			},
 			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
@@ -62,8 +66,8 @@ test("long editor keeps both native scroll counts inside rounded borders", () =>
 		},
 	} as unknown as ExtensionContext;
 	registerRoundedEditor(ctx, {
-		getModel: () => ({ id: "a-very-long-model-name", reasoning: false }),
-		getThinkingLevel: () => "off",
+		getModel: () => ({ id: "a-very-long-model-name", reasoning: true }),
+		getThinkingLevel: () => "medium",
 		getHealth: () => ({
 			snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
 			usage: { cost: 0, cacheHitRate: undefined, cacheHitRateAvg: undefined },
@@ -78,6 +82,11 @@ test("long editor keeps both native scroll counts inside rounded borders", () =>
 	assert.ok(editor);
 	assert.ok(editor.render(80)[0]?.includes("\x1b[38;5;"));
 	assert.ok(!editor.render(80)[0]?.includes("\x1b[38;2;"));
+	assert.equal(semanticColors.get("a-very-long-model-name"), "muted");
+	assert.equal(semanticColors.get(" · medium"), "dim");
+	assert.equal(semanticColors.get("›"), "accent");
+	editor.setText("input");
+	assert.equal(stripVTControlCharacters(editor.render(80)[1] ?? "").indexOf("input"), 3);
 	colorMode = "truecolor";
 	assert.ok(editor.render(80)[0]?.includes("\x1b[38;2;"));
 	colorMode = "256color";

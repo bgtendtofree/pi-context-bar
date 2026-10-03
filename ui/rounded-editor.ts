@@ -60,8 +60,8 @@ const styleModelLabel = (label: string, ctx: ExtensionContext): string => {
 		.split(" → ")
 		.map((part) => {
 			const separator = part.lastIndexOf(" · ");
-			if (separator < 0) return ctx.ui.theme.fg(part === "no-model" ? "muted" : "accent", part);
-			return ctx.ui.theme.fg("accent", part.slice(0, separator)) + ctx.ui.theme.fg("dim", part.slice(separator));
+			if (separator < 0) return ctx.ui.theme.fg("muted", part);
+			return ctx.ui.theme.fg("muted", part.slice(0, separator)) + ctx.ui.theme.fg("dim", part.slice(separator));
 		})
 		.join(ctx.ui.theme.fg("dim", " → "));
 };

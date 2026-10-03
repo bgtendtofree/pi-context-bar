@@ -98,7 +98,8 @@ export const registerRoundedEditor = (ctx: ExtensionContext, options: RoundedEdi
 		}
 
 		override render(width: number): string[] {
-			if (width < 6) {
+			// Pi reserves a cursor column; a one-column wrap recurses on wide graphemes.
+			if (width < 7) {
 				this.editorRows = 0;
 				return super.render(width);
 			}

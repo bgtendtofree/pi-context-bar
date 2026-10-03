@@ -1,5 +1,6 @@
 /** OpenAI Codex (ChatGPT Plus/Pro) quota: fetch and parse wham/usage rate-limit windows into the shared QuotaUsage shape. */
 
+import { Buffer } from "node:buffer";
 import { EMPTY_QUOTA, type QuotaLimit, type QuotaUsage } from "./chrome.ts";
 import { isObject, type JsonObject, toNumber } from "./json.ts";
 
@@ -15,8 +16,10 @@ const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 export const openAiAccountId = (token: string): string | undefined => {
 	const parts = token.split(".");
 	if (parts.length !== 3) return undefined;
+	const encoded = parts[1] ?? "";
+	if (!/^[A-Za-z0-9_-]+={0,2}$/.test(encoded)) return undefined;
 	try {
-		const payload: unknown = JSON.parse(atob(parts[1] ?? ""));
+		const payload: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
 		if (!isObject(payload)) return undefined;
 		const auth = payload[JWT_CLAIM_PATH];
 		if (!isObject(auth)) return undefined;
@@ -164,7 +167,7 @@ export const parsePendingReset = (payload: unknown): PendingReset | undefined =>
 };
 
 /** Parse redeemable credits, consuming soonest-expiring reset first. */
-export const parseResetCredits = (payload: unknown): readonly ResetCredit[] => {
+export const parseResetCredits = (payload: unknown, now = Date.now()): readonly ResetCredit[] => {
 	const items = Array.isArray(payload)
 		? payload
 		: isObject(payload)
@@ -180,6 +183,7 @@ export const parseResetCredits = (payload: unknown): readonly ResetCredit[] => {
 		if (status === "consumed" || status === "redeemed" || status === "expired") continue;
 		const rawExpiry = item.expires_at ?? item.expiresAt;
 		const expiry = typeof rawExpiry === "string" ? Date.parse(rawExpiry) : Number.NaN;
+		if (expiry <= now) continue;
 		credits.push({ id, ...(Number.isFinite(expiry) ? { expiresAt: expiry } : {}) });
 	}
 	return credits.sort((a, b) => {
@@ -204,7 +208,7 @@ export const redeemResetCredit = async (
 	creditId: string,
 	requestId: string,
 	baseUrl?: string,
-): Promise<string> => {
+): Promise<"reset" | "already_redeemed" | "unknown"> => {
 	const response = await requestJson(
 		`${codexBase(baseUrl)}/wham/rate-limit-reset-credits/consume`,
 		"OpenAI reset consume API",
@@ -216,5 +220,6 @@ export const redeemResetCredit = async (
 	);
 	// A successful POST may have consumed the reset even if its response cannot be decoded.
 	const body = await readJson(response).catch(() => undefined);
-	return isObject(body) && typeof body.code === "string" && body.code ? body.code : "unknown";
+	// Internal API codes can change; only known completed outcomes permit pending cleanup.
+	return isObject(body) && (body.code === "reset" || body.code === "already_redeemed") ? body.code : "unknown";
 };

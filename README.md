@@ -50,6 +50,10 @@ Redeems one banked OpenAI usage-limit reset (refreshes eligible 5h/weekly window
 
 **Compatibility caveat:** this uses ChatGPT's internal `/wham/rate-limit-reset-credits` endpoints, not a public stable API; OpenAI may change them. Requests are limited to the official `https://chatgpt.com` origin, reject redirects, time out after 15 seconds, and cap response bodies at 64 KiB. Before consuming a reset, the command re-resolves Pi's OAuth token and cancels if account changed. Confirmation precedes the mutating POST. If outcome is uncertain, a pending record stores selected credit and idempotency key under Pi's agent directory; rerunning the command retries the same request. Use `/openai-codex-reset forget-pending` only after checking usage—forgetting an applied request can allow another reset to be spent.
 
+Reset and `forget-pending` commands share an exclusive filesystem lock, held through confirmation and the consume response. Other terminals fail without touching the record. A crash leaves `pi-context-bar-reset-pending.json.lock` behind: stop **all Pi processes sharing that agent directory** before removing only this empty lock directory. Keep the pending JSON and retry its same request. Locks never expire automatically; removing a live lock or deleting an uncertain pending record can spend another credit. Expired credits are excluded and the selected credit is checked again after confirmation.
+
+Only the exact known completed consume codes `reset` and `already_redeemed` allow automatic pending cleanup. Every other code (including unfamiliar future codes, case variants, and malformed values) is treated as `unknown`; the pending credit and request ID remain unchanged for a confirmed retry.
+
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 
 Top border carries context consumption (lane, `%` with the model's context-window size, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, so the rounded border never gaps.
@@ -118,7 +122,7 @@ pi --no-extensions -e ./index.ts --no-session --no-tools -p "Reply ok"
 - Tests use built-in `node:test` and Node coverage
 - Runtime source and tests use separate TypeScript configs
 - Loads as `.ts` via jiti (no build step)
-- Pi core packages stay `*` peers; development and CI test exact Pi `0.99.1`
+- Pi core packages stay `*` peers per Pi's package guidance; development and CI test exact Pi `1.0.0`. Older API compatibility is not verified.
 
 ## License
 

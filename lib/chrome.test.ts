@@ -75,6 +75,9 @@ describe("health metric formatting", () => {
 		assert.equal(formatDuration(left("2026-07-01T05:10:00Z")), "5h 10m");
 		assert.equal(formatDuration(left("2026-07-03T03:30:00Z")), "2d 3h");
 		assert.equal(formatDuration(0), "expired");
+		assert.equal(formatDuration(-1), "expired");
+		for (const ms of [1, 30_000, 59_999]) assert.equal(formatDuration(ms), "<1m");
+		assert.equal(formatDuration(60_000), "1m");
 	});
 
 	test("builds wide and narrow options", () => {
@@ -316,6 +319,17 @@ describe("lane strip", () => {
 	test("handles tiny widths", () => {
 		assert.equal(renderLaneStrip(dominantSnapshot, 2, identityStyles), "");
 		assert.equal(visibleWidth(stripVTControlCharacters(renderLaneStrip(dominantSnapshot, 12, identityStyles))), 12);
+	});
+
+	test("every strip fits widths 0..200 with and without speed", () => {
+		for (const contextWindow of [0, 100_000]) {
+			for (const speed of [null, { tokensPerSecond: 42.3, estimated: true }]) {
+				for (let width = 0; width <= 200; width++) {
+					const strip = renderLaneStrip({ usedTokens: 20_000, contextWindow }, width, identityStyles, 0, "idle", speed);
+					assert.ok(visibleWidth(strip) <= width, `strip width=${width}, speed=${Boolean(speed)}`);
+				}
+			}
+		}
 	});
 });
 

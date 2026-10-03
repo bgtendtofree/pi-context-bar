@@ -23,6 +23,7 @@
 		"lib/header.ts",
 		"lib/json.ts",
 		"lib/openai.ts",
+		"lib/pending-reset.ts",
 		"lib/speed.ts",
 		"ui/rounded-editor.ts",
 		"README.md",

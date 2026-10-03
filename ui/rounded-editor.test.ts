@@ -5,6 +5,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { type Color, styleText, type TerminalColorMode, visibleWidth } from "@earendil-works/pi-tui";
 import { ASCII_GLYPHS } from "../lib/chrome.ts";
+import type { TokenSpeedSnapshot } from "../lib/speed.ts";
 import { registerRoundedEditor, remapEditorMouse, splitEditorRender } from "./rounded-editor.ts";
 
 test("keeps autocomplete outside editor shell", () => {
@@ -43,6 +44,7 @@ test("remaps popup clicks above editor and cursor clicks inside padded shell", (
 test("long editor keeps both native scroll counts inside rounded borders", () => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
 	let colorMode: TerminalColorMode = "256color";
+	let speed: TokenSpeedSnapshot | null = null;
 	const ctx = {
 		mode: "tui",
 		ui: {
@@ -63,10 +65,10 @@ test("long editor keeps both native scroll counts inside rounded borders", () =>
 		getModel: () => ({ id: "a-very-long-model-name", reasoning: false }),
 		getThinkingLevel: () => "off",
 		getHealth: () => ({
-			snapshot: { usedTokens: 0, contextWindow: 100_000 },
+			snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
 			usage: { cost: 0, cacheHitRate: undefined, cacheHitRateAvg: undefined },
 			quota: undefined,
-			speed: null,
+			speed,
 			frame: 0,
 			activity: "idle",
 		}),
@@ -89,4 +91,20 @@ test("long editor keeps both native scroll counts inside rounded borders", () =>
 	const narrow = editor.render(24).map(stripVTControlCharacters);
 	assert.match(narrow.at(-1) ?? "", /↓/);
 	assert.ok(narrow.every((line) => visibleWidth(line) === 24));
+	for (const value of [null, { tokensPerSecond: 42.3, estimated: true }]) {
+		speed = value;
+		for (const text of [
+			"",
+			"中文😀 long input ".repeat(30),
+			Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n"),
+		]) {
+			editor.setText(text);
+			for (let width = 6; width <= 200; width++) {
+				assert.ok(
+					editor.render(width).every((line) => visibleWidth(line) <= width),
+					`editor width=${width}, speed=${Boolean(speed)}`,
+				);
+			}
+		}
+	}
 });

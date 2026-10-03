@@ -22,7 +22,7 @@ const usagePayload = {
 	rate_limit_reset_credits: { available_count: 2 },
 };
 
-const fakeJwt = (payload: unknown): string => `x.${Buffer.from(JSON.stringify(payload)).toString("base64")}.y`;
+const fakeJwt = (payload: unknown): string => `x.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.y`;
 
 const authedToken = fakeJwt({ "https://api.openai.com/auth": { chatgpt_account_id: "acc_123" } });
 
@@ -122,13 +122,16 @@ describe("parseResetCredits", () => {
 
 	test("puts soonest-expiring reset first and unknown expiries last", () => {
 		assert.deepEqual(
-			parseResetCredits({
-				credits: [
-					{ id: "later", expires_at: "2026-08-01T00:00:00Z" },
-					{ id: "unknown" },
-					{ id: "soon", expires_at: "2026-07-01T00:00:00Z" },
-				],
-			}),
+			parseResetCredits(
+				{
+					credits: [
+						{ id: "later", expires_at: "2026-08-01T00:00:00Z" },
+						{ id: "unknown" },
+						{ id: "soon", expires_at: "2026-07-01T00:00:00Z" },
+					],
+				},
+				Date.parse("2026-06-01T00:00:00Z"),
+			),
 			[
 				{ id: "soon", expiresAt: Date.parse("2026-07-01T00:00:00Z") },
 				{ id: "later", expiresAt: Date.parse("2026-08-01T00:00:00Z") },
@@ -141,6 +144,22 @@ describe("parseResetCredits", () => {
 		for (const payload of [undefined, null, 42, "nope", {}, { credits: "x" }, { other: [] }]) {
 			assert.deepEqual(parseResetCredits(payload), []);
 		}
+	});
+
+	test("excludes explicitly expired available credits, including the expiry boundary", () => {
+		const now = Date.parse("2026-06-01T00:00:00Z");
+		assert.deepEqual(
+			parseResetCredits(
+				[
+					{ id: "old", status: "available", expires_at: "2000-01-01" },
+					{ id: "boundary", expires_at: new Date(now).toISOString() },
+					{ id: "valid", expires_at: "2099-01-01" },
+					{ id: "unknown", expires_at: "invalid" },
+				],
+				now,
+			),
+			[{ id: "valid", expiresAt: Date.parse("2099-01-01") }, { id: "unknown" }],
+		);
 	});
 });
 
@@ -158,6 +177,34 @@ describe("openAiAccountId", () => {
 	test("rejects malformed tokens", () => {
 		assert.equal(openAiAccountId("not-a-jwt"), undefined);
 		assert.equal(openAiAccountId("x.!!!.y"), undefined);
+		assert.equal(openAiAccountId("x.bm90LWpzb24.y"), undefined);
+	});
+
+	test("decodes Base64URL '-' and '_' plus UTF-8 claims", () => {
+		for (const name of [">>>", "???"]) {
+			const encoded = Buffer.from(
+				JSON.stringify({
+					"https://api.openai.com/auth": { chatgpt_account_id: "acc_123" },
+					name,
+					unicode: "中文😀",
+				}),
+			).toString("base64url");
+			assert.ok(encoded.includes(name === ">>>" ? "-" : "_"));
+			assert.equal(openAiAccountId(`x.${encoded}.y`), "acc_123");
+		}
+		assert.equal(
+			openAiAccountId(fakeJwt({ "https://api.openai.com/auth": { chatgpt_account_id: "账户😀" } })),
+			"账户😀",
+		);
+		for (const payload of [
+			null,
+			[],
+			{ "https://api.openai.com/auth": 3 },
+			{ "https://api.openai.com/auth": { chatgpt_account_id: 3 } },
+		]) {
+			assert.equal(openAiAccountId(fakeJwt(payload)), undefined);
+		}
+		assert.equal(openAiAccountId("x..y"), undefined);
 	});
 });
 
@@ -213,6 +260,30 @@ describe("openai fetch functions", () => {
 	test("redeemResetCredit does not claim success when response body lacks code", async (t) => {
 		mockFetch(t, jsonResponse({}));
 		assert.equal(await redeemResetCredit(authedToken, "c1", "request-1"), "unknown");
+	});
+
+	test("redeemResetCredit accepts only exact known completed codes", async (t) => {
+		let code: unknown;
+		mockFetch(t, () => jsonResponse({ code }));
+		for (const value of [
+			"reset",
+			"already_redeemed",
+			"processing",
+			"future_code",
+			"RESET",
+			"Already_Redeemed",
+			"",
+			42,
+			null,
+			{},
+			["reset"],
+		]) {
+			code = value;
+			assert.equal(
+				await redeemResetCredit(authedToken, "c1", "stable-request"),
+				value === "reset" || value === "already_redeemed" ? value : "unknown",
+			);
+		}
 	});
 
 	test("redeemResetCredit reports unknown for a non-JSON success body", async (t) => {

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
@@ -14,6 +17,148 @@ import { type AssistantMessage, accumulateSessionUsage, SUBSCRIPTION_TURN_ENTRY 
 
 const token = (accountId: string): string =>
 	`x.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: accountId } })).toString("base64")}.y`;
+
+test("reset transactions block concurrent retries and forget, preserve IDs on unfamiliar codes, and recheck account/expiry", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-reset-command-"));
+	const previousDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = dir;
+	t.after(async () => {
+		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousDir;
+		await rm(dir, { recursive: true, force: true });
+	});
+	const path = join(dir, "pi-context-bar-reset-pending.json");
+	let command: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"] | undefined;
+	zContext({
+		registerCommand: (_name, value) => {
+			command = value.handler;
+		},
+		on: () => {},
+	} as unknown as ExtensionAPI);
+	assert.ok(command);
+	const reset = command;
+	const notices: string[] = [];
+	let key = token("a");
+	let confirm: () => Promise<boolean> = async () => true;
+	const ctx = {
+		model: { provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api" },
+		modelRegistry: { getApiKeyForProvider: async () => key },
+		ui: { confirm: () => confirm(), notify: (message: string) => notices.push(message) },
+	} as unknown as ExtensionCommandContext;
+	const old = { accountId: "a", creditId: "old", requestId: "stable-old" };
+	await writeFile(path, JSON.stringify(old));
+	const posted = Promise.withResolvers<void>();
+	const response = Promise.withResolvers<Response>();
+	const bodies: unknown[] = [];
+	let outcome = "processing";
+	let credits: unknown = [{ id: "new" }];
+	t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
+		if (url.endsWith("/consume")) {
+			bodies.push(JSON.parse(String(init?.body)));
+			if (bodies.length === 1) {
+				posted.resolve();
+				return response.promise;
+			}
+			return new Response(JSON.stringify({ code: outcome }));
+		}
+		return new Response(JSON.stringify(url.endsWith("/wham/usage") ? {} : credits));
+	});
+	const a = reset("", ctx);
+	await posted.promise;
+	await reset("", ctx); // B cannot read old pending or submit a delayed duplicate.
+	await reset("forget-pending", ctx);
+	assert.equal(bodies.length, 1);
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), old);
+	assert.equal(notices.filter((notice) => notice.includes("locked")).length, 2);
+	response.resolve(new Response(JSON.stringify({ code: "reset" })));
+	await a;
+	await assert.rejects(stat(path), { code: "ENOENT" });
+
+	const dialog = Promise.withResolvers<void>();
+	const confirmed = Promise.withResolvers<boolean>();
+	confirm = async () => {
+		dialog.resolve();
+		return confirmed.promise;
+	};
+	const c = reset("", ctx);
+	await dialog.promise;
+	await reset("forget-pending", ctx); // Dialog itself is locked, not only POST.
+	await reset("", ctx);
+	assert.equal(bodies.length, 1);
+	confirmed.resolve(true);
+	await c;
+	assert.equal(notices.at(-1), "OpenAI reset outcome unknown; rerun command to retry same request");
+	const saved = JSON.parse(await readFile(path, "utf8"));
+	assert.equal(saved.creditId, "new");
+	assert.notEqual(saved.requestId, old.requestId);
+	assert.deepEqual(bodies[1], { credit_id: saved.creditId, redeem_request_id: saved.requestId });
+	confirm = async () => true;
+	await reset("", ctx); // Unfamiliar code retries same IDs, never selects another credit.
+	assert.equal(notices.at(-1), "OpenAI reset outcome unknown; rerun command to retry same request");
+	assert.deepEqual(bodies[2], bodies[1]);
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), saved);
+	outcome = "already_redeemed";
+	await reset("", ctx);
+	assert.deepEqual(bodies[3], bodies[1]);
+	await assert.rejects(stat(path), { code: "ENOENT" });
+
+	await writeFile(path, JSON.stringify(old));
+	key = token("other");
+	await reset("", ctx);
+	assert.match(notices.at(-1) ?? "", /another account/);
+	assert.equal(bodies.length, 4);
+	key = token("a");
+	confirm = async () => {
+		key = token("other");
+		return true;
+	};
+	await reset("", ctx);
+	assert.match(notices.at(-1) ?? "", /account changed/);
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), old);
+	key = token("a");
+	confirm = async () => false;
+	await reset("forget-pending", ctx);
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), old);
+	const forgetDialog = Promise.withResolvers<void>();
+	const forgetConfirmed = Promise.withResolvers<boolean>();
+	confirm = async () => {
+		forgetDialog.resolve();
+		return forgetConfirmed.promise;
+	};
+	const forgetting = reset("forget-pending", ctx);
+	await forgetDialog.promise;
+	await reset("", ctx);
+	assert.match(notices.at(-1) ?? "", /locked/);
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), old);
+	forgetConfirmed.resolve(true);
+	await forgetting;
+
+	const now = Date.parse("2026-06-01T00:00:00Z");
+	let clock = now;
+	t.mock.method(Date, "now", () => clock);
+	credits = [{ id: "expiring", expires_at: new Date(now + 30_000).toISOString() }];
+	confirm = async () => {
+		clock = now + 30_000;
+		return true;
+	};
+	await reset("", ctx);
+	assert.match(notices.at(-1) ?? "", /expired/);
+	assert.equal(bodies.length, 4); // Confirmation crossed expiry: no POST.
+	await assert.rejects(stat(path), { code: "ENOENT" });
+
+	credits = [{ id: "uncertain" }];
+	confirm = async () => true;
+	t.mock.method(globalThis, "fetch", async (url: string) => {
+		if (url.endsWith("/consume")) throw new Error("mock network failure");
+		return new Response(JSON.stringify(credits));
+	});
+	await reset("", ctx);
+	assert.match(notices.at(-1) ?? "", /outcome uncertain/);
+	const uncertain = JSON.parse(await readFile(path, "utf8"));
+	assert.equal(uncertain.creditId, "uncertain");
+	await reset("", ctx);
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), uncertain);
+});
 
 test("quota belongs to active account and model switches update context immediately", async (t) => {
 	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();

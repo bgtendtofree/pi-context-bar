@@ -88,8 +88,9 @@ export const formatCost = (cost: number): string => {
 
 /** Compact remaining time: "2d 3h", "5h 10m", "12m", or "expired" once past. */
 export const formatDuration = (ms: number): string => {
+	if (ms <= 0) return "expired";
 	const minutes = Math.floor(ms / 60_000);
-	if (minutes <= 0) return "expired";
+	if (minutes === 0) return "<1m";
 	if (minutes < 60) return `${minutes}m`;
 	const hours = Math.floor(minutes / 60);
 	if (hours < 24) return `${hours}h ${minutes % 60}m`;
@@ -261,10 +262,11 @@ export const renderLaneStrip = (
 	const laneWidth = (percent: string | undefined, speed: string | undefined): number =>
 		width - 2 - (percent ? visibleWidth(percent) + 1 : 0) - (speed ? visibleWidth(speed) + 1 : 0);
 	let pickedPercent: string | undefined;
-	let pickedSpeed = speedText;
+	let pickedSpeed = "";
 	for (const candidate of percentOptions) {
-		if (laneWidth(candidate, pickedSpeed) >= 4) {
+		if (laneWidth(candidate, speedText) >= 4) {
 			pickedPercent = candidate;
+			pickedSpeed = speedText;
 			break;
 		}
 		if (laneWidth(candidate, undefined) >= 4) {
@@ -273,6 +275,7 @@ export const renderLaneStrip = (
 			break;
 		}
 	}
+	if (!pickedPercent && laneWidth(undefined, speedText) >= 4) pickedSpeed = speedText;
 	const lane = renderPacmanLane(
 		snapshot,
 		Math.max(0, laneWidth(pickedPercent, pickedSpeed)),

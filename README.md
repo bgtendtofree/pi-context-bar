@@ -124,7 +124,14 @@ pi --no-extensions -e ./index.ts --no-session --no-tools -p "Reply ok"
 - Tests use built-in `node:test` and Node coverage
 - Runtime source and tests use separate TypeScript configs
 - Loads as `.ts` via jiti (no build step)
-- Pi core packages stay `*` peers per Pi's package guidance; development and CI test exact Pi `1.0.0`. Older API compatibility is not verified.
+- Pi core packages stay `*` peers per Pi's package guidance; development and CI test exact Pi `1.0.4`. Older API compatibility is not verified.
+
+### Pi 1.0.4 compatibility
+
+- Editor, theme, context usage, model registry, and session entry APIs used here are unchanged from Pi 1.0.0; no runtime shim is needed.
+- New `pi.registerToolRenderer()` and `ToolLoadout.getPromptGuidelines()` APIs concern tool presentation, not editor chrome, so this extension does not register them.
+- Codemode classifier/image usage already reaches session cost through tool-result usage. No separate image-cost accounting is needed.
+- Pi 1.0.3 renamed the Azure provider from `azure-openai-responses` to `azure` (the API identifier remains unchanged). Azure users must update their auth/model/settings provider keys or log in again; this extension needs no Azure-specific migration.
 
 ## License
 

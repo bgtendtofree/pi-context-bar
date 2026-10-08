@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
 import type {
+	AgentSettledEvent,
 	ExtensionAPI,
 	ExtensionCommandContext,
 	ExtensionContext,
@@ -330,12 +331,15 @@ test("quota belongs to active account and model switches update context immediat
 	assert.equal(notices.length, 2);
 	assert.equal(calls, quotaCalls);
 
-	handlers.get("agent_start")?.({}, ctx);
-	assert.match(render(), /󰊠/);
-	handlers.get("agent_end")?.({}, ctx);
-	assert.match(render(), /󰊠/);
-	handlers.get("agent_settled")?.({}, ctx);
-	assert.doesNotMatch(render(), /󰊠/);
+	for (const aborted of [false, true]) {
+		handlers.get("agent_start")?.({}, ctx);
+		assert.match(render(), /󰊠/);
+		handlers.get("agent_end")?.({}, ctx);
+		assert.match(render(), /󰊠/);
+		const settled: AgentSettledEvent = { type: "agent_settled", aborted };
+		handlers.get("agent_settled")?.(settled, ctx);
+		assert.doesNotMatch(render(), /󰊠/);
+	}
 	handlers.get("session_shutdown")?.({}, ctx);
 });
 

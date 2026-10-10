@@ -35,7 +35,7 @@ export const EXPANDED_HINT_DEFS = [
 ] as const;
 
 const styledHint = (hint: Hint, styles: HeaderStyles): string =>
-	hint.key ? `${styles.muted(hint.key)} ${styles.dim(hint.action)}` : "";
+	hint.key ? `${styles.accent(hint.key)} ${styles.dim(hint.action)}` : "";
 
 const hintLine = (hints: readonly Hint[], styles: HeaderStyles, width: number): string => {
 	let line = "";

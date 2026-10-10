@@ -1,35 +1,36 @@
 # pi-context-bar
 
-Rounded editor + single-line context chrome for pi: model border + Pac-Man lane + CH% + cost.
+Square framed editor + single-line context chrome for pi: model label + Pac-Man lane + CH% + cost.
 
 ## Goal
 
-Rounded input shell plus one quiet health row below editor. No multi-line footer. Environment in border; health in lane + numbers.
+Square framed input shell plus one quiet health row. No multi-line footer. Environment in frame; health in lane + numbers. Glyphs and motion carry the game; theme colors carry meaning.
 
 ## Rules
 
-- Health chrome lives inside the editor borders; no extra rows
+- Health chrome lives inside the editor frame; no extra rows
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
 - Editor top border: Pac-Man lane (auto-fits window width, no cap) + context `%` beside lane + quiet live `t/s` at the right end
 - Editor bottom border: model/thinking + OpenAI Codex quota beside it on the left, `CH`/`$` right; never path or Git
-- Health metrics: `%` + quiet live `t/s` (top border) · `CH` + optional `$` (bottom right)
-- Classic dark palette (cream pellets, yellow solid Nerd Font Pac-Man, phase-colored ghost); light terminals switch to darkened variants via `theme.appearance`
+- Health metrics: `%` + quiet live `t/s` (top) · `CH` + optional `$` (bottom right)
+- Square geometry: corners `┌ ┐ └ ┘`, lines `─ │`; no rounded corners and no background fills anywhere
+- Theme tokens only, never hex. Roles: `text` Pac-Man glyphs and typed input · `accent` model id, ready prompt, tools ghost · `muted` working ghost, power pellets · `dim` pellets, thinking level, separators, route arrow, healthy metrics, scroll counts · `borderMuted` frame · `bashMode` frame while the input starts with `!` · `warning` thinking ghost, thresholds · `success` response ghost · `error` failure glyph, thresholds
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets
-- No background color blocks; healthy text stays dim; only warning/error states gain color
 - Chomp driven by streamed tokens: mouth speed = throughput, static when idle (no timers)
 - Keep token speed dim: `~Nt/s` while estimated live, provider-calibrated `Nt/s` after turn
 - High CH stays quiet; low CH warns
 - Functional style, no `any`, immutable snapshots
-- Pure logic in `lib/chrome.ts`; keep `index.ts` thin
+- Pure logic in `lib/`; keep `index.ts` thin
 
 ## Layout
 
 - `lib/context.ts` — native context snapshot types and session usage
-- `lib/chrome.ts` — Pac-Man lane, health metrics, health-row composition
+- `lib/chrome.ts` — Pac-Man lane, health metrics, role-based theme styling
 - `lib/openai.ts` — OpenAI Codex quota, expiry-aware banked reset
 - `lib/header.ts` — quiet welcome header
-- `lib/border.ts` — pure model border fitting
-- `ui/rounded-editor.ts` — Pi/TUI editor adapter
+- `lib/prompt.ts` — prompt-state transition and glyph
+- `lib/border.ts` — pure model label fitting and frame rendering
+- `ui/framed-editor.ts` — Pi/TUI framed editor adapter
 - `index.ts` — extension state, I/O, lifecycle wiring only
 - `lib/*.test.ts` — mirrored Node.js `node:test` suites
 

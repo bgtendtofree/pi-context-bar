@@ -66,13 +66,13 @@ describe("welcome header", () => {
 
 	test("keeps keys more prominent than descriptions in both views", () => {
 		const styles: HeaderStyles = {
-			accent: (text) => text,
+			accent: (text) => `<a>${text}</a>`,
 			muted: (text) => `<m>${text}</m>`,
 			dim: (text) => `<d>${text}</d>`,
 		};
 		for (const expandedState of [false, true]) {
 			const lines = renderWelcome(version, compact, expanded, expandedState, 120, styles);
-			assert.ok(lines[2]?.startsWith("   <m>esc</m> <d>interrupt</d>"));
+			assert.ok(lines[2]?.startsWith("   <a>esc</a> <d>interrupt</d>"));
 		}
 	});
 

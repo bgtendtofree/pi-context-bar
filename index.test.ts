@@ -239,25 +239,26 @@ test("quota belongs to active account and model switches update context immediat
 	zContext(pi);
 	handlers.get("session_start")?.({}, ctx);
 	await setImmediate();
-	assert.match(render(), /5h12%/);
+	assert.match(render(), /5h 12%/);
 	assert.match(render(), /20\.0% \(100K\)/);
+	assert.match(render(), /❯/);
 
 	accountKey = token("B");
 	model = { ...model, contextWindow: 40_000 };
 	handlers.get("model_select")?.({}, ctx);
 	await setImmediate();
 	assert.match(render(), /50\.0% \(40K\)/);
-	assert.doesNotMatch(render(), /5h12%/);
+	assert.doesNotMatch(render(), /5h 12%/);
 
 	accountKey = token("C");
 	model = { ...model, id: "gpt-other" };
 	handlers.get("model_select")?.({}, ctx);
 	await setImmediate();
-	assert.match(render(), /5h80%/);
+	assert.match(render(), /5h 80%/);
 	pending.get(2)?.(usageResponse(70));
 	await setImmediate();
-	assert.match(render(), /5h80%/);
-	assert.doesNotMatch(render(), /5h70%/);
+	assert.match(render(), /5h 80%/);
+	assert.doesNotMatch(render(), /5h 70%/);
 
 	accountKey = token("D");
 	model = { ...model, id: "gpt-next" };
@@ -267,16 +268,16 @@ test("quota belongs to active account and model switches update context immediat
 	handlers.get("model_select")?.({}, ctx);
 	pending.get(4)?.(usageResponse(70));
 	await setImmediate();
-	assert.doesNotMatch(render(), /5h70%/);
+	assert.doesNotMatch(render(), /5h 70%/);
 
 	accountKey = token("C");
 	model = { ...model, provider: "openai-codex" };
 	handlers.get("model_select")?.({}, ctx);
 	await setImmediate();
-	assert.match(render(), /5h80%/);
+	assert.match(render(), /5h 80%/);
 
 	leafId = "turn-1";
-	handlers.get("turn_end")?.({}, ctx);
+	handlers.get("turn_end")?.({ message: { role: "assistant", stopReason: "stop" } }, ctx);
 	assert.equal(entryReads, 2);
 	handlers.get("agent_end")?.({}, ctx);
 	assert.equal(entryReads, 2);
@@ -287,7 +288,7 @@ test("quota belongs to active account and model switches update context immediat
 	const quotaCalls = calls;
 	model = { ...model, api: "pi-virtual", id: "auto" };
 	handlers.get("model_select")?.({}, ctx);
-	assert.doesNotMatch(render(), /5h80%/);
+	assert.doesNotMatch(render(), /5h 80%/);
 	assert.doesNotMatch(render(), /→/);
 	await resetCommand?.("", ctx as ExtensionCommandContext);
 	assert.equal(notices.at(-1), "Active model is not a physical openai-codex model");
@@ -310,7 +311,7 @@ test("quota belongs to active account and model switches update context immediat
 		},
 	};
 	branch = [{ type: "message", id: "routed", parentId: null, timestamp: "", message }];
-	handlers.get("turn_end")?.({}, ctx);
+	handlers.get("turn_end")?.({ message }, ctx);
 	assert.match(render(), /auto → gpt-routed · medium/);
 	branch.push({
 		type: "message",
@@ -330,6 +331,32 @@ test("quota belongs to active account and model switches update context immediat
 	await resetCommand?.("", ctx as ExtensionCommandContext);
 	assert.equal(notices.length, 2);
 	assert.equal(calls, quotaCalls);
+
+	// Prompt: provider error latches, abort keeps it, a clean turn clears it; branch derives on start/tree.
+	handlers.get("turn_end")?.({ message: { role: "assistant", stopReason: "error" } }, ctx);
+	assert.match(render(), /✗/);
+	handlers.get("turn_end")?.({ message: { role: "assistant", stopReason: "aborted" } }, ctx);
+	assert.match(render(), /✗/);
+	assert.doesNotMatch(render(), /❯/);
+	handlers.get("turn_end")?.({ message: { role: "assistant", stopReason: "stop" } }, ctx);
+	assert.match(render(), /❯/);
+
+	branch = [
+		{ type: "message", id: "errored", parentId: null, timestamp: "", message: { ...message, stopReason: "error" } },
+	];
+	handlers.get("session_start")?.({}, ctx);
+	assert.match(render(), /✗/);
+	branch = [
+		{ type: "message", id: "aborted", parentId: null, timestamp: "", message: { ...message, stopReason: "aborted" } },
+	];
+	handlers.get("session_tree")?.({}, ctx);
+	assert.match(render(), /❯/);
+	branch = [
+		{ type: "message", id: "e2", parentId: null, timestamp: "", message: { ...message, stopReason: "error" } },
+		{ type: "message", id: "a2", parentId: "e2", timestamp: "", message: { ...message, stopReason: "aborted" } },
+	];
+	handlers.get("session_tree")?.({}, ctx);
+	assert.match(render(), /✗/);
 
 	for (const aborted of [false, true]) {
 		handlers.get("agent_start")?.({}, ctx);

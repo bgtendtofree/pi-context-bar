@@ -1,15 +1,10 @@
-/** Pure Pac-Man lane, health metric formatting, and one-line layout. */
+/** Pure Pac-Man lane, health metric formatting, and one-line layout. Theme tokens only. */
 
-import { parseColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
+import type { ThemeColor } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
 import { formatTokenSpeed, type TokenSpeedSnapshot } from "./speed.ts";
 
-/** Native color formatting for standalone renders; the editor supplies its active theme. */
-export const foreground = (hex: string, text: string): string => styleText(text, { fg: parseColor(hex) }, "truecolor");
-
-/** Classic arcade colors stay limited to game elements. */
-export const PACMAN_TEXT = "#FFFF00";
-export const PELLET_TEXT = "#FFB8AE";
 export const PACMAN_GLYPH = "󰮯";
 export const PACMAN_CLOSED_GLYPH = "●";
 export const PACMAN_FRAMES = [PACMAN_GLYPH, PACMAN_CLOSED_GLYPH] as const;
@@ -22,60 +17,51 @@ export type GlyphSet = Readonly<{
 	pacmanOpen: string;
 	pacmanClosed: string;
 	ghost: string;
+	promptReady: string;
+	promptFailure: string;
+	reset: string;
+	credit: string;
+	/** ASCII fallbacks compact their reset/credit tokens ("r52m", "R1"). */
+	ascii: boolean;
 }>;
 
 export const NERD_GLYPHS: GlyphSet = {
 	pacmanOpen: PACMAN_GLYPH,
 	pacmanClosed: PACMAN_CLOSED_GLYPH,
 	ghost: GHOST_GLYPH,
+	promptReady: "❯",
+	promptFailure: "✗",
+	reset: "󰦛",
+	credit: "󰔖",
+	ascii: false,
 };
 
-export const ASCII_GLYPHS: GlyphSet = { pacmanOpen: "C", pacmanClosed: "O", ghost: "0" };
+export const ASCII_GLYPHS: GlyphSet = {
+	pacmanOpen: "C",
+	pacmanClosed: "O",
+	ghost: "0",
+	promptReady: ">",
+	promptFailure: "x",
+	reset: "r",
+	credit: "R",
+	ascii: true,
+};
+
 /** Lane ratios matching the warning/error metric thresholds. */
 export const POWER_PELLET_RATIOS = [0.7, 0.9] as const;
 
-export const LANE_ACTIVITY_TEXT = {
-	working: "#FF0000",
-	thinking: "#FFB852",
-	assistant: "#00FFFF",
-	tools: "#5B5BFF",
-} as const;
+export type LaneActivity = "idle" | "working" | "thinking" | "assistant" | "tools";
 
-export type LaneActivity = "idle" | keyof typeof LANE_ACTIVITY_TEXT;
-
-/** Arcade colors for the lane; classic warm hues on dark, darkened variants on light terminals. */
-export type ArcadePalette = Readonly<{
-	pacman: string;
-	pellet: string;
-	ghosts: Readonly<Record<keyof typeof LANE_ACTIVITY_TEXT, string>>;
-}>;
-
-/** Classic arcade palette: bright yellow Pac-Man, cream pellets, saturated ghost phase colors. */
-export const DARK_ARCADE: ArcadePalette = {
-	pacman: PACMAN_TEXT,
-	pellet: PELLET_TEXT,
-	ghosts: LANE_ACTIVITY_TEXT,
+/** Ghost color by lane activity; Pac-Man uses text, pellets dim, power pellets muted. */
+export const GHOST_TOKENS: Readonly<Record<Exclude<LaneActivity, "idle">, ThemeColor>> = {
+	working: "muted",
+	thinking: "warning",
+	assistant: "success",
+	tools: "accent",
 };
 
-/** Light-terminal palette: yellow/cream vanish on pale backgrounds, so darken to goldenrod and sienna. */
-const LIGHT_ARCADE: ArcadePalette = {
-	pacman: "#B8860B",
-	pellet: "#9C4A1E",
-	ghosts: { working: "#C2181B", thinking: "#B25E00", assistant: "#00707D", tools: "#3B4FB5" },
-};
-
-/** Lane palette for a theme appearance; unknown appearances keep the classic dark palette. */
-export const arcadePalette = (appearance: "dark" | "light" | undefined): ArcadePalette =>
-	appearance === "light" ? LIGHT_ARCADE : DARK_ARCADE;
-
-export type ChromeStyles = Readonly<{
-	dim: (text: string) => string;
-	warning: (text: string) => string;
-	error: (text: string) => string;
-	foreground?: typeof foreground;
-	/** Theme background the chrome paints on; light switches the lane to the darkened arcade palette. */
-	appearance?: "dark" | "light";
-}>;
+/** Role-based theme painter; the editor binds it to the live theme's `fg`. */
+export type ChromeStyles = Readonly<{ fg: (token: ThemeColor, text: string) => string }>;
 
 /** Compact context-window size: 200_000 → 200K, 512 → 512. */
 export const formatWindowSize = (tokens: number): string =>
@@ -97,20 +83,20 @@ export const formatDuration = (ms: number): string => {
 	return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 };
 
+const tint = (text: string, token: ThemeColor, styles: ChromeStyles): string => (text ? styles.fg(token, text) : "");
+
 /** Color health metrics by usage: error > 90%, warning > 70%, else quiet dim. */
 export const styleUsage = (text: string, percent: number, styles: ChromeStyles): string => {
-	if (percent > 90) return styles.error(text);
-	if (percent > 70) return styles.warning(text);
-	return styles.dim(text);
+	if (percent > 90) return styles.fg("error", text);
+	if (percent > 70) return styles.fg("warning", text);
+	return styles.fg("dim", text);
 };
 
 const styleCache = (text: string, rate: number | undefined, styles: ChromeStyles): string => {
-	if (rate === undefined || rate >= 80) return styles.dim(text);
-	if (rate >= 50) return styles.warning(text);
-	return styles.error(text);
+	if (rate === undefined || rate >= 80) return styles.fg("dim", text);
+	if (rate >= 50) return styles.fg("warning", text);
+	return styles.fg("error", text);
 };
-
-const styled = (text: string, style: (text: string) => string): string => (text ? style(text) : "");
 
 /** Session average joins the CH label only when it diverges meaningfully from the latest turn. */
 export const CH_AVG_DIVERGENCE_POINTS = 5;
@@ -122,15 +108,15 @@ const cacheLabel = (usage: SessionUsage, styles: ChromeStyles): string => {
 	const avg = usage.cacheHitRateAvg;
 	const diverged = avg !== undefined && Math.abs(latest - avg) > CH_AVG_DIVERGENCE_POINTS;
 	const latestPart = styleCache(`CH${Math.round(latest)}`, latest, styles);
-	const avgPart = diverged ? styles.dim(`/${Math.round(avg)}`) : "";
+	const avgPart = diverged ? styles.fg("dim", `/${Math.round(avg)}`) : "";
 	return `${latestPart}${avgPart}%`;
 };
 
 /** Cache/cost options, widest → tightest, styled at construction. CH survives before cost. */
 export const freeMetricOptions = (usage: SessionUsage, styles: ChromeStyles): readonly string[] => {
 	const ch = cacheLabel(usage, styles);
-	const cost = styled(formatCost(usage.cost), styles.dim);
-	return [[ch, cost].filter(Boolean).join(styles.dim("  ")), ch, ""];
+	const cost = tint(formatCost(usage.cost), "dim", styles);
+	return [[ch, cost].filter(Boolean).join(styles.fg("dim", "  ")), ch, ""];
 };
 
 export type QuotaLimit = Readonly<{
@@ -154,29 +140,37 @@ export type QuotaUsage = Readonly<{
 export const EMPTY_QUOTA: QuotaUsage = { weeklyPercent: undefined, limits: [] };
 
 /** Quota metric variants, widest → tightest, styled at construction. Weekly survives before limits. */
-export const quotaMetricOptions = (usage: QuotaUsage, styles: ChromeStyles, now = Date.now()): readonly string[] => {
+export const quotaMetricOptions = (
+	usage: QuotaUsage,
+	styles: ChromeStyles,
+	now = Date.now(),
+	glyphs: GlyphSet = NERD_GLYPHS,
+): readonly string[] => {
 	const styledUsage = (text: string, percent: number): string => styleUsage(text, percent, styles);
 	const weekly =
 		usage.weeklyPercent !== undefined ? styledUsage(`W${Math.round(usage.weeklyPercent)}%`, usage.weeklyPercent) : "";
+	// Nerd icons breathe ("󰦛 52m"); ASCII tokens stay compact ("r52m").
+	const token = (icon: string, value: string): string =>
+		styles.fg("dim", glyphs.ascii ? `${icon}${value}` : `${icon} ${value}`);
 	const renderLimits = (withReset: boolean): string =>
 		usage.limits
 			.map((limit) => {
-				const base = styledUsage(`${limit.label}${Math.round(limit.percent)}%`, limit.percent);
+				const base = styledUsage(`${limit.label} ${Math.round(limit.percent)}%`, limit.percent);
 				const remaining = limit.resetAt !== undefined ? limit.resetAt - now : undefined;
 				const reset =
 					withReset && remaining !== undefined && remaining > 0
-						? ` ${styles.dim(`↻${formatDuration(remaining)}`)}`
+						? ` ${token(glyphs.reset, formatDuration(remaining))}`
 						: "";
 				return base + reset;
 			})
-			.join(styles.dim(" "));
+			.join(styles.fg("dim", "  "));
 	const limits = renderLimits(true);
 	const plainLimits = renderLimits(false);
 	// Banked resets are quiet chrome; zero or unknown stays hidden.
-	const resets = usage.resetCredits ? styles.dim(`R${usage.resetCredits}`) : "";
+	const resets = usage.resetCredits ? token(glyphs.credit, `${usage.resetCredits}`) : "";
 	const candidates = [
-		[weekly, limits, resets].filter(Boolean).join(styles.dim(" ")),
-		...(limits === plainLimits ? [] : [[weekly, plainLimits, resets].filter(Boolean).join(styles.dim(" "))]),
+		[weekly, limits, resets].filter(Boolean).join(styles.fg("dim", "  ")),
+		...(limits === plainLimits ? [] : [[weekly, plainLimits, resets].filter(Boolean).join(styles.fg("dim", "  "))]),
 		weekly || resets,
 		"",
 	];
@@ -185,28 +179,23 @@ export const quotaMetricOptions = (usage: QuotaUsage, styles: ChromeStyles, now 
 	return options;
 };
 
-const coloredCells = (
-	color: string,
-	glyph: string,
-	count: number,
-	cellWidth: number,
-	paint: typeof foreground,
-): string => paint(color, `${glyph}${" ".repeat(cellWidth - 1)}`.repeat(Math.max(0, count)));
+/** One lane cell: glyph plus the remaining columns in its track. */
+const laneCell = (token: ThemeColor, glyph: string, cellWidth: number, styles: ChromeStyles): string =>
+	styles.fg(token, `${glyph}${" ".repeat(cellWidth - 1)}`);
 
 /** Fixed-width truthful lane: empty consumed space, Pac-Man boundary, remaining pellets. */
 export const renderPacmanLane = (
 	snapshot: ContextSnapshot,
 	width: number,
+	styles: ChromeStyles,
 	animationFrame = 0,
 	activity: LaneActivity = "idle",
 	glyphs: GlyphSet = NERD_GLYPHS,
-	paint: typeof foreground = foreground,
-	palette: ArcadePalette = DARK_ARCADE,
 ): string => {
 	if (width <= 0) return "";
 	const frameIndex = activity === "idle" ? 0 : Math.abs(Math.trunc(animationFrame)) % PACMAN_FRAMES.length;
 	const pacmanGlyph = frameIndex === 0 ? glyphs.pacmanOpen : glyphs.pacmanClosed;
-	if (width === 1) return paint(palette.pacman, pacmanGlyph);
+	if (width === 1) return styles.fg("text", pacmanGlyph);
 
 	// Wide lanes breathe more; narrow lanes keep finer usage resolution.
 	const cellWidth = width >= 80 ? 3 : 2;
@@ -214,23 +203,21 @@ export const renderPacmanLane = (
 	const ratio = snapshot.contextWindow > 0 ? Math.min(1, Math.max(0, snapshot.usedTokens / snapshot.contextWindow)) : 0;
 	const consumedCellCount = Math.round(ratio * Math.max(0, cellCount - 1));
 	const pelletCellCount = Math.max(0, cellCount - consumedCellCount - 1);
-	const pacman = coloredCells(palette.pacman, pacmanGlyph, 1, cellWidth, paint);
+	const pacman = laneCell("text", pacmanGlyph, cellWidth, styles);
 	const powerCells = new Set(
 		POWER_PELLET_RATIOS.map((powerRatio) => Math.round(powerRatio * Math.max(0, cellCount - 1))),
 	);
-	const pelletCells = Array.from(
-		{ length: pelletCellCount },
-		(_, index) =>
-			`${powerCells.has(consumedCellCount + 1 + index) ? POWER_PELLET_GLYPH : PELLET_GLYPH}${" ".repeat(cellWidth - 1)}`,
-	).join("");
-	const pellets = paint(palette.pellet, pelletCells);
-	const ghostColor = activity === "idle" ? undefined : palette.ghosts[activity];
+	const pellets = Array.from({ length: pelletCellCount }, (_, index) => {
+		const power = powerCells.has(consumedCellCount + 1 + index);
+		return laneCell(power ? "muted" : "dim", power ? POWER_PELLET_GLYPH : PELLET_GLYPH, cellWidth, styles);
+	}).join("");
+	const ghostToken = activity === "idle" ? undefined : GHOST_TOKENS[activity];
 	const preferredGhostDistance = Math.floor(Math.abs(Math.trunc(animationFrame)) / 2) % 2 === 0 ? 2 : 3;
 	const ghostDistance = Math.min(preferredGhostDistance, consumedCellCount);
-	const ghostCellIndex = ghostColor && consumedCellCount >= 2 ? consumedCellCount - ghostDistance : undefined;
+	const ghostCellIndex = ghostToken && consumedCellCount >= 2 ? consumedCellCount - ghostDistance : undefined;
 	const consumed =
-		ghostColor && ghostCellIndex !== undefined
-			? `${" ".repeat(ghostCellIndex * cellWidth)}${coloredCells(ghostColor, glyphs.ghost, 1, cellWidth, paint)}${" ".repeat(
+		ghostToken && ghostCellIndex !== undefined
+			? `${" ".repeat(ghostCellIndex * cellWidth)}${laneCell(ghostToken, glyphs.ghost, cellWidth, styles)}${" ".repeat(
 					(consumedCellCount - ghostCellIndex - 1) * cellWidth,
 				)}`
 			: " ".repeat(consumedCellCount * cellWidth);
@@ -250,16 +237,19 @@ export const renderLaneStrip = (
 ): string => {
 	if (width <= 2) return "";
 	const percentValue = snapshot.contextWindow > 0 ? (snapshot.usedTokens / snapshot.contextWindow) * 100 : 0;
-	const styledPercent = (text: string): string => styled(text, (value) => styleUsage(value, percentValue, styles));
-	const percent = styledPercent(`${percentValue.toFixed(1)}%`);
+	const percent = styleUsage(`${percentValue.toFixed(1)}%`, percentValue, styles);
 	// Window size rides with the percent it is the denominator of; tight strips fall back to plain %.
 	const percentOptions =
 		snapshot.contextWindow > 0
-			? [`${percent} ${styles.dim(`(${formatWindowSize(snapshot.contextWindow)})`)}`, percent]
+			? [`${percent} ${styles.fg("dim", `(${formatWindowSize(snapshot.contextWindow)})`)}`, percent]
 			: [];
-	const speedText = styled(formatTokenSpeed(speed), styles.dim);
-	const laneWidth = (percent: string | undefined, speed: string | undefined): number =>
-		width - 2 - (percent ? visibleWidth(percent) + 1 : 0) - (speed ? visibleWidth(speed) + 1 : 0);
+	const rawSpeed = formatTokenSpeed(speed);
+	const speedText = rawSpeed ? styles.fg("dim", rawSpeed) : "";
+	const laneWidth = (pickedPercent: string | undefined, pickedSpeed: string | undefined): number =>
+		width -
+		2 -
+		(pickedPercent ? visibleWidth(pickedPercent) + 1 : 0) -
+		(pickedSpeed ? visibleWidth(pickedSpeed) + 1 : 0);
 	let pickedPercent: string | undefined;
 	let pickedSpeed = "";
 	for (const candidate of percentOptions) {
@@ -278,11 +268,10 @@ export const renderLaneStrip = (
 	const lane = renderPacmanLane(
 		snapshot,
 		Math.max(0, laneWidth(pickedPercent, pickedSpeed)),
+		styles,
 		animationFrame,
 		activity,
 		glyphs,
-		styles.foreground ?? foreground,
-		arcadePalette(styles.appearance),
 	);
 	return ` ${[lane, pickedPercent, pickedSpeed].filter(Boolean).join(" ")} `;
 };

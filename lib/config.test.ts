@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, test } from "node:test";
+import { after, describe, test } from "node:test";
 import { DEFAULT_CONFIG, readConfig } from "./config.ts";
 
+const tempDirs: string[] = [];
 const tempConfig = (content: string | undefined): string => {
 	const dir = mkdtempSync(join(tmpdir(), "pi-context-bar-"));
+	tempDirs.push(dir);
 	const path = join(dir, "pi-context-bar.json");
 	if (content !== undefined) writeFileSync(path, content);
 	return path;
 };
+
+// Only remove temp dirs this test suite created.
+after(() => {
+	for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+});
 
 describe("readConfig", () => {
 	test("missing file falls back to defaults", () => {

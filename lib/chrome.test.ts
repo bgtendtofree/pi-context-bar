@@ -1,25 +1,21 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
-import { parseColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import {
 	ASCII_GLYPHS,
-	arcadePalette,
 	type ChromeStyles,
-	DARK_ARCADE,
-	foreground,
 	formatCost,
 	formatDuration,
 	formatWindowSize,
 	freeMetricOptions,
 	GHOST_GLYPH,
-	LANE_ACTIVITY_TEXT,
+	GHOST_TOKENS,
 	NERD_GLYPHS,
 	PACMAN_FRAMES,
 	PACMAN_GLYPH,
-	PACMAN_TEXT,
 	PELLET_GLYPH,
-	PELLET_TEXT,
 	POWER_PELLET_GLYPH,
 	POWER_PELLET_RATIOS,
 	type QuotaUsage,
@@ -42,16 +38,24 @@ const snapshot = (partial: Partial<ContextSnapshot> = {}): ContextSnapshot => ({
 	...partial,
 });
 
-const identityStyles: ChromeStyles = {
-	dim: (text) => text,
-	warning: (text) => text,
-	error: (text) => text,
-};
+const identityStyles: ChromeStyles = { fg: (_token, text) => text };
 
-const markedStyles: ChromeStyles = {
-	dim: (text) => `<d>${text}</d>`,
-	warning: (text) => `<w>${text}</w>`,
-	error: (text) => `<e>${text}</e>`,
+const markedStyles: ChromeStyles = { fg: (token, text) => `<${token}>${text}</${token}>` };
+
+/** Foreground-only painter: the chrome must never emit a background escape. */
+const fgOnlyStyles: ChromeStyles = { fg: (_token, text) => `\x1b[38;5;7m${text}\x1b[39m` };
+
+const recorder = (): Readonly<{ styles: ChromeStyles; seen: Array<readonly [string, string]> }> => {
+	const seen: Array<readonly [string, string]> = [];
+	return {
+		styles: {
+			fg: (token, text) => {
+				seen.push([token, text]);
+				return text;
+			},
+		},
+		seen,
+	};
 };
 
 const dominantSnapshot = snapshot({
@@ -110,25 +114,31 @@ describe("health metric formatting", () => {
 describe("semantic metric styling", () => {
 	test("keeps healthy cache quiet", () => {
 		const widest = freeMetricOptions(usage({ cost: 6.65, cacheHitRate: 99 }), markedStyles)[0] ?? "";
-		assert.ok(widest.includes("<d>CH99</d>%"));
-		assert.ok(!widest.includes("<w>"));
-		assert.ok(!widest.includes("<e>"));
+		assert.ok(widest.includes("<dim>CH99</dim>%"));
+		assert.ok(!widest.includes("<warning>"));
+		assert.ok(!widest.includes("<error>"));
 	});
 
 	test("accents only unhealthy cache", () => {
 		const warning = freeMetricOptions(usage({ cacheHitRate: 60 }), markedStyles)[0] ?? "";
-		assert.ok(warning.includes("<w>CH60</w>%"));
+		assert.ok(warning.includes("<warning>CH60</warning>%"));
 		const error = freeMetricOptions(usage({ cacheHitRate: 20 }), markedStyles)[0] ?? "";
-		assert.ok(error.includes("<e>CH20</e>%"));
+		assert.ok(error.includes("<error>CH20</error>%"));
 		assert.equal(freeMetricOptions(usage(), markedStyles)[0], "");
 	});
 });
 
 describe("Pac-Man lane", () => {
 	test("moves left to right while eaten pellets become empty space", () => {
-		const empty = stripVTControlCharacters(renderPacmanLane(snapshot({ usedTokens: 0, contextWindow: 100 }), 18));
-		const half = stripVTControlCharacters(renderPacmanLane(snapshot({ usedTokens: 50, contextWindow: 100 }), 18));
-		const full = stripVTControlCharacters(renderPacmanLane(snapshot({ usedTokens: 100, contextWindow: 100 }), 18));
+		const empty = stripVTControlCharacters(
+			renderPacmanLane(snapshot({ usedTokens: 0, contextWindow: 100 }), 18, identityStyles),
+		);
+		const half = stripVTControlCharacters(
+			renderPacmanLane(snapshot({ usedTokens: 50, contextWindow: 100 }), 18, identityStyles),
+		);
+		const full = stripVTControlCharacters(
+			renderPacmanLane(snapshot({ usedTokens: 100, contextWindow: 100 }), 18, identityStyles),
+		);
 		assert.equal(visibleWidth(empty), 18);
 		assert.equal(visibleWidth(half), 18);
 		assert.equal(visibleWidth(full), 18);
@@ -139,9 +149,17 @@ describe("Pac-Man lane", () => {
 		assert.equal(full.includes(PELLET_GLYPH), false);
 	});
 
+	test("paints Pac-Man text, pellets dim, and power pellets muted", () => {
+		const { styles, seen } = recorder();
+		renderPacmanLane(snapshot({ usedTokens: 0, contextWindow: 100 }), 18, styles);
+		assert.ok(seen.some(([token, text]) => token === "text" && text.includes(PACMAN_GLYPH)));
+		assert.ok(seen.some(([token, text]) => token === "dim" && text.includes(PELLET_GLYPH)));
+		assert.ok(seen.some(([token, text]) => token === "muted" && text.includes(POWER_PELLET_GLYPH)));
+	});
+
 	test("animates mouth without resurrecting pellets", () => {
-		const open = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 0, "working"));
-		const closed = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 1, "working"));
+		const open = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, identityStyles, 0, "working"));
+		const closed = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, identityStyles, 1, "working"));
 		assert.ok(open.includes(PACMAN_FRAMES[0]));
 		assert.ok(closed.includes(PACMAN_FRAMES[1]));
 		assert.equal(open.split(PELLET_GLYPH).length - 1, 2);
@@ -154,53 +172,67 @@ describe("Pac-Man lane", () => {
 			const cellWidth = width >= 80 ? 3 : 2;
 			const lastCell = Math.floor(width / cellWidth) - 1;
 			for (const usedTokens of [0, 50, 100]) {
-				const lane = stripVTControlCharacters(renderPacmanLane(snapshot({ usedTokens, contextWindow: 100 }), width));
+				const lane = stripVTControlCharacters(
+					renderPacmanLane(snapshot({ usedTokens, contextWindow: 100 }), width, identityStyles),
+				);
 				assert.equal(visibleWidth(lane), width);
 				assert.equal(lane.indexOf(PACMAN_GLYPH), Math.round((usedTokens / 100) * lastCell) * cellWidth);
 				if (usedTokens === 0) assert.ok(lane.startsWith(`${PACMAN_GLYPH}${" ".repeat(cellWidth - 1)}`));
 			}
 		}
-		const wide = stripVTControlCharacters(renderPacmanLane(snapshot(), 120));
+		const wide = stripVTControlCharacters(renderPacmanLane(snapshot(), 120, identityStyles));
 		assert.equal(wide.split(PELLET_GLYPH).length - 1, 37);
 		assert.equal(wide.split(POWER_PELLET_GLYPH).length - 1, 2);
 	});
 
 	test("pins open-mouth Pac-Man while idle", () => {
-		assert.ok(stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 1)).includes(PACMAN_GLYPH));
-		assert.ok(!stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 1)).includes(PACMAN_FRAMES[1]));
+		assert.ok(stripVTControlCharacters(renderPacmanLane(snapshot(), 10, identityStyles, 1)).includes(PACMAN_GLYPH));
+		assert.ok(
+			!stripVTControlCharacters(renderPacmanLane(snapshot(), 10, identityStyles, 1)).includes(PACMAN_FRAMES[1]),
+		);
 	});
 
-	test("shows phase ghost only while active", () => {
+	test("shows a token-colored ghost only while active", () => {
 		const active = snapshot({ usedTokens: 100, contextWindow: 100 });
-		assert.equal(stripVTControlCharacters(renderPacmanLane(active, 18)).includes(GHOST_GLYPH), false);
-		for (const [activity, color] of Object.entries(LANE_ACTIVITY_TEXT)) {
-			const lane = renderPacmanLane(active, 18, 0, activity as keyof typeof LANE_ACTIVITY_TEXT);
-			assert.ok(lane.includes(foreground(color, `${GHOST_GLYPH} `)));
+		const idle = recorder();
+		renderPacmanLane(active, 18, idle.styles);
+		assert.equal(
+			idle.seen.some(([, text]) => text.includes(GHOST_GLYPH)),
+			false,
+		);
+		for (const [activity, token] of Object.entries(GHOST_TOKENS)) {
+			const { styles, seen } = recorder();
+			renderPacmanLane(active, 18, styles, 0, activity as keyof typeof GHOST_TOKENS);
+			assert.ok(seen.some(([seenToken, text]) => seenToken === token && text.includes(GHOST_GLYPH)));
 		}
 	});
 
 	test("marks warning thresholds with power pellets that get eaten", () => {
-		const hungry = stripVTControlCharacters(renderPacmanLane(snapshot({ usedTokens: 0, contextWindow: 100 }), 18));
+		const hungry = stripVTControlCharacters(
+			renderPacmanLane(snapshot({ usedTokens: 0, contextWindow: 100 }), 18, identityStyles),
+		);
 		assert.equal(hungry.split(POWER_PELLET_GLYPH).length - 1, POWER_PELLET_RATIOS.length);
 		const pastWarning = stripVTControlCharacters(
-			renderPacmanLane(snapshot({ usedTokens: 80, contextWindow: 100 }), 18),
+			renderPacmanLane(snapshot({ usedTokens: 80, contextWindow: 100 }), 18, identityStyles),
 		);
 		assert.equal(pastWarning.split(POWER_PELLET_GLYPH).length - 1, 1);
-		const pastError = stripVTControlCharacters(renderPacmanLane(snapshot({ usedTokens: 95, contextWindow: 100 }), 18));
+		const pastError = stripVTControlCharacters(
+			renderPacmanLane(snapshot({ usedTokens: 95, contextWindow: 100 }), 18, identityStyles),
+		);
 		assert.equal(pastError.includes(POWER_PELLET_GLYPH), false);
 		assert.equal(pastError.includes(PELLET_GLYPH), false);
 	});
 
 	test("moves ghost chase distance and handles tiny lanes", () => {
 		const active = snapshot({ usedTokens: 100, contextWindow: 100 });
-		const close = stripVTControlCharacters(renderPacmanLane(active, 18, 0, "working"));
-		const far = stripVTControlCharacters(renderPacmanLane(active, 18, 2, "working"));
+		const close = stripVTControlCharacters(renderPacmanLane(active, 18, identityStyles, 0, "working"));
+		const far = stripVTControlCharacters(renderPacmanLane(active, 18, identityStyles, 2, "working"));
 		assert.ok(close.indexOf(GHOST_GLYPH) > far.indexOf(GHOST_GLYPH));
-		assert.equal(renderPacmanLane(snapshot(), 0), "");
-		assert.equal(stripVTControlCharacters(renderPacmanLane(snapshot(), 1)), PACMAN_GLYPH);
+		assert.equal(renderPacmanLane(snapshot(), 0, identityStyles), "");
+		assert.equal(stripVTControlCharacters(renderPacmanLane(snapshot(), 1, identityStyles)), PACMAN_GLYPH);
 		assert.equal(
 			stripVTControlCharacters(
-				renderPacmanLane(snapshot({ usedTokens: 25, contextWindow: 100 }), 10, 0, "tools"),
+				renderPacmanLane(snapshot({ usedTokens: 25, contextWindow: 100 }), 10, identityStyles, 0, "tools"),
 			).includes(GHOST_GLYPH),
 			false,
 		);
@@ -208,9 +240,11 @@ describe("Pac-Man lane", () => {
 
 	test("swaps in ASCII glyphs for terminals without a Nerd Font", () => {
 		const active = snapshot({ usedTokens: 100, contextWindow: 100 });
-		const open = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 0, "working", ASCII_GLYPHS));
-		const closed = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, 1, "working", ASCII_GLYPHS));
-		const ghost = stripVTControlCharacters(renderPacmanLane(active, 18, 0, "tools", ASCII_GLYPHS));
+		const open = stripVTControlCharacters(renderPacmanLane(snapshot(), 10, identityStyles, 0, "working", ASCII_GLYPHS));
+		const closed = stripVTControlCharacters(
+			renderPacmanLane(snapshot(), 10, identityStyles, 1, "working", ASCII_GLYPHS),
+		);
+		const ghost = stripVTControlCharacters(renderPacmanLane(active, 18, identityStyles, 0, "tools", ASCII_GLYPHS));
 		assert.ok(open.includes(ASCII_GLYPHS.pacmanOpen));
 		assert.ok(closed.includes(ASCII_GLYPHS.pacmanClosed));
 		assert.ok(ghost.includes(ASCII_GLYPHS.ghost));
@@ -220,53 +254,23 @@ describe("Pac-Man lane", () => {
 	});
 
 	test("clamps unknown, negative, and overfull usage", () => {
-		const unknown = stripVTControlCharacters(renderPacmanLane(snapshot({ contextWindow: 0 }), 10));
+		const unknown = stripVTControlCharacters(renderPacmanLane(snapshot({ contextWindow: 0 }), 10, identityStyles));
 		assert.equal(unknown.startsWith(PACMAN_GLYPH), true);
-		const negative = stripVTControlCharacters(renderPacmanLane(snapshot({ usedTokens: -10, contextWindow: 100 }), 10));
+		const negative = stripVTControlCharacters(
+			renderPacmanLane(snapshot({ usedTokens: -10, contextWindow: 100 }), 10, identityStyles),
+		);
 		assert.equal(negative.startsWith(PACMAN_GLYPH), true);
-		const overfull = stripVTControlCharacters(renderPacmanLane(snapshot({ usedTokens: 200, contextWindow: 100 }), 10));
+		const overfull = stripVTControlCharacters(
+			renderPacmanLane(snapshot({ usedTokens: 200, contextWindow: 100 }), 10, identityStyles),
+		);
 		assert.equal(overfull.trimEnd().endsWith(PACMAN_GLYPH), true);
 	});
 });
 
-describe("arcade palette", () => {
-	test("keeps classic colors on dark and unknown appearances", () => {
-		assert.equal(arcadePalette("dark"), DARK_ARCADE);
-		assert.equal(arcadePalette(undefined), DARK_ARCADE);
-	});
-
-	test("darkens Pac-Man and pellets for light terminals", () => {
-		const light = arcadePalette("light");
-		assert.notEqual(light.pacman, PACMAN_TEXT);
-		assert.notEqual(light.pellet, PELLET_TEXT);
-		const colors: string[] = [];
-		const paint = (hex: string, text: string): string => {
-			colors.push(hex);
-			return text;
-		};
-		renderPacmanLane(snapshot({ usedTokens: 0 }), 12, 0, "idle", NERD_GLYPHS, paint, light);
-		assert.ok(colors.includes(light.pacman));
-		assert.ok(colors.includes(light.pellet));
-	});
-
-	test("renderLaneStrip paints the darkened lane under a light appearance", () => {
-		const light = arcadePalette("light");
-		const colors: string[] = [];
-		const paint = (hex: string, text: string): string => {
-			colors.push(hex);
-			return text;
-		};
-		renderLaneStrip(snapshot({ usedTokens: 0 }), 30, { ...identityStyles, foreground: paint, appearance: "light" });
-		assert.ok(colors.includes(light.pacman));
-		assert.ok(colors.includes(light.pellet));
-	});
-});
-
 describe("lane strip", () => {
-	test("delegates arcade colors without changing layout or adding backgrounds", () => {
-		const paint = (hex: string, text: string): string => styleText(text, { fg: parseColor(hex) }, "256color");
+	test("paints foreground tokens only, never a background", () => {
 		const active = snapshot({ usedTokens: 100_000 });
-		const strip = renderLaneStrip(active, 60, { ...identityStyles, foreground: paint }, 0, "tools");
+		const strip = renderLaneStrip(active, 60, fgOnlyStyles, 0, "tools");
 		assert.ok(strip.includes("\x1b[38;5;"));
 		assert.ok(!strip.includes("\x1b[38;2;"));
 		assert.ok(!strip.includes("\x1b[48;"));
@@ -274,7 +278,7 @@ describe("lane strip", () => {
 			stripVTControlCharacters(strip),
 			stripVTControlCharacters(renderLaneStrip(active, 60, identityStyles, 0, "tools")),
 		);
-		assert.equal(renderPacmanLane(active, 1, 0, "idle", ASCII_GLYPHS, paint), paint("#FFFF00", "C"));
+		assert.equal(renderPacmanLane(active, 1, fgOnlyStyles, 0, "idle", ASCII_GLYPHS), "\x1b[38;5;7mC\x1b[39m");
 	});
 
 	test("fills the width with lane, percent, and quiet speed", () => {
@@ -299,10 +303,14 @@ describe("lane strip", () => {
 
 	test("accents only unhealthy percent while keeping window size dim", () => {
 		assert.ok(
-			renderLaneStrip(snapshot({ usedTokens: 150_000 }), 80, markedStyles).includes("<w>75.0%</w> <d>(200K)</d>"),
+			renderLaneStrip(snapshot({ usedTokens: 150_000 }), 80, markedStyles).includes(
+				"<warning>75.0%</warning> <dim>(200K)</dim>",
+			),
 		);
 		assert.ok(
-			renderLaneStrip(snapshot({ usedTokens: 190_000 }), 80, markedStyles).includes("<e>95.0%</e> <d>(200K)</d>"),
+			renderLaneStrip(snapshot({ usedTokens: 190_000 }), 80, markedStyles).includes(
+				"<error>95.0%</error> <dim>(200K)</dim>",
+			),
 		);
 	});
 
@@ -368,8 +376,8 @@ describe("CH session average", () => {
 
 	test("keeps the latest-turn color on CH and styles the average dim", () => {
 		const widest = freeMetricOptions(usage({ cacheHitRate: 20, cacheHitRateAvg: 60 }), markedStyles)[0] ?? "";
-		assert.ok(widest.includes("<e>CH20</e>"));
-		assert.ok(widest.includes("<d>/60</d>%"));
+		assert.ok(widest.includes("<error>CH20</error>"));
+		assert.ok(widest.includes("<dim>/60</dim>%"));
 	});
 });
 
@@ -384,12 +392,12 @@ describe("quota metric options", () => {
 
 	test("offers widest to tightest variants", () => {
 		const options = quotaMetricOptions(full, identityStyles).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["W40% 5h30% 1d12%", "W40%", ""]);
+		assert.deepEqual(options, ["W40%  5h 30%  1d 12%", "W40%", ""]);
 	});
 
 	test("skips the combined variant when weekly is unknown", () => {
 		const options = quotaMetricOptions({ weeklyPercent: undefined, limits: full.limits }, identityStyles);
-		assert.equal(stripVTControlCharacters(options[0] ?? ""), "5h30% 1d12%");
+		assert.equal(stripVTControlCharacters(options[0] ?? ""), "5h 30%  1d 12%");
 		assert.equal(options[1], "");
 	});
 
@@ -403,7 +411,36 @@ describe("quota metric options", () => {
 			],
 		};
 		const options = quotaMetricOptions(usageWithReset, identityStyles, now).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["5h30% ↻2h 30m 7d12% ↻5d 15h", "5h30% 7d12%", ""]);
+		assert.deepEqual(options, ["5h 30% 󰦛 2h 30m  7d 12% 󰦛 5d 15h", "5h 30%  7d 12%", ""]);
+	});
+
+	test("uses the ASCII reset and credit tokens without spacing", () => {
+		const now = Date.parse("2026-07-01T00:00:00Z");
+		const usageWithReset: QuotaUsage = {
+			weeklyPercent: 40,
+			limits: [{ label: "5h", percent: 30, resetAt: now + 150 * 60_000 }],
+			resetCredits: 3,
+		};
+		const options = quotaMetricOptions(usageWithReset, identityStyles, now, ASCII_GLYPHS).map(stripVTControlCharacters);
+		assert.equal(options[0], "W40%  5h 30% r2h 30m  R3");
+	});
+
+	test("uses the md-restore and md-ticket glyphs, never the fallback arrow", () => {
+		assert.equal(NERD_GLYPHS.reset.codePointAt(0), 0xf099b);
+		assert.equal(NERD_GLYPHS.credit.codePointAt(0), 0xf0516);
+		assert.equal(visibleWidth(NERD_GLYPHS.reset), 1);
+		assert.equal(visibleWidth(NERD_GLYPHS.credit), 1);
+		assert.equal(ASCII_GLYPHS.reset, "r");
+		assert.equal(ASCII_GLYPHS.credit, "R");
+		assert.ok(!readFileSync(new URL("./chrome.ts", import.meta.url), "utf8").includes("↻"));
+		const now = Date.parse("2026-07-01T00:00:00Z");
+		const output = quotaMetricOptions(
+			{ weeklyPercent: 40, limits: [{ label: "5h", percent: 30, resetAt: now + 3_600_000 }], resetCredits: 2 },
+			identityStyles,
+			now,
+		).join("");
+		assert.ok(!output.includes("↻"));
+		assert.ok(output.includes("󰦛") && output.includes("󰔖"));
 	});
 
 	test("drops a past window reset instead of showing zero", () => {
@@ -413,27 +450,27 @@ describe("quota metric options", () => {
 			identityStyles,
 			now,
 		).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["5h30%", ""]);
+		assert.deepEqual(options, ["5h 30%", ""]);
 	});
 
 	test("escalates color with usage level", () => {
 		const options = quotaMetricOptions({ weeklyPercent: 95, limits: [{ label: "5h", percent: 80 }] }, markedStyles);
-		assert.equal(options[0], "<e>W95%</e><d> </d><w>5h80%</w>");
+		assert.equal(options[0], "<error>W95%</error><dim>  </dim><warning>5h 80%</warning>");
 	});
 
 	test("keeps quiet quota dim", () => {
-		assert.equal(quotaMetricOptions(full, markedStyles)[1], "<d>W40%</d>");
+		assert.equal(quotaMetricOptions(full, markedStyles)[1], "<dim>W40%</dim>");
 	});
 
 	test("appends banked reset credits and uses them as the tight fallback", () => {
 		const usageWithResets: QuotaUsage = { ...full, weeklyPercent: undefined, resetCredits: 3 };
 		const options = quotaMetricOptions(usageWithResets, identityStyles).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["5h30% 1d12% R3", "R3", ""]);
+		assert.deepEqual(options, ["5h 30%  1d 12%  󰔖 3", "󰔖 3", ""]);
 	});
 
 	test("hides zero reset credits", () => {
 		const options = quotaMetricOptions({ ...full, resetCredits: 0 }, identityStyles).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["W40% 5h30% 1d12%", "W40%", ""]);
+		assert.deepEqual(options, ["W40%  5h 30%  1d 12%", "W40%", ""]);
 	});
 
 	test("keeps quota lane dollar-free: limit percent renders, balance data never shown", () => {
@@ -441,6 +478,6 @@ describe("quota metric options", () => {
 			{ weeklyPercent: undefined, limits: [{ label: "7d", percent: 32.5 }] },
 			identityStyles,
 		).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["7d33%", ""]);
+		assert.deepEqual(options, ["7d 33%", ""]);
 	});
 });

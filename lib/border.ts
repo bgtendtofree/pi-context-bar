@@ -1,4 +1,4 @@
-/** Pure model label fitting and rounded border rendering. */
+/** Pure model label fitting and framed border rendering. */
 
 import { visibleWidth } from "@earendil-works/pi-tui";
 
@@ -7,6 +7,9 @@ export type ModelInfo = Readonly<{
 	reasoning: boolean;
 	routed?: Readonly<{ id: string; thinkingLevel: string | undefined }> | undefined;
 }> | null;
+
+/** Routed labels separate the active and physical model with a dim arrow. */
+export const MODEL_ARROW = " → ";
 
 export const editorModelOptions = (model: ModelInfo, thinkingLevel: string): readonly string[] => {
 	if (!model) return ["no-model", "?"];

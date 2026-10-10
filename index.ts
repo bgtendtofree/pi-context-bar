@@ -28,8 +28,9 @@ import {
 	shouldRefreshQuota,
 } from "./lib/openai.ts";
 import { withPendingReset } from "./lib/pending-reset.ts";
+import { INITIAL_PROMPT_STATE, type PromptState, promptStateAfterTurn, promptStateFromEntries } from "./lib/prompt.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
-import { registerRoundedEditor } from "./ui/rounded-editor.ts";
+import { registerFramedEditor } from "./ui/framed-editor.ts";
 
 /** Streamed tokens per mouth frame: chomp speed follows throughput. */
 const PACMAN_TOKENS_PER_FRAME = 3;
@@ -55,6 +56,7 @@ type ChromeState = Readonly<{
 	speedTurnActiveMs: number;
 	tui: RenderRequester | undefined;
 	glyphs: GlyphSet;
+	prompt: PromptState;
 	quota: QuotaUsage | undefined;
 	quotaAccountId: string | undefined;
 	quotaLastAttemptAt: number | undefined;
@@ -77,6 +79,7 @@ const freshState = (): ChromeState => ({
 	speedTurnActiveMs: 0,
 	tui: undefined,
 	glyphs: NERD_GLYPHS,
+	prompt: INITIAL_PROMPT_STATE,
 	quota: undefined,
 	quotaAccountId: undefined,
 	quotaLastAttemptAt: undefined,
@@ -235,6 +238,8 @@ const setWelcomeHeader = (ctx: ExtensionContext): void => {
 
 const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
+	// Derive the prompt from the resumed branch so an errored leaf starts with the failure glyph.
+	patch({ prompt: promptStateFromEntries(ctx.sessionManager.getBranch()) });
 	refreshSnapshot(ctx);
 	refreshSessionUsage(ctx);
 
@@ -243,7 +248,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 		setWelcomeHeader(ctx);
 	}
 	void refreshQuota(ctx);
-	registerRoundedEditor(ctx, {
+	registerFramedEditor(ctx, {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
 		getHealth: () => ({
@@ -253,6 +258,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 			speed: state.tokenSpeed,
 			frame: Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0),
 			activity: state.laneActivity,
+			prompt: state.prompt,
 		}),
 		glyphs: state.glyphs,
 		onTui: (tui) => {
@@ -486,6 +492,9 @@ export default function zContext(pi: ExtensionAPI): void {
 		if (state.subscriptionTurn && event.message.role === "assistant") {
 			pi.appendEntry(SUBSCRIPTION_TURN_ENTRY, { messageEntryId: event.messageEntryId });
 		}
+		if (event.message.role === "assistant") {
+			patch({ prompt: promptStateAfterTurn(state.prompt, event.message.stopReason) });
+		}
 		patch({
 			tokenSpeed: completedTokenSpeed(state.speedTurnOutputTokens, state.speedTurnActiveMs) ?? state.tokenSpeed,
 			subscriptionTurn: false,
@@ -526,6 +535,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 	pi.on("session_tree", (_event, ctx) => {
+		patch({ prompt: promptStateFromEntries(ctx.sessionManager.getBranch()) });
 		refreshSnapshot(ctx);
 		refreshSessionUsage(ctx);
 		requestRender();

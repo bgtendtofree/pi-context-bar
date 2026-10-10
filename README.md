@@ -1,38 +1,39 @@
 # pi-context-bar
 
-Rounded editor with Pac-Man context chrome fused into its border for [pi](https://pi.dev).
+Square editor with Pac-Man context chrome fused into its frame for [pi](https://pi.dev).
 
-Model, cache hit, and cost live in the rounded editor border — zero extra chrome rows. The Pac-Man lane auto-fits the window width across the top border.
-Slash-command autocomplete stays above the rounded editor instead of expanding inside it.
+Model, cache hit, and cost live in the editor frame — zero extra chrome rows. The Pac-Man lane auto-fits the window width across the top border.
+Slash-command autocomplete stays above the framed editor instead of expanding inside it.
 
 ```
-╭─ 󰮯 • • • ○ • • • 15.7% (200K)  ~42.3t/s ──────────────────────────╮
-│ ›                                                                            │
-╰─ gpt-5.6-sol · medium ─────────────────────────────── CH98%  $1.61 ──╯
+┌─ 󰮯 • • • ○ • • • 15.7% (200K)  ~42.3t/s ─────────────────────────────┐
+│  ❯ hello                                                             │
+└─ gpt-5.6-sol · medium ─────────────────────────────── CH98%  $1.61 ──┘
 ```
 
-Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; cream pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary (red startup, orange thinking, cyan response, blue tools) and Pac-Man chomps; both rest when idle. The border stays static theme-colored throughout — the chomping mouth and the ghost carry activity, and chomp speed is driven by live token throughput, so a slow turn is directly visible as slow chomping.
+Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary and Pac-Man chomps; both rest when idle. The chomping mouth and the ghost carry activity, and chomp speed is driven by live token throughput, so a slow turn is directly visible as slow chomping.
 
-Arcade colors use Pi's active theme renderer, including truecolor/256-color capability overrides. Classic hues stay unchanged, with no background blocks. Semantic border and metric colors follow live theme changes. The ghost rests at `agent_settled`, not an intermediate `agent_end` that may still retry or continue.
+Every element uses Pi's active theme tokens, including truecolor/256-color capability overrides. Pac-Man is `text`, pellets are `dim`, power pellets are `muted`, and the ghost follows the lane phase (`muted` startup, `warning` thinking, `success` response, `accent` tools). The frame is `borderMuted`, switching to `bashMode` while the input starts with `!`. Semantic border and metric colors follow live theme changes. The ghost rests at `agent_settled`, not an intermediate `agent_end` that may still retry or continue.
 
 ## Why
 
 `nano-context` has a great segmented bar, but its custom footer drops default pi stats (especially **cache hit `CH%`**) and stacks 3 chrome lines total.
 
-`pi-context-bar` turns context into a compact Pac-Man lane, restores `CH%` / cost, and separates stable environment metadata from live health. Default footer is replaced with an empty footer, model and health metrics move into the rounded editor border, and the redundant built-in streaming working row is hidden while the extension is active.
+`pi-context-bar` turns context into a compact Pac-Man lane, restores `CH%` / cost, and separates stable environment metadata from live health. Default footer is replaced with an empty footer, model and health metrics move into the framed editor, and the redundant built-in streaming working row is hidden while the extension is active.
 
 ## Layout
 
 | Zone | Content |
 |------|---------|
-| Editor border left | model · thinking |
+| Editor border left | model id (accent) · dim thinking |
+| Editor body | `❯` prompt (accent) · typed input |
 | Editor border right | `CH` · optional `$` |
-| Pac-Man lane | empty consumed space → phase ghost while running → yellow Pac-Man → cream remaining pellets |
+| Pac-Man lane | empty consumed space → phase ghost while running → text Pac-Man → dim remaining pellets |
 | Right-aligned metrics | native `%` · optional token speed `t/s` |
 
-Healthy text stays dim; only warning/error thresholds gain color. Pac-Man, pellets, and the active ghost keep classic arcade colors on dark terminals; on light terminals the palette darkens (goldenrod Pac-Man, sienna pellets, muted ghost phases) from the theme's `appearance` so the warm hues stay readable.
+Healthy metrics stay dim; accent marks the model and ready prompt, and warning/error colors mark thresholds and failure only. The frame is square (`┌ ┐ └ ┘`, `─ │`) with no background fills.
 
-Model names use muted foreground, with thinking levels dim and the input prompt accented. Context-window size stays dim even when usage warns. Wide lanes (80+ columns) space cells three columns apart instead of two, without capping the track; circular `○` power pellets mark the 70% / 90% thresholds.
+The model id is accent and plain, with thinking dim after it. When the latest completed turn ends in a provider error the prompt becomes `✗` in the error token, until a turn finishes without error; user aborts keep the previous state. Context-window size stays dim even when usage warns. Wide lanes (80+ columns) space cells three columns apart instead of two, without capping the track; circular `○` power pellets mark the 70% / 90% thresholds.
 
 With a virtual model selected, the bottom border shows `auto · high → physical-model · medium` for the latest successful response on the active branch. Narrow borders drop thinking and route detail before the selected model. Context limits still come directly from Pi, which accounts for the routed physical model.
 
@@ -42,7 +43,7 @@ Session cost includes standalone usage entries (such as cache warming) and neste
 
 OpenAI Codex subscription quota sits beside the model label:
 
-- **OpenAI Codex (ChatGPT Plus/Pro)**: `5h%` and `7d%` windows from `/wham/usage`, each followed by a dim `↻2h 30m` time to its reset, plus a dim `R<n>` count when banked usage-limit resets are available
+- **OpenAI Codex (ChatGPT Plus/Pro)**: `5h 100%` and `7d 31%` windows from `/wham/usage`, each followed by a dim `󰦛 2h 30m` time to its reset (ASCII `r2h 30m`), plus a dim `󰔖 <n>` count (ASCII `R<n>`) when banked usage-limit resets are available
 
 Quota is advisory chrome: refreshed on activity (`turn_end`, `model_select`) at most once a minute, failures keep the last good snapshot, and it hides unless a physical legacy `openai-codex` model is active. Pi's new `/login openai` ChatGPT authentication uses different API credentials; quota and reset support are not assumed compatible with it. Virtual selections also keep legacy quota/reset disabled.
 
@@ -58,13 +59,13 @@ Only the exact known completed consume codes `reset` and `already_redeemed` allo
 
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 
-Top border carries context consumption (lane, `%` with the model's context-window size, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, so the rounded border never gaps.
+Top border carries context consumption (lane, `%` with the model's context-window size, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, so the frame never gaps.
 
 `CH` shows the latest turn's cache hit rate (pi's built-in footer semantics). When the session's token-weighted average diverges from it by more than 5 points, the average joins the label as `CH98/94%` (latest/average), so a quietly drifting hit rate cannot mislead; the average is dim and the latest turn keeps the warning/error coloring.
 
 ## Startup
 
-A quiet welcome header appears immediately: bold `pi` + version on one row, resolved keybinding hints (`esc interrupt · ctrl+c exit · / commands · ! bash · …`) on the next. Both rows align with the editor's input text, with keys in muted foreground and descriptions dim. Keys are read from your actual keybindings, so remaps show correctly, and the expand keybinding toggles a full hint list. No model or cwd repeats — those already live in the editor border and your shell.
+A quiet welcome header appears immediately: bold `pi` + version on one row, resolved keybinding hints (`esc interrupt · ctrl+c exit · / commands · ! bash · …`) on the next. Both rows align with the editor's input text, with keys in accent and descriptions dim. Keys are read from your actual keybindings, so remaps show correctly, and the expand keybinding toggles a full hint list. No model or cwd repeats — those already live in the editor border and your shell.
 
 Pairs well with `"quietStartup": true` in `~/.pi/agent/settings.json`, which hides pi's `[Context] [Skills] [Extensions]` loaded-resources rows; resource details remain available via `/status`.
 
@@ -91,7 +92,7 @@ One optional file, one optional key — the default is the intended setup:
 ```jsonc
 // ~/.pi/agent/pi-context-bar.json
 {
-	"asciiFallback": true // terminals without a Nerd Font: C / O / 0 instead of the icons
+	"asciiFallback": true // terminals without a Nerd Font: C / O / 0 icons and > / x prompt
 }
 ```
 

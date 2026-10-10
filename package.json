@@ -24,8 +24,9 @@
 		"lib/json.ts",
 		"lib/openai.ts",
 		"lib/pending-reset.ts",
+		"lib/prompt.ts",
 		"lib/speed.ts",
-		"ui/rounded-editor.ts",
+		"ui/framed-editor.ts",
 		"README.md",
 		"LICENSE"
 	],

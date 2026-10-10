@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { editorModelOptions, renderLabeledBorder } from "./border.ts";
+import {
+	bottomBorderFits,
+	decorateModel,
+	editorModelOptions,
+	providerBadge,
+	renderLabeledBorder,
+	withThinkingGlyph,
+} from "./border.ts";
+import { ASCII_GLYPHS, NERD_GLYPHS } from "./chrome.ts";
 
 describe("editor model labels", () => {
 	test("shows virtual selection and routed thinking before narrow fallbacks", () => {
@@ -50,6 +58,86 @@ describe("editor model labels", () => {
 			editorModelOptions({ id: "provider/a-very-long-model-name", reasoning: false }, "off").some((option) =>
 				option.endsWith("…"),
 			),
+		);
+	});
+});
+
+describe("provider badges", () => {
+	test("badges only exact known non-virtual providers", () => {
+		assert.equal(providerBadge("openai", NERD_GLYPHS), NERD_GLYPHS.providerOpenai);
+		assert.equal(providerBadge("openai-codex", NERD_GLYPHS), NERD_GLYPHS.providerOpenai);
+		assert.equal(providerBadge("anthropic", NERD_GLYPHS), NERD_GLYPHS.providerAnthropic);
+		for (const provider of [undefined, "", "pi-virtual", "azure", "openai-codex-fake", "OpenAI"])
+			assert.equal(providerBadge(provider, NERD_GLYPHS), "", String(provider));
+		assert.equal(providerBadge("openai", ASCII_GLYPHS), "");
+	});
+});
+
+describe("thinking brain", () => {
+	test("decorates every thinking label including routed ones", () => {
+		assert.equal(
+			withThinkingGlyph("auto · high → gpt-test · medium", NERD_GLYPHS.thinking),
+			`auto · ${NERD_GLYPHS.thinking} high → gpt-test · ${NERD_GLYPHS.thinking} medium`,
+		);
+		assert.equal(withThinkingGlyph("gpt-test · medium", ""), "gpt-test · medium");
+		assert.equal(withThinkingGlyph("gpt-test", NERD_GLYPHS.thinking), "gpt-test");
+		assert.equal(withThinkingGlyph("auto → gpt-test", NERD_GLYPHS.thinking), "auto → gpt-test");
+	});
+});
+
+describe("decorated model fitting", () => {
+	const info = { id: "claude", reasoning: true, provider: "anthropic" } as const;
+
+	test("keeps badge and brain when they fit", () => {
+		assert.equal(
+			decorateModel("claude · high", info, NERD_GLYPHS, 200, "", "", 2, 0),
+			`${NERD_GLYPHS.providerAnthropic} claude · ${NERD_GLYPHS.thinking} high`,
+		);
+	});
+
+	test("drops brain before badge and both before the model text", () => {
+		assert.equal(
+			decorateModel("claude · high", info, NERD_GLYPHS, 21, "", "", 2, 0),
+			`${NERD_GLYPHS.providerAnthropic} claude · high`,
+		);
+		assert.equal(decorateModel("claude · high", info, NERD_GLYPHS, 20, "", "", 2, 0), "claude · high");
+	});
+
+	test("drops decorations before quota and metrics", () => {
+		const model = "gpt · high";
+		assert.equal(decorateModel(model, info, NERD_GLYPHS, 33, "5h 30%", "$1.61", 2, 0), model);
+		assert.equal(
+			decorateModel(model, info, NERD_GLYPHS, 34, "5h 30%", "$1.61", 2, 0),
+			`${NERD_GLYPHS.providerAnthropic} gpt · high`,
+		);
+	});
+
+	test("ASCII glyphs keep the plain label", () => {
+		assert.equal(decorateModel("claude · high", info, ASCII_GLYPHS, 200, "", "", 2, 0), "claude · high");
+	});
+});
+
+describe("bottom border fitting", () => {
+	test("counts decoration, quota, and metric widths", () => {
+		assert.equal(
+			bottomBorderFits({ width: 40, model: "gpt", quota: "5h 30%", metric: "CH98%", gap: 2, scrollReserve: 0 }),
+			true,
+		);
+		assert.equal(
+			bottomBorderFits({
+				width: 10,
+				model: "a-very-long-model-name",
+				quota: "",
+				metric: "",
+				gap: 2,
+				scrollReserve: 0,
+			}),
+			false,
+		);
+		assert.equal(bottomBorderFits({ width: 20, model: "gpt", quota: "", metric: "", gap: 2, scrollReserve: 0 }), true);
+		assert.equal(
+			bottomBorderFits({ width: 12, model: "gpt", quota: "", metric: "CH98%", gap: 2, scrollReserve: 0 }),
+			false,
 		);
 	});
 });

@@ -5,10 +5,15 @@ Square editor with Pac-Man context chrome fused into its frame for [pi](https://
 Model, cache hit, and cost live in the editor frame — zero extra chrome rows. The Pac-Man lane auto-fits the window width across the top border.
 Slash-command autocomplete stays above the framed editor instead of expanding inside it.
 
+Scope is editor chrome, not conversation rendering: assistant messages, thinking content,
+tool calls/results, and compaction notices stay native Pi. The extension wraps the editor,
+replaces the welcome header/footer, and hides the redundant working row through Pi's UI APIs;
+it does not patch Pi core or replace conversation renderers.
+
 ```
-┌─ 󰮯 • • • ○ • • • 15.7% (200K)  ~42.3t/s ─────────────────────────────┐
+┌─ 󰮯 • • • ○ • • • 15.7% (200K)  󰓅 ~42.3t/s ───────────────────────────┐
 │  ❯ hello                                                             │
-└─ gpt-5.6-sol · medium ─────────────────────────────── CH98%  $1.61 ──┘
+└─  gpt-5.6-sol · 󰧑 medium ─────────────────────────── 󰆼 98%  $1.61 ──┘
 ```
 
 Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary and Pac-Man chomps; both rest when idle. The chomping mouth and the ghost carry activity, and chomp speed is driven by live token throughput, so a slow turn is directly visible as slow chomping.
@@ -25,13 +30,26 @@ Every element uses Pi's active theme tokens, including truecolor/256-color capab
 
 | Zone | Content |
 |------|---------|
-| Editor border left | model id (accent) · dim thinking |
+| Editor border left | provider badge · model id (accent) · dim thinking brain + level |
 | Editor body | `❯` prompt (accent) · typed input |
-| Editor border right | `CH` · optional `$` |
+| Editor border right | cache database · optional `$` |
 | Pac-Man lane | empty consumed space → phase ghost while running → text Pac-Man → dim remaining pellets |
 | Right-aligned metrics | native `%` · optional token speed `t/s` |
 
 Healthy metrics stay dim; accent marks the model and ready prompt, and warning/error colors mark thresholds and failure only. The frame is square (`┌ ┐ └ ┘`, `─ │`) with no background fills.
+
+## Icons
+
+Nerd Font icons decorate information that is already in the frame; they never add a metric. Each drops back to plain text (or disappears) before any useful model, quota, cache, cost, context-window, or speed reading is lost.
+
+| Information | Nerd Font icon | ASCII fallback |
+|---|---|---|
+| Selected provider | accent `cod-openai` `` / `cod-claude` `` before the model id | no badge |
+| Thinking level | dim `md-brain` `󰧑` after `· `, routed thinking included | plain `· max` |
+| Cache hit | `md-database` `󰆼` replaces the `CH` label (`󰆼 98/94%`) | `CH98/94%` |
+| Token speed | dim `md-speedometer` `󰓅` before `t/s` (`󰓅 ~218t/s`) | `~218t/s` |
+
+Only the exact known non-virtual providers `openai`, `openai-codex`, and `anthropic` get a badge; virtual selections and other providers show the model id alone. Provider badges are never inferred from a model id or from the routed physical model. The cache latest/average math, threshold colors, and cost/quota behavior are unchanged.
 
 The model id is accent and plain, with thinking dim after it. When the latest completed turn ends in a provider error the prompt becomes `✗` in the error token, until a turn finishes without error; user aborts keep the previous state. Context-window size stays dim even when usage warns. Wide lanes (80+ columns) space cells three columns apart instead of two, without capping the track; circular `○` power pellets mark the 70% / 90% thresholds.
 
@@ -71,7 +89,7 @@ Pairs well with `"quietStartup": true` in `~/.pi/agent/settings.json`, which hid
 
 ## Font requirement
 
-Pac-Man `󰮯` and Ghost `󰊠` are Nerd Font Material Design glyphs. Configure your terminal profile to use a **Nerd Font v3+**; installing the font without selecting it in the terminal is not enough. **JetBrainsMono Nerd Font Mono** is recommended because its icons stay single-cell and keep the lane aligned.
+Pac-Man `󰮯`, Ghost `󰊠`, and the `md-*` chrome icons (reset `󰦛`, reset credits `󰔖`, brain `󰧑`, database `󰆼`, speedometer `󰓅`) are Material Design glyphs present since Nerd Font **v3.0.0**. The provider badges `cod-openai` `` and `cod-claude` `` are Codicons first shipped in Nerd Font **v3.5.0** (they are absent from v3.4.0 and earlier). Configure your terminal profile to use a **Nerd Font v3.5.0+** for the full chrome; installing the font without selecting it in the terminal is not enough. **JetBrainsMono Nerd Font Mono** is recommended because its icons stay single-cell and keep the lane aligned. There is no font detection: on an older release the badge codepoints have no glyph and may render as tofu or a terminal fallback, so upgrade to v3.5.0+ or set `asciiFallback` to omit them.
 
 Terminals without a Nerd Font (SSH into a remote box, a locked-down corporate profile) fall back to ASCII glyphs via one config file — see [Config](#config).
 

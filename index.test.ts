@@ -14,6 +14,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import zContext from "./index.ts";
+import { NERD_GLYPHS } from "./lib/chrome.ts";
 import { type AssistantMessage, accumulateSessionUsage, SUBSCRIPTION_TURN_ENTRY } from "./lib/context.ts";
 
 const token = (accountId: string): string =>
@@ -290,6 +291,9 @@ test("quota belongs to active account and model switches update context immediat
 	handlers.get("model_select")?.({}, ctx);
 	assert.doesNotMatch(render(), /5h 80%/);
 	assert.doesNotMatch(render(), /→/);
+	// Virtual selections suppress the provider badge even when the underlying provider id is known.
+	assert.doesNotMatch(render(), new RegExp(NERD_GLYPHS.providerOpenai));
+	assert.doesNotMatch(render(), new RegExp(NERD_GLYPHS.providerAnthropic));
 	await resetCommand?.("", ctx as ExtensionCommandContext);
 	assert.equal(notices.at(-1), "Active model is not a physical openai-codex model");
 	const message: AssistantMessage = {
@@ -312,7 +316,7 @@ test("quota belongs to active account and model switches update context immediat
 	};
 	branch = [{ type: "message", id: "routed", parentId: null, timestamp: "", message }];
 	handlers.get("turn_end")?.({ message }, ctx);
-	assert.match(render(), /auto → gpt-routed · medium/);
+	assert.match(render(), new RegExp(`auto → gpt-routed · ${NERD_GLYPHS.thinking} medium`));
 	branch.push({
 		type: "message",
 		id: "failed",
@@ -321,13 +325,14 @@ test("quota belongs to active account and model switches update context immediat
 		message: { ...message, model: "failed-route", stopReason: "error" },
 	});
 	handlers.get("session_tree")?.({}, ctx);
-	assert.match(render(), /auto → gpt-routed · medium/);
+	assert.match(render(), new RegExp(`auto → gpt-routed · ${NERD_GLYPHS.thinking} medium`));
 	assert.doesNotMatch(render(), /failed-route/);
 	branch = [];
 	handlers.get("session_tree")?.({}, ctx);
 	assert.doesNotMatch(render(), /→/);
 	model = { ...model, api: "openai-responses", provider: "openai" };
 	handlers.get("model_select")?.({}, ctx);
+	assert.match(render(), new RegExp(NERD_GLYPHS.providerOpenai));
 	await resetCommand?.("", ctx as ExtensionCommandContext);
 	assert.equal(notices.length, 2);
 	assert.equal(calls, quotaCalls);

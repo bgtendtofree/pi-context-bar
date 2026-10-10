@@ -1,8 +1,20 @@
-# Plan: chrome status indicators and icons
+# Plan: Nerd Font grammar inside editor chrome
 
-Living plan for the next slice of editor chrome. The current baseline is a square framed
+Living plan for the current slice of editor chrome. The current baseline is a square framed
 editor with theme-token chrome (see AGENTS.md for the binding rules); this document lists what
-is shipped, what needs an owner decision, and what to build next.
+is shipped, what needs an owner decision, and what remains.
+
+## Scope: chrome, not conversation rendering
+
+- Assistant messages, thinking content, tool calls/results, and compaction notices keep Pi's
+  native conversation rendering. This project does not replace their renderers or alter content.
+- This project does customize Pi UI through extension APIs: it wraps `CustomEditor`, adds the
+  square frame and prompt, moves autocomplete above the editor, replaces the welcome header,
+  empties the footer, and hides the redundant working row while active.
+- Session events supply context, cost, throughput, and lane phase. Reading these events does
+  not make this extension responsible for rendering their conversation content.
+- The current shipped slice only adds Nerd Font grammar to information already present in the frame.
+  No new status row, tool name, queue indicator, compaction label, or latency metric.
 
 ## Baseline (shipped)
 
@@ -13,15 +25,20 @@ is shipped, what needs an owner decision, and what to build next.
   `warning`/`success`/`error` for phases, thresholds, and failure.
 - Prompt state: `❯` accent, `✗` error when the last completed turn stopped with `error`
   (`aborted` keeps the previous state). Derived from the session branch on start and tree nav.
-- Nerd Font icons in use: Pac-Man `󰮯`, ghost `󰊠`, reset countdown `󰦛`, reset credits `󰔖`.
-  ASCII fallback: `C`/`O`/`0`, `>`/`x`, `r52m`, `R1`.
+- Nerd Font icons in use: Pac-Man `󰮯`, ghost `󰊠`, reset countdown `󰦛`, reset credits `󰔖`,
+  provider badges `cod-openai` `` / `cod-claude` ``, thinking brain `󰧑`, cache database `󰆼`,
+  speedometer `󰓅`. ASCII fallback: `C`/`O`/`0`, `>`/`x`, `r52m`, `R1`, no provider badge, no brain,
+  `CH` cache label, plain `t/s`.
+- Icon grammar shipped: badges only for exact known non-virtual providers, brain only with a
+  thinking label (routed included), database replaces `CH` in Nerd mode, speedometer never alone.
+  All decorations drop before useful text or numbers; `asciiFallback` output is unchanged.
 - Quota group spacing: one space inside a group, two between groups.
 
 ## Ground rules for anything added here
 
 - Health chrome stays inside the editor frame; no extra rows.
-- Quiet by default: transient indicators appear only while active, stay `dim`, and use `error`
-  only for real failures. Never a background fill.
+- Quiet by default: icons inherit their information's existing theme role. Warning/error
+  remain reserved for existing thresholds and failure. Never a background fill.
 - Every glyph is verified against the official Nerd Font table (`glyphnames.json`) and renders
   width 1 in a Mono Nerd Font. Prefer a Nerd Font icon over ambiguous Unicode arrows:
   U+21BB `↻` is absent from JetBrains Mono, so terminals fall back to another font and the
@@ -31,45 +48,53 @@ is shipped, what needs an owner decision, and what to build next.
 - Pure logic in `lib/` with mirrored `node:test` coverage; `index.ts` stays wiring only.
 - Update README (and AGENTS.md when a rule changes) in the same change.
 
-## Next: Tier 1 indicators
+## Icon grammar (shipped)
 
-Transient, quiet, and each has a direct data source.
+Use the existing `GlyphSet` and `asciiFallback`; do not add another setting or dependency.
+Icons change presentation, not metric semantics or lifecycle behavior.
 
-| Indicator | Data source | Render | ASCII |
-|---|---|---|---|
-| Queued follow-ups | `ctx.hasPendingMessages()` | dim `󱊖` (`md-tray-full` U+F1296) | `Q` |
-| Compaction in flight | `session_before_compact` → `session_compact` / `session_compact_failed` | dim `󰀼` (`md-archive` U+F003C) + `compacting`; `error` on failure | `zip` |
-| Running tool | `tool_execution_start` (`toolName`) → `tool_execution_end` | dim `󰖷` (`md-wrench` U+F05B7) + tool name, truncated | `<name>` |
-| First-token latency | `message_start` → first `message_update` | dim `0.6s` (1 decimal under 10s, then `12s`) | same |
+| Information | Nerd Font rendering | ASCII / unsupported provider |
+|---|---|---|
+| Selected provider before model id | accent `cod-openai` U+EC81 / `cod-claude` U+EC82 | No badge; keep model id |
+| Thinking level | dim `· 󰧑 max` (`md-brain` U+F09D1) | Existing `· max` |
+| Cache hit | `󰆼 98/94%` (`md-database` U+F01BC) | Existing `CH98/94%` |
+| Token speed | dim `󰓅 ~218t/s` (`md-speedometer` U+F04C5) | Existing `~218t/s` |
 
-Notes.
+Implementation contract:
 
-- Queued: `hasPendingMessages()` is a boolean; there is no count to show.
-- Compaction: payload carries `reason` (`manual` | `threshold` | `overflow`), `willRetry`, and
-  `errorMessage`. Make sure the indicator always clears, including the aborted path, and test
-  that it cannot stick.
-- Running tool: the lane ghost already marks the tools phase; the name adds detail, so keep it
-  dim. Nested calls carry `parentToolCallId` — show the outermost call only.
-- Latency: measure locally with `performance.now()`. It excludes tool gaps by definition and
-  must not be confused with `t/s`, which stays the throughput metric.
-- Placement: all four belong to the bottom-left group, next to model, thinking, and quota.
-  Decide the fixed slot order before implementing (suggested: tool, compaction, queue, then
-  quota) so the line does not reshuffle while streaming.
-
-## Optional: icon grammar for existing metrics
-
-Replaces text labels, not information. Each row needs an ASCII fallback that keeps the current
-label (`CH`, `max`, `12t/s`).
-
-| Metric | Icon | Code point | Notes |
-|---|---|---|---|
-| Provider badge before model id | `cod-openai` / `cod-claude` | U+EC81 / U+EC82 | Requires Nerd Font v3 (README already requires v3+); needs `provider` plumbed into `ModelInfo` |
-| Thinking level | `md-brain` | U+F09D1 | `· 󰧑 max` |
-| Cache hit (`CH`) | `md-database` | U+F01BC | Avoid `md-cached` U+F00E8: too close to `md-restore` U+F099B used for resets |
-| Token speed | `md-speedometer` | U+F04C5 | `󰓅 218t/s`; keeps the `t/s` unit |
+- Verify names/code points against official `glyphnames.json` before implementation. State
+  the actual minimum Nerd Font version for the selected badges; do not assume all v3 releases
+  include newer Codicons. Verified: `cod-openai` U+EC81 and `cod-claude` U+EC82 first appear in
+  Nerd Font v3.5.0 (absent from v3.4.0 and earlier); `md-brain`/`md-database`/`md-speedometer`
+  exist since v3.0.0.
+- Plumb selected `provider` into `ModelInfo`. Badge only exact known OpenAI
+  (`openai`, `openai-codex`) and Anthropic (`anthropic`) providers. Unknown providers have no
+  badge. Virtual selections have no provider badge; do not infer provider from a model id or
+  pretend the selected provider is the routed physical provider.
+- Thinking icons appear only with an existing thinking label, including routed thinking.
+- Keep latest/average cache-hit calculation, threshold colors, cost, quota, and reset behavior
+  unchanged. The average stays dim; high cache hit stays quiet.
+- Keep `~`, numeric precision, and `t/s` units unchanged. Speed icon never appears alone.
+- Width fitting must count glyph plus spacing. Decorative icons drop before useful text or
+  numeric information; existing model/route/thinking, quota, cache-before-cost, and
+  context-window/speed fallback priorities otherwise stay unchanged.
+- Test Nerd Font and ASCII output, unknown/virtual/no-model cases, thinking off, routed
+  thinking, cache divergence and thresholds, live/completed speed, and narrow width fitting.
+- No new timers, event handlers, network requests, conversation renderers, or config flags.
 
 Rejected: icons for the `5h` / `7d` window labels. The window length is information; a clock
 glyph loses it.
+
+## Deferred: additional status information
+
+These are not part of the Nerd Font implementation:
+
+- Compaction means Pi summarizes older conversation context to reclaim model capacity, not
+  file compression. The existing post-compaction Pac-Man rewind remains; no in-flight label.
+- Tool execution already changes the lane ghost's phase/color. Tool names/results stay in
+  Pi's native conversation view; do not duplicate them in the frame.
+- Queued messages and first-token latency add new information and consume scarce frame width.
+  Revisit only on a separate explicit request.
 
 ## Considered and rejected
 

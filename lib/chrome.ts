@@ -21,7 +21,16 @@ export type GlyphSet = Readonly<{
 	promptFailure: string;
 	reset: string;
 	credit: string;
-	/** ASCII fallbacks compact their reset/credit tokens ("r52m", "R1"). */
+	/** Provider badges: cod-openai `\uec81` / cod-claude `\uec82`, Nerd Font v3.5.0+. Empty when ASCII. */
+	providerOpenai: string;
+	providerAnthropic: string;
+	/** Thinking brain md-brain `\u{f09d1}`; decorative, drops before the level text. */
+	thinking: string;
+	/** Cache-hit database md-database `\u{f01bc}`; replaces the `CH` label in Nerd mode. */
+	cache: string;
+	/** Speedometer md-speedometer `\u{f04c5}`; never shown without `t/s`. */
+	speed: string;
+	/** ASCII fallbacks compact their reset/credit tokens ("r52m", "R1") and omit icons. */
 	ascii: boolean;
 }>;
 
@@ -33,6 +42,11 @@ export const NERD_GLYPHS: GlyphSet = {
 	promptFailure: "✗",
 	reset: "󰦛",
 	credit: "󰔖",
+	providerOpenai: "\uec81",
+	providerAnthropic: "\uec82",
+	thinking: "\u{f09d1}",
+	cache: "\u{f01bc}",
+	speed: "\u{f04c5}",
 	ascii: false,
 };
 
@@ -44,6 +58,11 @@ export const ASCII_GLYPHS: GlyphSet = {
 	promptFailure: "x",
 	reset: "r",
 	credit: "R",
+	providerOpenai: "",
+	providerAnthropic: "",
+	thinking: "",
+	cache: "",
+	speed: "",
 	ascii: true,
 };
 
@@ -101,22 +120,37 @@ const styleCache = (text: string, rate: number | undefined, styles: ChromeStyles
 /** Session average joins the CH label only when it diverges meaningfully from the latest turn. */
 export const CH_AVG_DIVERGENCE_POINTS = 5;
 
-/** CH label: latest turn's rate, with the token-weighted session average appended when it diverges. */
-const cacheLabel = (usage: SessionUsage, styles: ChromeStyles): string => {
+/**
+ * Cache-hit label variants, widest → tightest. Nerd mode leads with the md-database icon
+ * (`󰆼 98/94%`); the icon is decorative and drops before the numbers, never the average.
+ * ASCII keeps the `CH` label (`CH98/94%`). The latest turn keeps its warning/error color;
+ * the average stays dim.
+ */
+const cacheLabelOptions = (usage: SessionUsage, styles: ChromeStyles, glyphs: GlyphSet): readonly string[] => {
 	const latest = usage.cacheHitRate;
-	if (latest === undefined) return "";
+	if (latest === undefined) return [];
 	const avg = usage.cacheHitRateAvg;
 	const diverged = avg !== undefined && Math.abs(latest - avg) > CH_AVG_DIVERGENCE_POINTS;
-	const latestPart = styleCache(`CH${Math.round(latest)}`, latest, styles);
 	const avgPart = diverged ? styles.fg("dim", `/${Math.round(avg)}`) : "";
-	return `${latestPart}${avgPart}%`;
+	const withIcon = styleCache(`${glyphs.cache} ${Math.round(latest)}`, latest, styles);
+	const withoutIcon = styleCache(`${glyphs.cache ? "" : "CH"}${Math.round(latest)}`, latest, styles);
+	return glyphs.cache ? [`${withIcon}${avgPart}%`, `${withoutIcon}${avgPart}%`] : [`${withoutIcon}${avgPart}%`];
 };
 
 /** Cache/cost options, widest → tightest, styled at construction. CH survives before cost. */
-export const freeMetricOptions = (usage: SessionUsage, styles: ChromeStyles): readonly string[] => {
-	const ch = cacheLabel(usage, styles);
+export const freeMetricOptions = (
+	usage: SessionUsage,
+	styles: ChromeStyles,
+	glyphs: GlyphSet = NERD_GLYPHS,
+): readonly string[] => {
 	const cost = tint(formatCost(usage.cost), "dim", styles);
-	return [[ch, cost].filter(Boolean).join(styles.fg("dim", "  ")), ch, ""];
+	const gap = styles.fg("dim", "  ");
+	const caches = cacheLabelOptions(usage, styles, glyphs);
+	const withCost = caches.length > 0 ? caches.map((ch) => `${ch}${gap}${cost}`) : [cost];
+	const candidates = [...(cost ? withCost : []), ...caches, ""];
+	const options: string[] = [];
+	for (const value of candidates) if (options.at(-1) !== value) options.push(value);
+	return options;
 };
 
 export type QuotaLimit = Readonly<{
@@ -244,7 +278,13 @@ export const renderLaneStrip = (
 			? [`${percent} ${styles.fg("dim", `(${formatWindowSize(snapshot.contextWindow)})`)}`, percent]
 			: [];
 	const rawSpeed = formatTokenSpeed(speed);
-	const speedText = rawSpeed ? styles.fg("dim", rawSpeed) : "";
+	// The speedometer is decorative: try it, then plain `t/s`, then drop speed entirely.
+	const speedOptions = rawSpeed
+		? [glyphs.speed ? `${glyphs.speed} ${rawSpeed}` : rawSpeed, rawSpeed].filter(
+				(value, index, all) => all.indexOf(value) === index,
+			)
+		: [];
+	const styleSpeed = (value: string): string => (value ? styles.fg("dim", value) : "");
 	const laneWidth = (pickedPercent: string | undefined, pickedSpeed: string | undefined): number =>
 		width -
 		2 -
@@ -253,18 +293,28 @@ export const renderLaneStrip = (
 	let pickedPercent: string | undefined;
 	let pickedSpeed = "";
 	for (const candidate of percentOptions) {
-		if (laneWidth(candidate, speedText) >= 4) {
-			pickedPercent = candidate;
-			pickedSpeed = speedText;
-			break;
+		for (const option of speedOptions) {
+			if (laneWidth(candidate, option) >= 4) {
+				pickedPercent = candidate;
+				pickedSpeed = styleSpeed(option);
+				break;
+			}
 		}
+		if (pickedPercent) break;
 		if (laneWidth(candidate, undefined) >= 4) {
 			pickedPercent = candidate;
 			pickedSpeed = "";
 			break;
 		}
 	}
-	if (!pickedPercent && laneWidth(undefined, speedText) >= 4) pickedSpeed = speedText;
+	if (!pickedPercent) {
+		for (const option of speedOptions) {
+			if (laneWidth(undefined, option) >= 4) {
+				pickedSpeed = styleSpeed(option);
+				break;
+			}
+		}
+	}
 	const lane = renderPacmanLane(
 		snapshot,
 		Math.max(0, laneWidth(pickedPercent, pickedSpeed)),

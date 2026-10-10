@@ -149,7 +149,14 @@ const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void>
 
 const currentModel = (ctx: ExtensionContext): ModelInfo => {
 	const model = ctx.model;
-	return model ? { id: model.id, reasoning: Boolean(model.reasoning), routed: state.routed } : null;
+	if (!model) return null;
+	return {
+		id: model.id,
+		reasoning: Boolean(model.reasoning),
+		// Virtual selections have no physical provider badge; never infer one from the routed model.
+		...(model.api === "pi-virtual" ? {} : { provider: model.provider }),
+		routed: state.routed,
+	};
 };
 
 const requestRender = (): void => state.tui?.requestRender();

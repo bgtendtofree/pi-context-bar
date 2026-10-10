@@ -12,7 +12,9 @@ Square framed input shell plus one quiet health row. No multi-line footer. Envir
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
 - Editor top border: Pac-Man lane (auto-fits window width, no cap) + context `%` beside lane + quiet live `t/s` at the right end
 - Editor bottom border: model/thinking + OpenAI Codex quota beside it on the left, `CH`/`$` right; never path or Git
-- Health metrics: `%` + quiet live `t/s` (top) · `CH` + optional `$` (bottom right)
+- Health metrics: `%` + quiet live `t/s` (top) · cache hit + optional `$` (bottom right); Nerd Font icons may decorate speed and replace `CH`, ASCII keeps `CH` and `t/s`
+- Scope: editor chrome/header/footer only; keep Pi's native conversation, thinking, tool-result, and compaction-notice renderers unchanged
+- Icon grammar: selected known non-virtual provider badge, dim thinking brain, cache database, dim speedometer; decorations drop before useful text/numbers at narrow widths, all through `GlyphSet` with ASCII fallback
 - Square geometry: corners `┌ ┐ └ ┘`, lines `─ │`; no rounded corners and no background fills anywhere
 - Theme tokens only, never hex. Roles: `text` Pac-Man glyphs and typed input · `accent` model id, ready prompt, tools ghost · `muted` working ghost, power pellets · `dim` pellets, thinking level, separators, route arrow, healthy metrics, scroll counts · `borderMuted` frame · `bashMode` frame while the input starts with `!` · `warning` thinking ghost, thresholds · `success` response ghost · `error` failure glyph, thresholds
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets

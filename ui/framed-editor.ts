@@ -2,7 +2,14 @@ import { stripVTControlCharacters } from "node:util";
 import { CustomEditor, type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { editorModelOptions, MODEL_ARROW, type ModelInfo, renderLabeledBorder } from "../lib/border.ts";
+import {
+	bottomBorderFits,
+	decorateModel,
+	editorModelOptions,
+	MODEL_ARROW,
+	type ModelInfo,
+	renderLabeledBorder,
+} from "../lib/border.ts";
 import {
 	type ChromeStyles,
 	freeMetricOptions,
@@ -162,31 +169,46 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 				result.push(wrap(line, "│", "│", index === 0 ? prompt : " ".repeat(BODY_INDENT)));
 			}
 			const quota = health.quota ? quotaMetricOptions(health.quota, styles, Date.now(), options.glyphs) : [""];
+			const modelInfo = options.getModel();
 			// Quota sits beside the model it belongs to; the model survives before quota.
-			const picked = editorModelOptions(options.getModel(), options.getThinkingLevel())
+			const picked = editorModelOptions(modelInfo, options.getThinkingLevel())
 				.flatMap((model) => quota.map((quotaText) => ({ model, quotaText })))
-				.find(
-					({ model, quotaText }) =>
-						2 +
-							visibleWidth(model) +
-							(quotaText ? visibleWidth(quotaText) + MODEL_QUOTA_GAP : 0) +
-							3 +
-							1 +
-							scrollReserve <=
+				.find(({ model, quotaText }) =>
+					bottomBorderFits({
 						width,
+						model,
+						quota: quotaText,
+						metric: "",
+						gap: MODEL_QUOTA_GAP,
+						scrollReserve,
+					}),
 				);
-			const modelLabel = picked ? styleModelLabel(picked.model, ctx) : "";
-			const leftLabel =
-				picked?.model && picked.quotaText
-					? `${modelLabel}${" ".repeat(MODEL_QUOTA_GAP)}${picked.quotaText}`
-					: modelLabel;
 			const usedByModel = picked
 				? visibleWidth(picked.model) + (picked.quotaText ? visibleWidth(picked.quotaText) + MODEL_QUOTA_GAP : 0) + 3
 				: 1;
 			const metrics =
-				freeMetricOptions(health.usage, styles).find(
+				freeMetricOptions(health.usage, styles, options.glyphs).find(
 					(value) => value === "" || visibleWidth(value) + 4 <= width - 2 - usedByModel - scrollReserve,
 				) ?? "";
+			// Decorative provider badge and thinking brain are added only while the same model/quota/metric
+			// triple still fits; otherwise the icon drops, never quota, cache, or cost.
+			const chosenModel = picked
+				? decorateModel(
+						picked.model,
+						modelInfo,
+						options.glyphs,
+						width,
+						picked.quotaText,
+						metrics,
+						MODEL_QUOTA_GAP,
+						scrollReserve,
+					)
+				: "";
+			const modelLabel = chosenModel ? styleModelLabel(chosenModel, ctx) : "";
+			const leftLabel =
+				chosenModel && picked?.quotaText
+					? `${modelLabel}${" ".repeat(MODEL_QUOTA_GAP)}${picked.quotaText}`
+					: modelLabel;
 			result.push(
 				renderLabeledBorder(width, "└", "┘", leftLabel, metrics, frame, (space) => {
 					if (!scrollDown || space < 1) return "";

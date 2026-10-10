@@ -85,46 +85,56 @@ describe("health metric formatting", () => {
 	});
 
 	test("builds wide and narrow options", () => {
-		const options = freeMetricOptions(full, identityStyles);
-		assert.equal(options[0], "CH98%  $1.61");
+		const nerd = freeMetricOptions(full, identityStyles, NERD_GLYPHS);
+		assert.equal(nerd[0], `${NERD_GLYPHS.cache} 98%  $1.61`);
 		assert.equal(
-			options.find((value) => visibleWidth(value) <= 200),
-			options[0],
+			nerd.find((value) => visibleWidth(value) <= 200),
+			nerd[0],
 		);
 		assert.equal(
-			options.find((value) => visibleWidth(value) <= 6),
+			nerd.find((value) => visibleWidth(value) <= 6),
+			`${NERD_GLYPHS.cache} 98%`,
+		);
+		const ascii = freeMetricOptions(full, identityStyles, ASCII_GLYPHS);
+		assert.equal(ascii[0], "CH98%  $1.61");
+		assert.equal(
+			ascii.find((value) => visibleWidth(value) <= 6),
 			"CH98%",
 		);
 		assert.equal(
-			options.find((value) => visibleWidth(value) <= -1),
+			ascii.find((value) => visibleWidth(value) <= -1),
 			undefined,
 		);
 	});
 
-	test("supports missing CH", () => {
-		const options = freeMetricOptions(usage({ cost: 0.042 }), identityStyles);
-		assert.ok(options[0]?.startsWith("$"));
-		assert.equal(
-			options.every((option) => !option.includes("CH")),
-			true,
-		);
+	test("keeps cost when cache is unknown", () => {
+		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
+			const options = freeMetricOptions(usage({ cost: 0.042 }), identityStyles, glyphs);
+			assert.equal(options[0], "$0.042");
+			assert.equal(
+				options.every((option) => !option.includes("CH") && !option.includes(NERD_GLYPHS.cache)),
+				true,
+			);
+		}
 	});
 });
 
 describe("semantic metric styling", () => {
 	test("keeps healthy cache quiet", () => {
-		const widest = freeMetricOptions(usage({ cost: 6.65, cacheHitRate: 99 }), markedStyles)[0] ?? "";
-		assert.ok(widest.includes("<dim>CH99</dim>%"));
-		assert.ok(!widest.includes("<warning>"));
-		assert.ok(!widest.includes("<error>"));
+		const nerd = freeMetricOptions(usage({ cost: 6.65, cacheHitRate: 99 }), markedStyles, NERD_GLYPHS)[0] ?? "";
+		assert.ok(nerd.includes(`<dim>${NERD_GLYPHS.cache} 99</dim>%`));
+		assert.ok(!nerd.includes("<warning>"));
+		assert.ok(!nerd.includes("<error>"));
+		const ascii = freeMetricOptions(usage({ cost: 6.65, cacheHitRate: 99 }), markedStyles, ASCII_GLYPHS)[0] ?? "";
+		assert.ok(ascii.includes("<dim>CH99</dim>%"));
 	});
 
 	test("accents only unhealthy cache", () => {
-		const warning = freeMetricOptions(usage({ cacheHitRate: 60 }), markedStyles)[0] ?? "";
+		const warning = freeMetricOptions(usage({ cacheHitRate: 60 }), markedStyles, ASCII_GLYPHS)[0] ?? "";
 		assert.ok(warning.includes("<warning>CH60</warning>%"));
-		const error = freeMetricOptions(usage({ cacheHitRate: 20 }), markedStyles)[0] ?? "";
+		const error = freeMetricOptions(usage({ cacheHitRate: 20 }), markedStyles, ASCII_GLYPHS)[0] ?? "";
 		assert.ok(error.includes("<error>CH20</error>%"));
-		assert.equal(freeMetricOptions(usage(), markedStyles)[0], "");
+		assert.equal(freeMetricOptions(usage(), markedStyles, ASCII_GLYPHS)[0], "");
 	});
 });
 
@@ -337,6 +347,26 @@ describe("lane strip", () => {
 		assert.ok(narrow.includes("15.6%"));
 	});
 
+	test("drops the speedometer icon before the speed reading and keeps the window", () => {
+		const speed = { tokensPerSecond: 42.25, estimated: true };
+		const tight = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 28, identityStyles, 0, "idle", speed, NERD_GLYPHS),
+		);
+		assert.ok(tight.includes("~42.3t/s"));
+		assert.ok(tight.includes("(372K)"));
+		assert.ok(!tight.includes(NERD_GLYPHS.speed));
+		const wide = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 32, identityStyles, 0, "idle", speed, NERD_GLYPHS),
+		);
+		assert.ok(wide.includes(`${NERD_GLYPHS.speed} ~42.3t/s`));
+		const ascii = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 28, identityStyles, 0, "idle", speed, ASCII_GLYPHS),
+		);
+		assert.ok(ascii.includes("~42.3t/s"));
+		assert.ok(ascii.includes("(372K)"));
+		assert.ok(!ascii.includes(NERD_GLYPHS.speed));
+	});
+
 	test("auto-fits lane with window width", () => {
 		const narrow = stripVTControlCharacters(renderLaneStrip(dominantSnapshot, 30, identityStyles));
 		const wide = stripVTControlCharacters(renderLaneStrip(dominantSnapshot, 200, identityStyles));
@@ -364,20 +394,64 @@ describe("lane strip", () => {
 
 describe("CH session average", () => {
 	test("joins the token-weighted average when it diverges by more than 5 points", () => {
-		const options = freeMetricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 92 }), identityStyles);
-		assert.equal(stripVTControlCharacters(options[0] ?? ""), "CH98/92%");
+		const ascii = freeMetricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 92 }), identityStyles, ASCII_GLYPHS);
+		assert.equal(stripVTControlCharacters(ascii[0] ?? ""), "CH98/92%");
+		const nerd = freeMetricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 92 }), identityStyles, NERD_GLYPHS);
+		assert.equal(stripVTControlCharacters(nerd[0] ?? ""), `${NERD_GLYPHS.cache} 98/92%`);
 	});
 
 	test("stays latest-only when the average is close or unknown", () => {
-		assert.equal(freeMetricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 96 }), identityStyles)[0], "CH98%");
-		assert.equal(freeMetricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 98.2 }), identityStyles)[0], "CH98%");
-		assert.equal(freeMetricOptions(usage({ cacheHitRate: 98 }), identityStyles)[0], "CH98%");
+		assert.equal(
+			freeMetricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 96 }), identityStyles, ASCII_GLYPHS)[0],
+			"CH98%",
+		);
+		assert.equal(
+			freeMetricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 98.2 }), identityStyles, ASCII_GLYPHS)[0],
+			"CH98%",
+		);
+		assert.equal(freeMetricOptions(usage({ cacheHitRate: 98 }), identityStyles, ASCII_GLYPHS)[0], "CH98%");
+	});
+
+	test("drops the database icon before the average", () => {
+		const options = freeMetricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 92 }), identityStyles, NERD_GLYPHS);
+		const plain = options.find((value) => !value.includes(NERD_GLYPHS.cache));
+		assert.equal(plain, "98/92%");
+		assert.equal(visibleWidth(plain ?? ""), visibleWidth("98/92%"));
 	});
 
 	test("keeps the latest-turn color on CH and styles the average dim", () => {
-		const widest = freeMetricOptions(usage({ cacheHitRate: 20, cacheHitRateAvg: 60 }), markedStyles)[0] ?? "";
+		const widest =
+			freeMetricOptions(usage({ cacheHitRate: 20, cacheHitRateAvg: 60 }), markedStyles, ASCII_GLYPHS)[0] ?? "";
 		assert.ok(widest.includes("<error>CH20</error>"));
 		assert.ok(widest.includes("<dim>/60</dim>%"));
+	});
+});
+
+describe("Nerd Font glyph grammar", () => {
+	test("matches the official glyphnames.json code points and stays single-cell", () => {
+		assert.equal(NERD_GLYPHS.providerOpenai, "\uec81");
+		assert.equal(NERD_GLYPHS.providerAnthropic, "\uec82");
+		assert.equal(NERD_GLYPHS.thinking, "\u{f09d1}");
+		assert.equal(NERD_GLYPHS.cache, "\u{f01bc}");
+		assert.equal(NERD_GLYPHS.speed, "\u{f04c5}");
+		assert.equal(NERD_GLYPHS.providerOpenai.codePointAt(0), 0xec81);
+		assert.equal(NERD_GLYPHS.providerAnthropic.codePointAt(0), 0xec82);
+		assert.equal(NERD_GLYPHS.thinking.codePointAt(0), 0xf09d1);
+		assert.equal(NERD_GLYPHS.cache.codePointAt(0), 0xf01bc);
+		assert.equal(NERD_GLYPHS.speed.codePointAt(0), 0xf04c5);
+		for (const glyph of [
+			NERD_GLYPHS.providerOpenai,
+			NERD_GLYPHS.providerAnthropic,
+			NERD_GLYPHS.thinking,
+			NERD_GLYPHS.cache,
+			NERD_GLYPHS.speed,
+		])
+			assert.equal(visibleWidth(glyph), 1);
+		assert.equal(ASCII_GLYPHS.providerOpenai, "");
+		assert.equal(ASCII_GLYPHS.providerAnthropic, "");
+		assert.equal(ASCII_GLYPHS.thinking, "");
+		assert.equal(ASCII_GLYPHS.cache, "");
+		assert.equal(ASCII_GLYPHS.speed, "");
 	});
 });
 

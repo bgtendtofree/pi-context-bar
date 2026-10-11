@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -229,6 +229,20 @@ describe("Pac-Man lane", () => {
 			renderPacmanLane(active, 18, styles, 0, activity as keyof typeof GHOST_TOKENS);
 			assert.ok(seen.some(([seenToken, text]) => seenToken === token && text.includes(GHOST_GLYPH)));
 		}
+	});
+
+	test("keeps activity out of the warning and error roles", () => {
+		// Warning/error mark a crossed threshold or a failure, the way Omarchy keeps `urgent` for attention.
+		for (const token of Object.values(GHOST_TOKENS)) {
+			assert.ok(token !== "warning" && token !== "error", `ghost token ${token} is a threshold role`);
+		}
+	});
+
+	test("carries exactly three ghost states: quiet, generating, answering", () => {
+		// Reasoning and tool calls share `accent` on purpose: the palette has no fourth hue that is
+		// not a state color or a content role, and activity must not borrow either.
+		assert.equal(GHOST_TOKENS.thinking, GHOST_TOKENS.tools);
+		assert.deepEqual([...new Set(Object.values(GHOST_TOKENS))], ["muted", "accent", "success"]);
 	});
 
 	test("marks warning thresholds with power pellets that get eaten", () => {
@@ -615,5 +629,33 @@ describe("quota rendering", () => {
 	test("keeps quota lane dollar-free: limit percent renders, balance data never shown", () => {
 		const render = quotaRender({ weeklyPercent: undefined, limits: [{ label: "7d", percent: 32.5 }] }, identityStyles);
 		assert.deepEqual(plain(render.essentials), ["7d 33%", ""]);
+	});
+});
+
+describe("chrome color sources", () => {
+	// Omarchy's palette lives in the active pi theme file, so the extension must never carry its own
+	// colors: every value comes from a theme token, and no surface fills a background.
+	const ESC = String.fromCharCode(0x1b);
+	const chromeSources = (): readonly string[] => {
+		const root = new URL("../", import.meta.url);
+		const sources = ["index.ts"];
+		for (const dir of ["lib", "ui"]) {
+			for (const name of readdirSync(new URL(`${dir}/`, root))) {
+				if (name.endsWith(".ts") && !name.endsWith(".test.ts")) sources.push(`${dir}/${name}`);
+			}
+		}
+		return sources;
+	};
+
+	test("uses theme tokens only, with no hex colors and no raw ANSI escapes", () => {
+		const root = new URL("../", import.meta.url);
+		const sources = chromeSources();
+		assert.ok(sources.length >= 10);
+		for (const source of sources) {
+			const text = readFileSync(new URL(source, root), "utf8");
+			assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(text), `${source} hardcodes a hex color`);
+			assert.ok(!text.includes(ESC), `${source} embeds a raw escape character`);
+			assert.ok(!/\\x1b|\\033|\\u001b/.test(text), `${source} embeds a raw escape literal`);
+		}
 	});
 });

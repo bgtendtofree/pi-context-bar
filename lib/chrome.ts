@@ -67,10 +67,21 @@ export const POWER_PELLET_RATIOS = [0.7, 0.9] as const;
 
 export type LaneActivity = "idle" | "working" | "thinking" | "assistant" | "tools";
 
-/** Ghost color by lane activity; Pac-Man uses text, pellets dim, power pellets muted. */
+/**
+ * The ghost carries three states, not four: quiet (`muted`), generating (`accent`), answering
+ * (`success`). Reasoning and tool calls both mean "the model is streaming output", and Omarchy's
+ * palette has exactly one hue that is neither identity (`accent`) nor a state (green/yellow/red),
+ * so a fourth phase color would have to borrow a content role (`mdHeading`, `mdCode`) that some
+ * themes map onto `accent` or red. Hue therefore expresses identity, magnitude, and failure only —
+ * the way Omarchy's bar reserves `urgent` for attention — while the lane's shape and motion carry
+ * *which* work is happening. Activity also stays out of `warning`/`error` so a busy turn can never
+ * read as a crossed threshold or a failure. Keep `thinking` and `tools` distinct in `LaneActivity`:
+ * they are real information, and the mouth speed already differs because tool calls are not answer
+ * tokens.
+ */
 export const GHOST_TOKENS: Readonly<Record<Exclude<LaneActivity, "idle">, ThemeColor>> = {
 	working: "muted",
-	thinking: "warning",
+	thinking: "accent",
 	assistant: "success",
 	tools: "accent",
 };

@@ -16,9 +16,9 @@ it does not patch Pi core or replace conversation renderers.
 └─  gpt-5.6-sol · medium ─────────────────────────── 󰆼 98%  $1.61 ────┘
 ```
 
-Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary and Pac-Man chomps; both rest when idle. The chomping mouth and the ghost carry activity, and chomp speed is driven by live token throughput, so a slow turn is directly visible as slow chomping.
+Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; pellets ahead are remaining capacity. While the agent runs, a state-colored ghost chases the boundary and Pac-Man chomps; both rest when idle. The chomping mouth and the ghost carry activity, and chomp speed is driven by live token throughput, so a slow turn is directly visible as slow chomping.
 
-Every element uses Pi's active theme tokens, including truecolor/256-color capability overrides. Pac-Man is `text`, pellets are `dim`, power pellets are `muted`, and the ghost follows the lane phase (`muted` startup, `warning` thinking, `success` response, `accent` tools). The frame is `borderMuted`, switching to `bashMode` while the input starts with `!`. Semantic border and metric colors follow live theme changes. The ghost rests at `agent_settled`, not an intermediate `agent_end` that may still retry or continue.
+Every element uses Pi's active theme tokens, including truecolor/256-color capability overrides. Pac-Man is `text`, pellets are `dim`, power pellets are `muted`, and the ghost carries three states: `muted` while work has started but nothing is streamed yet, `accent` while the model is generating (reasoning or tool-call arguments), `success` while the answer itself streams. Reasoning and tool calls share a color on purpose: Omarchy's palette offers exactly one hue that is neither identity nor a state, so a fourth phase color would have to borrow a markdown or syntax role that some themes map onto the accent or onto red. `warning` and `error` stay reserved for crossed thresholds and failure, the way Omarchy keeps `urgent` for attention alone, so an active phase never reads as a problem. The frame is `borderMuted`, switching to `bashMode` while the input starts with `!`. Semantic border and metric colors follow live theme changes. The ghost rests at `agent_settled`, not an intermediate `agent_end` that may still retry or continue.
 
 ## Why
 
@@ -82,9 +82,9 @@ Top border carries context consumption (lane, `%` with the model's context-windo
 
 ## Startup
 
-A quiet welcome header appears immediately: bold `pi` + version on one row, resolved keybinding hints (`esc interrupt · ctrl+c exit · / commands · ! bash · …`) on the next. Both rows align with the editor's input text, with keys in accent and descriptions dim. Keys are read from your actual keybindings, so remaps show correctly, and the expand keybinding toggles a full hint list. No model or cwd repeats — those already live in the editor border and your shell.
+A quiet welcome header appears immediately: pi's mark drawn as half blocks (`▀▀█` / `█▀ █`) in accent with the version dim beside it, then the resolved keybinding hints (`esc interrupt · ctrl+c exit · / commands · ! bash · …`) on the mark's second row. Rows align with the editor's prompt column, with keys in accent and descriptions dim. The mark is single-color silhouette art, the way Omarchy prints its own logo, so it inherits whatever theme is active instead of carrying brand colors. Keys are read from your actual keybindings, so remaps show correctly, and the expand keybinding toggles a full hint list. On terminals that misalign half blocks, in ASCII mode, or when the width cannot fit the mark, the header falls back to the plain `pi vX` wordmark. No model or cwd repeats — those already live in the editor border and your shell.
 
-Pairs well with `"quietStartup": true` in `~/.pi/agent/settings.json`, which hides pi's `[Context] [Skills] [Extensions]` loaded-resources rows; resource details remain available via `/status`.
+`"quietStartup": true` in `~/.pi/agent/settings.json` hides this header too, leaving Pi's loaded-resources rows out and the startup output empty as the setting intends; `"header"` keeps the header and drops the resource details. Resource details remain available via `/status`.
 
 ## Font requirement
 

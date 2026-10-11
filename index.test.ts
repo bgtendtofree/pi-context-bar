@@ -945,3 +945,48 @@ test("warns once when a custom endpoint keeps Codex quota unavailable", async (t
 	await setImmediate();
 	assert.equal(notices.length, 1);
 });
+
+test("honours quietStartup by leaving pi's own startup header alone", () => {
+	const startSession = (settings: { quietStartup: boolean | "header" } | undefined) => {
+		const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+		let headers = 0;
+		const model = { api: "openai-codex-responses", provider: "openai-codex", id: "gpt-test", contextWindow: 100_000 };
+		const ctx = {
+			hasUI: true,
+			mode: "tui",
+			model,
+			getContextUsage: () => ({ tokens: 0, contextWindow: model.contextWindow }),
+			sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+			modelRegistry: { getApiKeyForProvider: async () => undefined },
+			ui: {
+				notify: () => {},
+				theme: {
+					fg: (_color: string, text: string) => text,
+					bold: (text: string) => text,
+					style: (text: string) => text,
+				},
+				setWorkingVisible: () => {},
+				setHeader: () => {
+					headers += 1;
+				},
+				setFooter: () => {},
+				setEditorComponent: () => {},
+			},
+		} as unknown as ExtensionContext;
+		const pi = {
+			registerCommand: () => {},
+			getThinkingLevel: () => "off",
+			getSettings: () => settings,
+			on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+		} as unknown as ExtensionAPI;
+		zContext(pi);
+		handlers.get("session_start")?.({ reason: "startup" }, ctx);
+		return headers;
+	};
+
+	assert.equal(startSession({ quietStartup: true }), 0);
+	assert.equal(startSession(undefined), 1);
+	assert.equal(startSession({ quietStartup: "header" }), 1);
+	// A throwing or absent settings read must not cost the user the header.
+	assert.equal(startSession(undefined), 1);
+});

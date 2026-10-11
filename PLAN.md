@@ -20,9 +20,10 @@ is shipped, what needs an owner decision, and what remains.
 
 - Square frame (`┌ ┐ └ ┘`, `─ │`), no background fills anywhere in the chrome.
 - Theme tokens only, never hex. Roles: `text` Pac-Man and typed input, `accent` model id and
-  ready prompt and tools ghost, `muted` working ghost and power pellets, `dim` pellets and
-  thinking and metrics, `borderMuted` frame, `bashMode` frame while input starts with `!`,
-  `warning`/`success`/`error` for phases, thresholds, and failure.
+  ready prompt and tools and thinking ghost, `muted` working ghost and power pellets, `dim` pellets and
+  thinking level and metrics, `borderMuted` frame, `bashMode` frame while input starts with `!`,
+  `warning`/`error` for thresholds and failure, `success` for a completed response. A source test
+  in `lib/chrome.test.ts` fails the build on any hex color or raw ANSI escape in chrome sources.
 - Prompt state: `❯` accent, `✗` error when the last completed turn stopped with `error`
   (`aborted` keeps the previous state). Derived from the session branch on start and tree nav.
 - Nerd Font icons in use: Pac-Man `󰮯`, ghost `󰊠`, reset countdown `󰦛`, reset credits `󰔖`,
@@ -35,6 +36,13 @@ is shipped, what needs an owner decision, and what remains.
   shows its reset countdown, and banked credits show only while any reported quota (weekly
   included) is above 70%; countdowns and credits drop before window percentages.
 - Quota group spacing: one space inside a group, two between groups.
+- Ghost states (three, not four): `muted` quiet while work has started without streamed output, `accent`
+  generating (reasoning and tool-call arguments share it — the palette has one non-state hue), `success`
+  while the answer streams. `warning`/`error` stay reserved for thresholds and failure. Locked by a test.
+- Startup header (Omarchy-aligned): pi's mark as half blocks `▀▀█` over `█▀ █` in `accent`, version
+  `dim` beside it, hints on the mark's second row, indent at the editor's prompt column. Single-color
+  silhouette, no background fills, fallback to the `pi vX` wordmark when the width cannot fit the mark.
+  `quietStartup: true` skips the replacement header so Pi's own startup output stays hidden.
 
 ## Ground rules for anything added here
 

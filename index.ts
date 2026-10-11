@@ -240,6 +240,7 @@ const resolveHints = (
 
 /** Quiet welcome header after session start; expandable via the same keybinding as pi's built-in header. */
 const setWelcomeHeader = (ctx: ExtensionContext): void => {
+	const mark = state.glyphs.ascii ? "text" : "block";
 	ctx.ui.setHeader(() => {
 		let expanded = false;
 		return {
@@ -249,6 +250,7 @@ const setWelcomeHeader = (ctx: ExtensionContext): void => {
 					resolveHints(COMPACT_HINT_DEFS),
 					resolveHints(EXPANDED_HINT_DEFS),
 					expanded,
+					mark,
 					width,
 					headerStyles(ctx),
 				),
@@ -311,6 +313,15 @@ const resetOutcomeNotice = (outcome: ResetRedemption): Readonly<{ message: strin
 	return { message: "OpenAI reset outcome unknown; rerun command to retry same request", level: "warning" };
 };
 
+/** Pi hides its own startup header on `quietStartup: true`; the replacement header obeys the same setting. */
+const startupHeaderSuppressed = (pi: ExtensionAPI): boolean => {
+	try {
+		return pi.getSettings().quietStartup === true;
+	} catch {
+		return false;
+	}
+};
+
 const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
 	patch({ glyphs: configGlyphs() });
@@ -321,7 +332,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 
 	if (ctx.mode === "tui") {
 		ctx.ui.setWorkingVisible(false);
-		setWelcomeHeader(ctx);
+		if (!startupHeaderSuppressed(pi)) setWelcomeHeader(ctx);
 	}
 	void refreshQuota(ctx);
 	registerFramedEditor(ctx, {

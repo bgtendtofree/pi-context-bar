@@ -9,6 +9,8 @@ const QUOTA_THROTTLE_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const OFFICIAL_ORIGIN = "https://chatgpt.com";
+/** Thrown when a custom endpoint cannot host Codex quota; the caller surfaces it as a hint, not a poll failure. */
+export const QUOTA_ENDPOINT_MESSAGE = "OpenAI Codex quota requires the official ChatGPT endpoint";
 /** JWT claim namespace carrying the ChatGPT account id (same claim pi extracts at login). */
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 
@@ -68,7 +70,8 @@ export const parseOpenAiUsage = (payload: unknown): QuotaUsage => {
 			...(resetAt !== undefined ? { resetAt } : {}),
 		});
 	}
-	const resetContainer = payload.rate_limit_reset_credits;
+	// The usage payload may nest the container under rate_limit; the unstyled shape carries it at the top level.
+	const resetContainer = payload.rate_limit_reset_credits ?? rateLimit.rate_limit_reset_credits;
 	const resetCredits = isObject(resetContainer) ? toNumber(resetContainer.available_count) : undefined;
 	return { weeklyPercent: undefined, limits, ...(resetCredits !== undefined ? { resetCredits } : {}) };
 };
@@ -79,7 +82,7 @@ const codexBase = (baseUrl?: string): string => {
 	try {
 		url = new URL(baseUrl);
 	} catch {
-		throw new Error("OpenAI Codex quota requires the official ChatGPT endpoint");
+		throw new Error(QUOTA_ENDPOINT_MESSAGE);
 	}
 	const path = url.pathname.replace(/\/+$/, "").replace(/\/codex(\/responses)?$/, "");
 	if (
@@ -90,7 +93,7 @@ const codexBase = (baseUrl?: string): string => {
 		url.hash ||
 		path !== "/backend-api"
 	) {
-		throw new Error("OpenAI Codex quota requires the official ChatGPT endpoint");
+		throw new Error(QUOTA_ENDPOINT_MESSAGE);
 	}
 	return DEFAULT_BASE_URL;
 };

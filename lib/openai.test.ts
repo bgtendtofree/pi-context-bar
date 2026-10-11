@@ -87,6 +87,17 @@ describe("parseOpenAiUsage", () => {
 		assert.deepEqual(usage.limits, [{ label: "L2", percent: 5 }]);
 	});
 
+	test("reads reset credits nested inside rate_limit too", () => {
+		const usage = parseOpenAiUsage({
+			rate_limit: {
+				primary_window: { used_percent: 80, limit_window_seconds: 18000 },
+				rate_limit_reset_credits: { available_count: 3 },
+			},
+		});
+		assert.equal(usage.resetCredits, 3);
+		assert.deepEqual(usage.limits, [{ label: "5h", percent: 80 }]);
+	});
+
 	test("returns empty usage for garbage", () => {
 		for (const payload of [undefined, null, 42, "nope", [], { rate_limit: "x" }]) {
 			assert.deepEqual(parseOpenAiUsage(payload), { weeklyPercent: undefined, limits: [] });

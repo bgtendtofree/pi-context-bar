@@ -895,3 +895,53 @@ test("lane chomps streamed tokens, reports live speed, and rewinds after compact
 	assert.ok(render().includes("8.0%"));
 	t.mock.timers.reset();
 });
+
+test("warns once when a custom endpoint keeps Codex quota unavailable", async (t) => {
+	const notices: string[] = [];
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	const pi = {
+		registerCommand: () => {},
+		getThinkingLevel: () => "off",
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => {
+			handlers.set(name, handler);
+		},
+	} as unknown as ExtensionAPI;
+	t.mock.method(globalThis, "fetch", async () => {
+		throw new Error("quota must not be polled on a custom endpoint");
+	});
+	const model = {
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		id: "gpt-test",
+		contextWindow: 100_000,
+		baseUrl: "https://proxy.example.com/backend-api",
+	};
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		model,
+		getContextUsage: () => ({ tokens: 0, contextWindow: model.contextWindow }),
+		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+		modelRegistry: { getApiKeyForProvider: async () => token("A") },
+		ui: {
+			notify: (text: string) => notices.push(text),
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+				style: (text: string) => text,
+			},
+			setWorkingVisible: () => {},
+			setHeader: () => {},
+			setFooter: () => {},
+			setEditorComponent: () => {},
+		},
+	} as unknown as ExtensionContext;
+	zContext(pi);
+	handlers.get("session_start")?.({ reason: "startup" }, ctx);
+	await setImmediate();
+	await setImmediate();
+	assert.deepEqual(notices, ["OpenAI Codex quota is off: the active model does not use the official ChatGPT endpoint"]);
+	handlers.get("model_select")?.({}, ctx);
+	await setImmediate();
+	assert.equal(notices.length, 1);
+});

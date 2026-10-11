@@ -48,7 +48,7 @@ Nerd Font icons decorate information that is already in the frame; they never ad
 | Cache hit | `md-database` `󰆼` replaces the `CH` label (`󰆼 98/94%`) | `CH98/94%` |
 | Token speed | dim `md-speedometer` `󰓅` before `t/s` (`󰓅 ~218t/s`) | `~218t/s` |
 
-Thinking levels stay plain dim text (`· high`, routed thinking included); there is no thinking icon. Only the exact known non-virtual providers `openai`, `openai-codex`, and `anthropic` get a badge; virtual selections and other providers show the model id alone. Provider badges are never inferred from a model id or from the routed physical model. The cache latest/average math and threshold colors are unchanged.
+Thinking levels stay plain dim text (`· high`, routed thinking included); there is no thinking icon. When the icon itself does not fit, the Nerd cache label keeps the bare percent (`98/94%`) because that is two columns narrower than the `CH` label, and the number matters more than the label. Only the exact known non-virtual providers `openai`, `openai-codex`, and `anthropic` get a badge; virtual selections and other providers show the model id alone. Provider badges are never inferred from a model id or from the routed physical model. The cache latest/average math and threshold colors are unchanged.
 
 The model id is accent and plain, with thinking dim after it. When the latest completed turn ends in a provider error the prompt becomes `✗` in the error token, until a turn finishes without error; user aborts keep the previous state. Context-window size stays dim even when usage warns. Wide lanes (80+ columns) space cells three columns apart instead of two, without capping the track; circular `○` power pellets mark the 70% / 90% thresholds.
 
@@ -112,7 +112,7 @@ Write `~/.pi/agent/pi-context-bar.json` as strict JSON (no comments):
 }
 ```
 
-`asciiFallback: true` uses C / O / 0 icons and the `> / x` prompt for terminals without a Nerd Font.
+`asciiFallback: true` uses C / O / 0 icons and the `> / x` prompt for terminals without a Nerd Font. It also covers terminals that draw ambiguous-width cells two columns wide (common with CJK fonts): those render the pellet and power-pellet glyphs wider than the single cell the lane budgets for them.
 
 The file is read once at startup; a missing or corrupt file silently uses defaults.
 

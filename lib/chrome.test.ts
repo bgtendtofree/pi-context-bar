@@ -343,8 +343,11 @@ describe("lane strip", () => {
 		assert.equal(formatWindowSize(372_000), "372K");
 		assert.equal(formatWindowSize(1_000_000), "1M");
 		assert.equal(formatWindowSize(999_999), "1M");
-		assert.equal(formatWindowSize(1_048_576), "1.0M");
-		assert.equal(formatWindowSize(999_499), "999K");
+		// One decimal keeps a fractional unit honest on both sides of the K/M boundary.
+		assert.equal(formatWindowSize(1_048_576), "1M");
+		assert.equal(formatWindowSize(999_499), "999.5K");
+		assert.equal(formatWindowSize(1_500), "1.5K");
+		assert.equal(formatWindowSize(1_500_000), "1.5M");
 		assert.equal(formatWindowSize(512), "512");
 		assert.equal(formatWindowSize(0), "0");
 	});

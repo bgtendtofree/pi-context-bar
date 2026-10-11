@@ -86,14 +86,14 @@ export const activityAfterContext = (current: LaneActivity): LaneActivity =>
 /** Role-based theme painter; the editor binds it to the live theme's `fg`. */
 export type ChromeStyles = Readonly<{ fg: (token: ThemeColor, text: string) => string }>;
 
-/** Compact context-window size: 200_000 → 200K, 512 → 512. */
+/** Compact context-window size: 200_000 → 200K, 1_500 → 1.5K, 1_048_576 → 1M, 512 → 512. */
 export const formatWindowSize = (tokens: number): string => {
-	const thousands = Math.round(tokens / 1000);
-	if (thousands >= 1000) {
-		const millions = thousands / 1000;
-		return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
-	}
-	return tokens >= 1000 ? `${thousands}K` : `${tokens}`;
+	if (tokens < 1000) return `${tokens}`;
+	// Kept to one decimal in the current unit, so a mid-sized window stays honest instead of rounding away.
+	const thousands = Math.round(tokens / 100) / 10;
+	if (thousands < 1000) return `${Number.isInteger(thousands) ? thousands : thousands.toFixed(1)}K`;
+	const millions = Math.round(thousands / 100) / 10;
+	return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
 };
 
 export const formatCost = (cost: number): string => {

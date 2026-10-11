@@ -16,6 +16,7 @@ import { configPath, readConfig } from "./lib/config.ts";
 import {
 	accumulateSessionUsage,
 	type ContextSnapshot,
+	hasRecoverableBilling,
 	latestAssistantResponse,
 	recoverableSubscriptionMarkers,
 	type SessionUsage,
@@ -27,6 +28,7 @@ import {
 	fetchResetCredits,
 	openAiAccountId,
 	type PendingReset,
+	QUOTA_ENDPOINT_MESSAGE,
 	type ResetRedemption,
 	redeemResetCredit,
 	shouldRefreshQuota,
@@ -64,6 +66,8 @@ type ChromeState = Readonly<{
 	quota: QuotaUsage | undefined;
 	quotaAccountId: string | undefined;
 	quotaLastAttemptAt: number | undefined;
+	/** One hint per session when a custom endpoint keeps Codex quota permanently unavailable. */
+	quotaEndpointWarned: boolean;
 }>;
 
 const freshState = (): ChromeState => ({
@@ -87,6 +91,7 @@ const freshState = (): ChromeState => ({
 	quota: undefined,
 	quotaAccountId: undefined,
 	quotaLastAttemptAt: undefined,
+	quotaEndpointWarned: false,
 });
 
 let state = freshState();
@@ -150,7 +155,13 @@ const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void>
 		if (!isCodexModel(ctx) || state.quotaAccountId !== accountId || state.quotaLastAttemptAt !== now) return;
 		patch({ quota });
 		requestRender();
-	} catch {
+	} catch (error) {
+		// A custom endpoint can never host Codex quota, so say so once instead of polling forever in silence.
+		if (error instanceof Error && error.message === QUOTA_ENDPOINT_MESSAGE && !state.quotaEndpointWarned) {
+			patch({ quotaEndpointWarned: true });
+			if (ctx.hasUI)
+				ctx.ui.notify("OpenAI Codex quota is off: the active model does not use the official ChatGPT endpoint");
+		}
 		// ponytail: quota is advisory chrome; a failed poll must never break the editor
 	}
 };
@@ -281,9 +292,12 @@ const readParentSessionEntries = (path: string): readonly SessionEntry[] | undef
 const recoverForkSubscriptionMarkers = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	const parent = ctx.sessionManager.getHeader?.()?.parentSession;
 	if (!parent) return;
+	const entries = ctx.sessionManager.getEntries();
+	// A marker only re-classifies a billed, non-plan response, so skip the parent read when none is present.
+	if (!hasRecoverableBilling(entries)) return;
 	const parentEntries = readParentSessionEntries(parent);
 	if (!parentEntries) return;
-	for (const messageEntryId of recoverableSubscriptionMarkers(ctx.sessionManager.getEntries(), parentEntries))
+	for (const messageEntryId of recoverableSubscriptionMarkers(entries, parentEntries))
 		pi.appendEntry(SUBSCRIPTION_TURN_ENTRY, { messageEntryId });
 };
 

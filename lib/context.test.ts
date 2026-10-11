@@ -5,6 +5,7 @@ import {
 	type AssistantUsage,
 	accumulateSessionUsage,
 	cacheHitRate,
+	hasRecoverableBilling,
 	latestAssistantResponse,
 	recoverableSubscriptionMarkers,
 	SUBSCRIPTION_TURN_ENTRY,
@@ -127,6 +128,15 @@ describe("session usage", () => {
 		assert.deepEqual(recoverableSubscriptionMarkers([before], parent), []);
 		assert.deepEqual(recoverableSubscriptionMarkers([before, sub], parent), ["b"]);
 		assert.deepEqual(recoverableSubscriptionMarkers([before, sub, subscriptionMarker("b")], parent), []);
+	});
+
+	test("only a billed non-plan response can be re-classified by a recovered marker", () => {
+		// The parent read is skipped entirely otherwise, so these entries must not request it.
+		assert.equal(hasRecoverableBilling([]), false);
+		assert.equal(hasRecoverableBilling([assistantEntry("plan", assistantUsage({}, 0.4), "openai-codex")]), false);
+		assert.equal(hasRecoverableBilling([assistantEntry("free", assistantUsage({}, 0), "openai")]), false);
+		assert.equal(hasRecoverableBilling([toolResultEntry("tools", assistantUsage({}, 0.2))]), false);
+		assert.equal(hasRecoverableBilling([assistantEntry("billed", assistantUsage({}, 0.4), "openai")]), true);
 	});
 
 	test("includes standalone usage without changing assistant cache metrics", () => {

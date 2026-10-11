@@ -24,19 +24,14 @@ export const providerBadge = (
 	return "";
 };
 
-/** Insert the decorative brain before every `· level` thinking label; routed labels included. */
-export const withThinkingGlyph = (label: string, glyph: string): string =>
-	glyph ? label.split(" · ").join(` · ${glyph} `) : label;
-
 /**
- * Apply the decorative provider badge and thinking brain to a fitted model label, keeping only the
- * widest variant that still fits beside the chosen quota and metrics. Icons are tried before any
- * useful model, quota, cache, or cost text is dropped.
+ * Apply the decorative provider badge to a fitted model label, keeping it only while the same
+ * quota and metric still fit. The badge drops before any useful model, quota, cache, or cost text.
  */
 export const decorateModel = (
 	model: string,
 	modelInfo: ModelInfo,
-	glyphs: GlyphSet,
+	glyphs: Pick<GlyphSet, "providerOpenai" | "providerAnthropic">,
 	width: number,
 	quota: string,
 	metric: string,
@@ -44,18 +39,11 @@ export const decorateModel = (
 	scrollReserve: number,
 ): string => {
 	const badge = providerBadge(modelInfo?.provider, glyphs);
-	const thinking = model.includes(" · ") ? withThinkingGlyph(model, glyphs.thinking) : model;
-	const candidates = [
-		badge && thinking !== model ? `${badge} ${thinking}` : "",
-		badge ? `${badge} ${model}` : "",
-		thinking,
-		model,
-	];
-	const unique = candidates.filter((value, index) => value.length > 0 && candidates.indexOf(value) === index);
-	return (
-		unique.find((candidate) => bottomBorderFits({ width, model: candidate, quota, metric, gap, scrollReserve })) ??
-		model
-	);
+	if (badge) {
+		const candidate = `${badge} ${model}`;
+		if (bottomBorderFits({ width, model: candidate, quota, metric, gap, scrollReserve })) return candidate;
+	}
+	return model;
 };
 
 /** Whether a bottom-border model/quota/metric triple fits; decorations must clear this before staying. */

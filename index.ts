@@ -1,6 +1,7 @@
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { keyText, VERSION } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import { keyText, parseSessionEntries, VERSION } from "@earendil-works/pi-coding-agent";
 import type { ModelInfo } from "./lib/border.ts";
 import {
 	ASCII_GLYPHS,
@@ -15,6 +16,7 @@ import {
 	accumulateSessionUsage,
 	type ContextSnapshot,
 	latestAssistantResponse,
+	recoverableSubscriptionMarkers,
 	type SessionUsage,
 	SUBSCRIPTION_TURN_ENTRY,
 } from "./lib/context.ts";
@@ -87,6 +89,8 @@ const freshState = (): ChromeState => ({
 
 let state = freshState();
 let quotaLookupId = 0;
+/** In-memory forks keep no parent file, so the endpoint's marker is carried in memory across the fork. */
+let pendingForkSubscriptionIds: readonly string[] | undefined;
 
 const pendingResetPath = (): string => join(dirname(configPath()), "pi-context-bar-reset-pending.json");
 
@@ -209,7 +213,6 @@ const startRewind = (fromUsedTokens: number): void => {
 const headerStyles = (ctx: ExtensionContext): HeaderStyles => ({
 	accent: (text) => ctx.ui.theme.bold(ctx.ui.theme.fg("accent", text)),
 	dim: (text) => ctx.ui.theme.fg("dim", text),
-	muted: (text) => ctx.ui.theme.fg("muted", text),
 });
 
 const resolveHints = (
@@ -241,6 +244,43 @@ const setWelcomeHeader = (ctx: ExtensionContext): void => {
 			},
 		};
 	});
+};
+
+/** Guard the untrusted parent path: a FIFO read would hang and a huge file would stall startup. */
+const MAX_PARENT_SESSION_BYTES = 64 * 1024 * 1024;
+
+/** Read a parent session through one descriptor: nonblocking open, fstat the descriptor, bounded read. */
+const readParentSessionEntries = (path: string): readonly SessionEntry[] | undefined => {
+	let fd: number | undefined;
+	try {
+		fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+		const info = fstatSync(fd);
+		if (!info.isFile() || info.size > MAX_PARENT_SESSION_BYTES) return undefined;
+		const buffer = Buffer.allocUnsafe(info.size);
+		let offset = 0;
+		while (offset < buffer.length) {
+			const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
+			if (read <= 0) break;
+			offset += read;
+		}
+		return parseSessionEntries(buffer.subarray(0, offset).toString("utf8")).filter(
+			(entry): entry is SessionEntry => entry.type !== "session",
+		);
+	} catch {
+		return undefined;
+	} finally {
+		if (fd !== undefined) closeSync(fd);
+	}
+};
+
+/** Re-append billing markers retained as ancestors when a fork copies a response into a new session. */
+const recoverForkSubscriptionMarkers = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
+	const parent = ctx.sessionManager.getHeader?.()?.parentSession;
+	if (!parent) return;
+	const parentEntries = readParentSessionEntries(parent);
+	if (!parentEntries) return;
+	for (const messageEntryId of recoverableSubscriptionMarkers(ctx.sessionManager.getEntries(), parentEntries))
+		pi.appendEntry(SUBSCRIPTION_TURN_ENTRY, { messageEntryId });
 };
 
 const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
@@ -338,6 +378,8 @@ export default function zContext(pi: ExtensionAPI): void {
 							ctx.ui.notify("OpenAI Codex account changed; retry cancelled", "warning");
 							return;
 						}
+						// Re-check durability before retrying; a failed earlier sync must not silently allow POST.
+						await store.sync();
 						postStarted = true;
 						const outcome = await redeemResetCredit(
 							currentKey,
@@ -418,7 +460,34 @@ export default function zContext(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.on("session_start", (_event, ctx) => registerChrome(pi, ctx));
+	pi.on("session_before_fork", (event, ctx) => {
+		const entries = ctx.sessionManager.getEntries();
+		const target =
+			event.position === "at" ? event.entryId : (ctx.sessionManager.getEntry?.(event.entryId)?.parentId ?? null);
+		if (!target) {
+			pendingForkSubscriptionIds = undefined;
+			return;
+		}
+		// The new branch is the ancestor chain of the endpoint; markers on it survive, trailing ones do not.
+		const byId = new Map(entries.map((entry) => [entry.id, entry]));
+		const branch: SessionEntry[] = [];
+		let currentId: string | null = target;
+		while (currentId) {
+			const entry = byId.get(currentId);
+			if (!entry) break;
+			branch.unshift(entry);
+			currentId = entry.parentId;
+		}
+		pendingForkSubscriptionIds = recoverableSubscriptionMarkers(branch, entries);
+	});
+
+	pi.on("session_start", (event, ctx) => {
+		const carried = event.reason === "fork" ? pendingForkSubscriptionIds : undefined;
+		pendingForkSubscriptionIds = undefined;
+		for (const messageEntryId of carried ?? []) pi.appendEntry(SUBSCRIPTION_TURN_ENTRY, { messageEntryId });
+		recoverForkSubscriptionMarkers(pi, ctx);
+		registerChrome(pi, ctx);
+	});
 
 	pi.on("context", (_event, ctx) => {
 		if (state.laneActivity !== "idle") changeLaneActivity("thinking");

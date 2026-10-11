@@ -24,8 +24,6 @@ export type GlyphSet = Readonly<{
 	/** Provider badges: cod-openai `\uec81` / cod-claude `\uec82`, Nerd Font v3.5.0+. Empty when ASCII. */
 	providerOpenai: string;
 	providerAnthropic: string;
-	/** Thinking brain md-brain `\u{f09d1}`; decorative, drops before the level text. */
-	thinking: string;
 	/** Cache-hit database md-database `\u{f01bc}`; replaces the `CH` label in Nerd mode. */
 	cache: string;
 	/** Speedometer md-speedometer `\u{f04c5}`; never shown without `t/s`. */
@@ -44,7 +42,6 @@ export const NERD_GLYPHS: GlyphSet = {
 	credit: "󰔖",
 	providerOpenai: "\uec81",
 	providerAnthropic: "\uec82",
-	thinking: "\u{f09d1}",
 	cache: "\u{f01bc}",
 	speed: "\u{f04c5}",
 	ascii: false,
@@ -60,7 +57,6 @@ export const ASCII_GLYPHS: GlyphSet = {
 	credit: "R",
 	providerOpenai: "",
 	providerAnthropic: "",
-	thinking: "",
 	cache: "",
 	speed: "",
 	ascii: true,
@@ -104,10 +100,13 @@ export const formatDuration = (ms: number): string => {
 
 const tint = (text: string, token: ThemeColor, styles: ChromeStyles): string => (text ? styles.fg(token, text) : "");
 
+/** Used percent above which health metrics warn; shared by context usage and quota windows. */
+export const USAGE_WARNING_PERCENT = 70;
+
 /** Color health metrics by usage: error > 90%, warning > 70%, else quiet dim. */
 export const styleUsage = (text: string, percent: number, styles: ChromeStyles): string => {
 	if (percent > 90) return styles.fg("error", text);
-	if (percent > 70) return styles.fg("warning", text);
+	if (percent > USAGE_WARNING_PERCENT) return styles.fg("warning", text);
 	return styles.fg("dim", text);
 };
 
@@ -173,44 +172,66 @@ export type QuotaUsage = Readonly<{
 /** Empty snapshot for absent or unparseable payloads. */
 export const EMPTY_QUOTA: QuotaUsage = { weeklyPercent: undefined, limits: [] };
 
-/** Quota metric variants, widest → tightest, styled at construction. Weekly survives before limits. */
-export const quotaMetricOptions = (
+/**
+ * Quota label split for the bottom border. `essentials` are window percentages, widest →
+ * tightest, and never carry countdowns or credits. `upgrades` are optional enrichments of an
+ * essential label (countdowns, credits), richest → narrowest, to be used only while model,
+ * window percentages, and cache/cost still fit. Healthy windows stay percentage-only; a window
+ * above the warning threshold shows its future countdown, and banked credits show only while any
+ * reported quota is above the warning threshold.
+ */
+export type QuotaRender = Readonly<{
+	essentials: readonly string[];
+	upgrades: readonly string[];
+}>;
+
+export const quotaRender = (
 	usage: QuotaUsage,
 	styles: ChromeStyles,
 	now = Date.now(),
 	glyphs: GlyphSet = NERD_GLYPHS,
-): readonly string[] => {
+): QuotaRender => {
 	const styledUsage = (text: string, percent: number): string => styleUsage(text, percent, styles);
+	const gap = styles.fg("dim", "  ");
 	const weekly =
 		usage.weeklyPercent !== undefined ? styledUsage(`W${Math.round(usage.weeklyPercent)}%`, usage.weeklyPercent) : "";
 	// Nerd icons breathe ("󰦛 52m"); ASCII tokens stay compact ("r52m").
 	const token = (icon: string, value: string): string =>
 		styles.fg("dim", glyphs.ascii ? `${icon}${value}` : `${icon} ${value}`);
-	const renderLimits = (withReset: boolean): string =>
-		usage.limits
-			.map((limit) => {
-				const base = styledUsage(`${limit.label} ${Math.round(limit.percent)}%`, limit.percent);
-				const remaining = limit.resetAt !== undefined ? limit.resetAt - now : undefined;
-				const reset =
-					withReset && remaining !== undefined && remaining > 0
-						? ` ${token(glyphs.reset, formatDuration(remaining))}`
-						: "";
-				return base + reset;
-			})
-			.join(styles.fg("dim", "  "));
-	const limits = renderLimits(true);
-	const plainLimits = renderLimits(false);
-	// Banked resets are quiet chrome; zero or unknown stays hidden.
-	const resets = usage.resetCredits ? token(glyphs.credit, `${usage.resetCredits}`) : "";
-	const candidates = [
-		[weekly, limits, resets].filter(Boolean).join(styles.fg("dim", "  ")),
-		...(limits === plainLimits ? [] : [[weekly, plainLimits, resets].filter(Boolean).join(styles.fg("dim", "  "))]),
-		weekly || resets,
-		"",
-	];
-	const options: string[] = [];
-	for (const value of candidates) if (options.at(-1) !== value) options.push(value);
-	return options;
+	const renderLimit = (limit: QuotaLimit, withCountdown: boolean): string => {
+		const base = styledUsage(`${limit.label} ${Math.round(limit.percent)}%`, limit.percent);
+		const remaining = limit.resetAt !== undefined ? limit.resetAt - now : undefined;
+		const countdown =
+			withCountdown && limit.percent > USAGE_WARNING_PERCENT && remaining !== undefined && remaining > 0
+				? ` ${token(glyphs.reset, formatDuration(remaining))}`
+				: "";
+		return base + countdown;
+	};
+	const fullLimits = usage.limits.map((limit) => renderLimit(limit, true)).join(gap);
+	const plainLimits = usage.limits.map((limit) => renderLimit(limit, false)).join(gap);
+	const anyHigh = [usage.weeklyPercent, ...usage.limits.map((limit) => limit.percent)].some(
+		(percent) => percent !== undefined && percent > USAGE_WARNING_PERCENT,
+	);
+	// Banked resets are quiet chrome; zero, unknown, and healthy sessions keep them hidden.
+	const resets =
+		usage.resetCredits !== undefined && usage.resetCredits > 0 && anyHigh
+			? token(glyphs.credit, `${usage.resetCredits}`)
+			: "";
+	const group = (...parts: readonly string[]): string => parts.filter(Boolean).join(gap);
+	const dedupe = (values: readonly string[]): string[] => {
+		const unique: string[] = [];
+		for (const value of values) if (!unique.includes(value)) unique.push(value);
+		return unique;
+	};
+	const essentials = dedupe([group(weekly, plainLimits), weekly, ""]);
+	const upgrades = dedupe([
+		resets ? group(weekly, fullLimits, resets) : "",
+		fullLimits === plainLimits ? "" : group(weekly, fullLimits),
+		resets ? group(weekly, plainLimits, resets) : "",
+	])
+		.filter((value) => value !== "" && !essentials.includes(value))
+		.sort((left, right) => visibleWidth(right) - visibleWidth(left));
+	return { essentials, upgrades };
 };
 
 /** One lane cell: glyph plus the remaining columns in its track. */

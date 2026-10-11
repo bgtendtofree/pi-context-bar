@@ -1,5 +1,6 @@
 /** Cross-process reset transaction. All record access stays inside the exclusive lock. */
 import { mkdir, open, readFile, rmdir, unlink } from "node:fs/promises";
+import { dirname } from "node:path";
 import { type PendingReset, parsePendingReset } from "./openai.ts";
 
 const errorCode = (error: unknown): string | undefined =>
@@ -10,8 +11,19 @@ const errorCode = (error: unknown): string | undefined =>
 type PendingResetStore = Readonly<{
 	read: () => Promise<PendingReset | undefined>;
 	save: (pending: PendingReset) => Promise<void>;
+	sync: () => Promise<void>;
 	clear: () => Promise<void>;
 }>;
+
+/** fsync the parent directory so a newly created record's filename survives power loss. */
+const syncDir = async (path: string): Promise<void> => {
+	const parent = await open(dirname(path), "r");
+	try {
+		await parent.sync();
+	} finally {
+		await parent.close();
+	}
+};
 
 /** Fail closed on abandoned locks: never guess whether another process can still POST. */
 export const withPendingReset = async (
@@ -57,6 +69,17 @@ export const withPendingReset = async (
 				} finally {
 					await file.close();
 				}
+				// Record must be durable on disk, not just in cache, before any POST starts.
+				await syncDir(path);
+			},
+			sync: async () => {
+				const file = await open(path, "r");
+				try {
+					await file.sync();
+				} finally {
+					await file.close();
+				}
+				await syncDir(path);
 			},
 			clear: async () => {
 				try {

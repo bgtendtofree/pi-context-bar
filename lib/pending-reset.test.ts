@@ -19,6 +19,8 @@ test("record access is exclusive, private, durable before POST, and fail-closed 
 		assert.equal((await stat(path)).mode & 0o777, 0o600);
 		assert.equal((await stat(`${path}.lock`)).mode & 0o777, 0o700);
 		assert.deepEqual(await store.read(), pending);
+		await store.sync();
+		assert.deepEqual(await store.read(), pending);
 		await assert.rejects(store.save(pending), { code: "EEXIST" });
 		await assert.rejects(
 			withPendingReset(path, async () => assert.fail("contender entered")),
@@ -37,6 +39,7 @@ test("record access is exclusive, private, durable before POST, and fail-closed 
 	}
 	await withPendingReset(path, async (store) => {
 		await store.clear();
+		await assert.rejects(store.sync(), { code: "ENOENT" });
 	});
 	await mkdir(path);
 	await withPendingReset(path, async (store) => {

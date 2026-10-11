@@ -18,8 +18,9 @@ import {
 	PELLET_GLYPH,
 	POWER_PELLET_GLYPH,
 	POWER_PELLET_RATIOS,
+	type QuotaLimit,
 	type QuotaUsage,
-	quotaMetricOptions,
+	quotaRender,
 	renderLaneStrip,
 	renderPacmanLane,
 } from "./chrome.ts";
@@ -431,31 +432,41 @@ describe("Nerd Font glyph grammar", () => {
 	test("matches the official glyphnames.json code points and stays single-cell", () => {
 		assert.equal(NERD_GLYPHS.providerOpenai, "\uec81");
 		assert.equal(NERD_GLYPHS.providerAnthropic, "\uec82");
-		assert.equal(NERD_GLYPHS.thinking, "\u{f09d1}");
 		assert.equal(NERD_GLYPHS.cache, "\u{f01bc}");
 		assert.equal(NERD_GLYPHS.speed, "\u{f04c5}");
+		assert.equal(NERD_GLYPHS.reset, "\u{f099b}");
+		assert.equal(NERD_GLYPHS.credit, "\u{f0516}");
 		assert.equal(NERD_GLYPHS.providerOpenai.codePointAt(0), 0xec81);
 		assert.equal(NERD_GLYPHS.providerAnthropic.codePointAt(0), 0xec82);
-		assert.equal(NERD_GLYPHS.thinking.codePointAt(0), 0xf09d1);
 		assert.equal(NERD_GLYPHS.cache.codePointAt(0), 0xf01bc);
 		assert.equal(NERD_GLYPHS.speed.codePointAt(0), 0xf04c5);
+		assert.equal(NERD_GLYPHS.reset.codePointAt(0), 0xf099b);
+		assert.equal(NERD_GLYPHS.credit.codePointAt(0), 0xf0516);
 		for (const glyph of [
 			NERD_GLYPHS.providerOpenai,
 			NERD_GLYPHS.providerAnthropic,
-			NERD_GLYPHS.thinking,
 			NERD_GLYPHS.cache,
 			NERD_GLYPHS.speed,
+			NERD_GLYPHS.reset,
+			NERD_GLYPHS.credit,
 		])
 			assert.equal(visibleWidth(glyph), 1);
 		assert.equal(ASCII_GLYPHS.providerOpenai, "");
 		assert.equal(ASCII_GLYPHS.providerAnthropic, "");
-		assert.equal(ASCII_GLYPHS.thinking, "");
 		assert.equal(ASCII_GLYPHS.cache, "");
 		assert.equal(ASCII_GLYPHS.speed, "");
+		assert.equal(ASCII_GLYPHS.reset, "r");
+		assert.equal(ASCII_GLYPHS.credit, "R");
 	});
 });
 
-describe("quota metric options", () => {
+describe("quota rendering", () => {
+	const now = Date.parse("2026-07-01T00:00:00Z");
+	const reset = (label: string, percent: number, minutes = 150): QuotaLimit => ({
+		label,
+		percent,
+		resetAt: now + minutes * 60_000,
+	});
 	const full: QuotaUsage = {
 		weeklyPercent: 40,
 		limits: [
@@ -463,95 +474,126 @@ describe("quota metric options", () => {
 			{ label: "1d", percent: 12 },
 		],
 	};
+	const plain = (values: readonly string[]): readonly string[] => values.map(stripVTControlCharacters);
 
-	test("offers widest to tightest variants", () => {
-		const options = quotaMetricOptions(full, identityStyles).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["W40%  5h 30%  1d 12%", "W40%", ""]);
+	test("healthy windows are percentage-only essentials with no upgrades", () => {
+		const render = quotaRender(
+			{ weeklyPercent: undefined, limits: [reset("5h", 53), reset("7d", 43)] },
+			identityStyles,
+			now,
+		);
+		assert.deepEqual(plain(render.essentials), ["5h 53%  7d 43%", ""]);
+		assert.deepEqual(render.upgrades, []);
 	});
 
-	test("skips the combined variant when weekly is unknown", () => {
-		const options = quotaMetricOptions({ weeklyPercent: undefined, limits: full.limits }, identityStyles);
-		assert.equal(stripVTControlCharacters(options[0] ?? ""), "5h 30%  1d 12%");
-		assert.equal(options[1], "");
+	test("only a window above the warning threshold upgrades to its countdown", () => {
+		const render = quotaRender(
+			{ weeklyPercent: undefined, limits: [reset("5h", 75), reset("7d", 43)] },
+			identityStyles,
+			now,
+		);
+		assert.deepEqual(plain(render.essentials), ["5h 75%  7d 43%", ""]);
+		assert.deepEqual(plain(render.upgrades), ["5h 75% 󰦛 2h 30m  7d 43%"]);
 	});
 
-	test("appends remaining time to each window when the provider reports a reset", () => {
-		const now = Date.parse("2026-07-01T00:00:00Z");
-		const usageWithReset: QuotaUsage = {
-			weeklyPercent: undefined,
-			limits: [
-				{ label: "5h", percent: 30, resetAt: now + 150 * 60_000 },
-				{ label: "7d", percent: 12, resetAt: now + 5 * 86_400_000 + 15 * 3_600_000 },
-			],
-		};
-		const options = quotaMetricOptions(usageWithReset, identityStyles, now).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["5h 30% 󰦛 2h 30m  7d 12% 󰦛 5d 15h", "5h 30%  7d 12%", ""]);
+	test("treats exactly 70 as quiet and 70.01/90 as high", () => {
+		for (const [percent, upgraded] of [
+			[70, false],
+			[70.01, true],
+			[90, true],
+		] as const) {
+			const render = quotaRender({ weeklyPercent: undefined, limits: [reset("5h", percent)] }, identityStyles, now);
+			assert.equal(render.upgrades.length > 0, upgraded, String(percent));
+		}
 	});
 
-	test("uses the ASCII reset and credit tokens without spacing", () => {
-		const now = Date.parse("2026-07-01T00:00:00Z");
-		const usageWithReset: QuotaUsage = {
-			weeklyPercent: 40,
-			limits: [{ label: "5h", percent: 30, resetAt: now + 150 * 60_000 }],
-			resetCredits: 3,
-		};
-		const options = quotaMetricOptions(usageWithReset, identityStyles, now, ASCII_GLYPHS).map(stripVTControlCharacters);
-		assert.equal(options[0], "W40%  5h 30% r2h 30m  R3");
+	test("counts weekly percent toward the high check", () => {
+		const high = quotaRender({ weeklyPercent: 71, limits: [reset("5h", 10)] }, identityStyles, now);
+		assert.equal(stripVTControlCharacters(high.essentials[0] ?? ""), "W71%  5h 10%");
+		const withCredits = quotaRender({ weeklyPercent: 71, limits: [], resetCredits: 2 }, identityStyles, now);
+		assert.equal(stripVTControlCharacters(withCredits.essentials[0] ?? ""), "W71%");
+		assert.deepEqual(plain(withCredits.upgrades), ["W71%  󰔖 2"]);
 	});
 
-	test("uses the md-restore and md-ticket glyphs, never the fallback arrow", () => {
-		assert.equal(NERD_GLYPHS.reset.codePointAt(0), 0xf099b);
-		assert.equal(NERD_GLYPHS.credit.codePointAt(0), 0xf0516);
-		assert.equal(visibleWidth(NERD_GLYPHS.reset), 1);
-		assert.equal(visibleWidth(NERD_GLYPHS.credit), 1);
-		assert.equal(ASCII_GLYPHS.reset, "r");
-		assert.equal(ASCII_GLYPHS.credit, "R");
+	test("hides the countdown for missing or expired resets", () => {
+		const missing = quotaRender(
+			{ weeklyPercent: undefined, limits: [{ label: "5h", percent: 80 }] },
+			identityStyles,
+			now,
+		);
+		assert.equal(stripVTControlCharacters(missing.essentials[0] ?? ""), "5h 80%");
+		assert.deepEqual(missing.upgrades, []);
+		const expired = quotaRender(
+			{ weeklyPercent: undefined, limits: [{ label: "5h", percent: 80, resetAt: now - 1000 }] },
+			identityStyles,
+			now,
+		);
+		assert.equal(stripVTControlCharacters(expired.essentials[0] ?? ""), "5h 80%");
+		assert.deepEqual(expired.upgrades, []);
+	});
+
+	test("shows credits only while a reported quota is above the warning threshold", () => {
+		const high = quotaRender(
+			{ weeklyPercent: undefined, limits: [reset("5h", 75)], resetCredits: 3 },
+			identityStyles,
+			now,
+		);
+		assert.deepEqual(plain(high.upgrades), ["5h 75% 󰦛 2h 30m  󰔖 3", "5h 75% 󰦛 2h 30m", "5h 75%  󰔖 3"]);
+		const healthy = quotaRender({ ...full, resetCredits: 3 }, identityStyles, now);
+		assert.deepEqual(plain(healthy.essentials), ["W40%  5h 30%  1d 12%", "W40%", ""]);
+		assert.deepEqual(healthy.upgrades, []);
+		const zero = quotaRender(
+			{ weeklyPercent: undefined, limits: [reset("5h", 75)], resetCredits: 0 },
+			identityStyles,
+			now,
+		);
+		assert.ok(zero.upgrades.every((value) => !value.includes("󰔖")));
+		const unknown = quotaRender({ weeklyPercent: undefined, limits: [reset("5h", 75)] }, identityStyles, now);
+		assert.ok(unknown.upgrades.every((value) => !value.includes("󰔖")));
+	});
+
+	test("keeps window percentages essential while countdowns and credits upgrade", () => {
+		const render = quotaRender(
+			{ weeklyPercent: undefined, limits: [reset("5h", 92), reset("7d", 43)], resetCredits: 1 },
+			identityStyles,
+			now,
+		);
+		assert.ok(render.essentials.every((value) => !value.includes("󰦛") && !value.includes("󰔖")));
+		assert.ok(render.essentials[0]?.includes("5h 92%") && render.essentials[0]?.includes("7d 43%"));
+		assert.ok(render.upgrades[0]?.includes("󰦛") && render.upgrades[0]?.includes("󰔖"));
+	});
+
+	test("uses ASCII tokens without spacing and Nerd glyphs with spacing", () => {
+		const usage: QuotaUsage = { weeklyPercent: undefined, limits: [reset("5h", 75)], resetCredits: 2 };
+		const ascii = quotaRender(usage, identityStyles, now, ASCII_GLYPHS);
+		assert.equal(stripVTControlCharacters(ascii.upgrades[0] ?? ""), "5h 75% r2h 30m  R2");
+		const nerd = quotaRender(usage, identityStyles, now, NERD_GLYPHS);
+		assert.equal(stripVTControlCharacters(nerd.upgrades[0] ?? ""), "5h 75% 󰦛 2h 30m  󰔖 2");
 		assert.ok(!readFileSync(new URL("./chrome.ts", import.meta.url), "utf8").includes("↻"));
-		const now = Date.parse("2026-07-01T00:00:00Z");
-		const output = quotaMetricOptions(
-			{ weeklyPercent: 40, limits: [{ label: "5h", percent: 30, resetAt: now + 3_600_000 }], resetCredits: 2 },
-			identityStyles,
-			now,
-		).join("");
-		assert.ok(!output.includes("↻"));
-		assert.ok(output.includes("󰦛") && output.includes("󰔖"));
 	});
 
-	test("drops a past window reset instead of showing zero", () => {
-		const now = Date.parse("2026-07-01T00:00:00Z");
-		const options = quotaMetricOptions(
-			{ weeklyPercent: undefined, limits: [{ label: "5h", percent: 30, resetAt: now - 1000 }] },
-			identityStyles,
-			now,
-		).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["5h 30%", ""]);
+	test("offers weekly fallback and empty essential for a quiet session", () => {
+		const render = quotaRender(full, identityStyles);
+		assert.deepEqual(plain(render.essentials), ["W40%  5h 30%  1d 12%", "W40%", ""]);
+		assert.deepEqual(render.upgrades, []);
+	});
+
+	test("skips the combined essential when weekly is unknown", () => {
+		const render = quotaRender({ weeklyPercent: undefined, limits: full.limits }, identityStyles);
+		assert.deepEqual(plain(render.essentials), ["5h 30%  1d 12%", ""]);
 	});
 
 	test("escalates color with usage level", () => {
-		const options = quotaMetricOptions({ weeklyPercent: 95, limits: [{ label: "5h", percent: 80 }] }, markedStyles);
-		assert.equal(options[0], "<error>W95%</error><dim>  </dim><warning>5h 80%</warning>");
+		const render = quotaRender({ weeklyPercent: 95, limits: [{ label: "5h", percent: 80 }] }, markedStyles);
+		assert.equal(render.essentials[0], "<error>W95%</error><dim>  </dim><warning>5h 80%</warning>");
 	});
 
 	test("keeps quiet quota dim", () => {
-		assert.equal(quotaMetricOptions(full, markedStyles)[1], "<dim>W40%</dim>");
-	});
-
-	test("appends banked reset credits and uses them as the tight fallback", () => {
-		const usageWithResets: QuotaUsage = { ...full, weeklyPercent: undefined, resetCredits: 3 };
-		const options = quotaMetricOptions(usageWithResets, identityStyles).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["5h 30%  1d 12%  󰔖 3", "󰔖 3", ""]);
-	});
-
-	test("hides zero reset credits", () => {
-		const options = quotaMetricOptions({ ...full, resetCredits: 0 }, identityStyles).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["W40%  5h 30%  1d 12%", "W40%", ""]);
+		assert.equal(quotaRender(full, markedStyles).essentials[1], "<dim>W40%</dim>");
 	});
 
 	test("keeps quota lane dollar-free: limit percent renders, balance data never shown", () => {
-		const options = quotaMetricOptions(
-			{ weeklyPercent: undefined, limits: [{ label: "7d", percent: 32.5 }] },
-			identityStyles,
-		).map(stripVTControlCharacters);
-		assert.deepEqual(options, ["7d 33%", ""]);
+		const render = quotaRender({ weeklyPercent: undefined, limits: [{ label: "7d", percent: 32.5 }] }, identityStyles);
+		assert.deepEqual(plain(render.essentials), ["7d 33%", ""]);
 	});
 });

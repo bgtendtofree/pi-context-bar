@@ -5,7 +5,6 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 export type HeaderStyles = Readonly<{
 	accent: (text: string) => string;
 	dim: (text: string) => string;
-	muted: (text: string) => string;
 }>;
 
 /** One resolved keybinding hint: display key plus what it does. */

@@ -1,14 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import {
-	bottomBorderFits,
-	decorateModel,
-	editorModelOptions,
-	providerBadge,
-	renderLabeledBorder,
-	withThinkingGlyph,
-} from "./border.ts";
+import { bottomBorderFits, decorateModel, editorModelOptions, providerBadge, renderLabeledBorder } from "./border.ts";
 import { ASCII_GLYPHS, NERD_GLYPHS } from "./chrome.ts";
 
 describe("editor model labels", () => {
@@ -73,29 +66,17 @@ describe("provider badges", () => {
 	});
 });
 
-describe("thinking brain", () => {
-	test("decorates every thinking label including routed ones", () => {
-		assert.equal(
-			withThinkingGlyph("auto · high → gpt-test · medium", NERD_GLYPHS.thinking),
-			`auto · ${NERD_GLYPHS.thinking} high → gpt-test · ${NERD_GLYPHS.thinking} medium`,
-		);
-		assert.equal(withThinkingGlyph("gpt-test · medium", ""), "gpt-test · medium");
-		assert.equal(withThinkingGlyph("gpt-test", NERD_GLYPHS.thinking), "gpt-test");
-		assert.equal(withThinkingGlyph("auto → gpt-test", NERD_GLYPHS.thinking), "auto → gpt-test");
-	});
-});
-
 describe("decorated model fitting", () => {
 	const info = { id: "claude", reasoning: true, provider: "anthropic" } as const;
 
-	test("keeps badge and brain when they fit", () => {
+	test("keeps the badge when it fits", () => {
 		assert.equal(
 			decorateModel("claude · high", info, NERD_GLYPHS, 200, "", "", 2, 0),
-			`${NERD_GLYPHS.providerAnthropic} claude · ${NERD_GLYPHS.thinking} high`,
+			`${NERD_GLYPHS.providerAnthropic} claude · high`,
 		);
 	});
 
-	test("drops brain before badge and both before the model text", () => {
+	test("drops the badge before the model text", () => {
 		assert.equal(
 			decorateModel("claude · high", info, NERD_GLYPHS, 21, "", "", 2, 0),
 			`${NERD_GLYPHS.providerAnthropic} claude · high`,
@@ -103,7 +84,7 @@ describe("decorated model fitting", () => {
 		assert.equal(decorateModel("claude · high", info, NERD_GLYPHS, 20, "", "", 2, 0), "claude · high");
 	});
 
-	test("drops decorations before quota and metrics", () => {
+	test("drops the badge before quota and metrics", () => {
 		const model = "gpt · high";
 		assert.equal(decorateModel(model, info, NERD_GLYPHS, 33, "5h 30%", "$1.61", 2, 0), model);
 		assert.equal(

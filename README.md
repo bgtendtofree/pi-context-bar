@@ -13,7 +13,7 @@ it does not patch Pi core or replace conversation renderers.
 ```
 ┌─ 󰮯 • • • ○ • • • 15.7% (200K)  󰓅 ~42.3t/s ───────────────────────────┐
 │  ❯ hello                                                             │
-└─  gpt-5.6-sol · 󰧑 medium ─────────────────────────── 󰆼 98%  $1.61 ──┘
+└─  gpt-5.6-sol · medium ─────────────────────────── 󰆼 98%  $1.61 ────┘
 ```
 
 Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; pellets ahead are remaining capacity. While the agent runs, a phase-colored ghost chases the boundary and Pac-Man chomps; both rest when idle. The chomping mouth and the ghost carry activity, and chomp speed is driven by live token throughput, so a slow turn is directly visible as slow chomping.
@@ -30,7 +30,7 @@ Every element uses Pi's active theme tokens, including truecolor/256-color capab
 
 | Zone | Content |
 |------|---------|
-| Editor border left | provider badge · model id (accent) · dim thinking brain + level |
+| Editor border left | provider badge · model id (accent) · dim thinking level |
 | Editor body | `❯` prompt (accent) · typed input |
 | Editor border right | cache database · optional `$` |
 | Pac-Man lane | empty consumed space → phase ghost while running → text Pac-Man → dim remaining pellets |
@@ -45,11 +45,10 @@ Nerd Font icons decorate information that is already in the frame; they never ad
 | Information | Nerd Font icon | ASCII fallback |
 |---|---|---|
 | Selected provider | accent `cod-openai` `` / `cod-claude` `` before the model id | no badge |
-| Thinking level | dim `md-brain` `󰧑` after `· `, routed thinking included | plain `· max` |
 | Cache hit | `md-database` `󰆼` replaces the `CH` label (`󰆼 98/94%`) | `CH98/94%` |
 | Token speed | dim `md-speedometer` `󰓅` before `t/s` (`󰓅 ~218t/s`) | `~218t/s` |
 
-Only the exact known non-virtual providers `openai`, `openai-codex`, and `anthropic` get a badge; virtual selections and other providers show the model id alone. Provider badges are never inferred from a model id or from the routed physical model. The cache latest/average math, threshold colors, and cost/quota behavior are unchanged.
+Thinking levels stay plain dim text (`· high`, routed thinking included); there is no thinking icon. Only the exact known non-virtual providers `openai`, `openai-codex`, and `anthropic` get a badge; virtual selections and other providers show the model id alone. Provider badges are never inferred from a model id or from the routed physical model. The cache latest/average math and threshold colors are unchanged.
 
 The model id is accent and plain, with thinking dim after it. When the latest completed turn ends in a provider error the prompt becomes `✗` in the error token, until a turn finishes without error; user aborts keep the previous state. Context-window size stays dim even when usage warns. Wide lanes (80+ columns) space cells three columns apart instead of two, without capping the track; circular `○` power pellets mark the 70% / 90% thresholds.
 
@@ -61,7 +60,7 @@ Session cost includes standalone usage entries (such as cache warming) and neste
 
 OpenAI Codex subscription quota sits beside the model label:
 
-- **OpenAI Codex (ChatGPT Plus/Pro)**: `5h 100%` and `7d 31%` windows from `/wham/usage`, each followed by a dim `󰦛 2h 30m` time to its reset (ASCII `r2h 30m`), plus a dim `󰔖 <n>` count (ASCII `R<n>`) when banked usage-limit resets are available
+- **OpenAI Codex (ChatGPT Plus/Pro)**: `5h 53%` and `7d 43%` windows from `/wham/usage`. Healthy windows stay quiet with just their label and used percent, matching the editor's warning threshold. A window above 70% shows a dim `󰦛 2h 30m` countdown to its reset (ASCII `r2h 30m`) next to that window only; exactly 70% is still quiet, and a healthy sibling window is never expanded. A dim `󰔖 <n>` count (ASCII `R<n>`) appears only while any reported quota (including the weekly percent) is above 70%; zero or unknown credits stay hidden. The border first fits the model, window percentages, and cache/cost, then spends only spare width on countdowns and credits, so optional detail never pushes out a useful number; on narrow borders those optional fields drop before any window percentage.
 
 Quota is advisory chrome: refreshed on activity (`turn_end`, `model_select`) at most once a minute, failures keep the last good snapshot, and it hides unless a physical legacy `openai-codex` model is active. Pi's new `/login openai` ChatGPT authentication uses different API credentials; quota and reset support are not assumed compatible with it. Virtual selections also keep legacy quota/reset disabled.
 
@@ -89,7 +88,7 @@ Pairs well with `"quietStartup": true` in `~/.pi/agent/settings.json`, which hid
 
 ## Font requirement
 
-Pac-Man `󰮯`, Ghost `󰊠`, and the `md-*` chrome icons (reset `󰦛`, reset credits `󰔖`, brain `󰧑`, database `󰆼`, speedometer `󰓅`) are Material Design glyphs present since Nerd Font **v3.0.0**. The provider badges `cod-openai` `` and `cod-claude` `` are Codicons first shipped in Nerd Font **v3.5.0** (they are absent from v3.4.0 and earlier). Configure your terminal profile to use a **Nerd Font v3.5.0+** for the full chrome; installing the font without selecting it in the terminal is not enough. **JetBrainsMono Nerd Font Mono** is recommended because its icons stay single-cell and keep the lane aligned. There is no font detection: on an older release the badge codepoints have no glyph and may render as tofu or a terminal fallback, so upgrade to v3.5.0+ or set `asciiFallback` to omit them.
+Pac-Man `󰮯`, Ghost `󰊠`, and the `md-*` chrome icons (reset `󰦛`, reset credits `󰔖`, database `󰆼`, speedometer `󰓅`) are Material Design glyphs present since Nerd Font **v3.0.0**. The provider badges `cod-openai` `` and `cod-claude` `` are Codicons first shipped in Nerd Font **v3.5.0** (they are absent from v3.4.0 and earlier). Configure your terminal profile to use a **Nerd Font v3.5.0+** for the full chrome; installing the font without selecting it in the terminal is not enough. **JetBrainsMono Nerd Font Mono** is recommended because its icons stay single-cell and keep the lane aligned. There is no font detection: on an older release the badge codepoints have no glyph and may render as tofu or a terminal fallback, so upgrade to v3.5.0+ or set `asciiFallback` to omit them.
 
 Terminals without a Nerd Font (SSH into a remote box, a locked-down corporate profile) fall back to ASCII glyphs via one config file — see [Config](#config).
 
@@ -105,14 +104,15 @@ Remove with `pi remove pi-context-bar`.
 
 ## Config
 
-One optional file, one optional key — the default is the intended setup:
+Write `~/.pi/agent/pi-context-bar.json` as strict JSON (no comments):
 
-```jsonc
-// ~/.pi/agent/pi-context-bar.json
+```json
 {
-	"asciiFallback": true // terminals without a Nerd Font: C / O / 0 icons and > / x prompt
+	"asciiFallback": true
 }
 ```
+
+`asciiFallback: true` uses C / O / 0 icons and the `> / x` prompt for terminals without a Nerd Font.
 
 The file is read once at startup; a missing or corrupt file silently uses defaults.
 

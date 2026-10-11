@@ -7,7 +7,6 @@ import { type HeaderStyles, type Hint, renderWelcome } from "./header.ts";
 const identityStyles: HeaderStyles = {
 	accent: (text) => text,
 	dim: (text) => text,
-	muted: (text) => text,
 };
 
 const version = "1.2.3";
@@ -67,7 +66,6 @@ describe("welcome header", () => {
 	test("keeps keys more prominent than descriptions in both views", () => {
 		const styles: HeaderStyles = {
 			accent: (text) => `<a>${text}</a>`,
-			muted: (text) => `<m>${text}</m>`,
 			dim: (text) => `<d>${text}</d>`,
 		};
 		for (const expandedState of [false, true]) {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -316,7 +316,7 @@ test("quota belongs to active account and model switches update context immediat
 	};
 	branch = [{ type: "message", id: "routed", parentId: null, timestamp: "", message }];
 	handlers.get("turn_end")?.({ message }, ctx);
-	assert.match(render(), new RegExp(`auto → gpt-routed · ${NERD_GLYPHS.thinking} medium`));
+	assert.match(render(), /auto → gpt-routed · medium/);
 	branch.push({
 		type: "message",
 		id: "failed",
@@ -325,7 +325,7 @@ test("quota belongs to active account and model switches update context immediat
 		message: { ...message, model: "failed-route", stopReason: "error" },
 	});
 	handlers.get("session_tree")?.({}, ctx);
-	assert.match(render(), new RegExp(`auto → gpt-routed · ${NERD_GLYPHS.thinking} medium`));
+	assert.match(render(), /auto → gpt-routed · medium/);
 	assert.doesNotMatch(render(), /failed-route/);
 	branch = [];
 	handlers.get("session_tree")?.({}, ctx);
@@ -450,4 +450,186 @@ test("subscription identity is captured per request and persisted by assistant e
 	assert.deepEqual(records[0]?.data, { messageEntryId: "subscription" });
 	assert.equal(accumulateSessionUsage(JSON.parse(JSON.stringify(entries)) as SessionEntry[]).cost, 0.5);
 	handlers.get("session_shutdown")?.({}, ctx);
+});
+
+test("a directory-sync failure blocks the retry POST and keeps the pending record", {
+	skip: process.platform === "win32" || process.getuid?.() === 0,
+}, async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-reset-sync-"));
+	const previousDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = dir;
+	t.after(async () => {
+		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousDir;
+		await chmod(dir, 0o700);
+		await rm(dir, { recursive: true, force: true });
+	});
+	const path = join(dir, "pi-context-bar-reset-pending.json");
+	const pending = { accountId: "a", creditId: "c", requestId: "r" };
+	await writeFile(path, JSON.stringify(pending));
+	let command: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"] | undefined;
+	zContext({
+		registerCommand: (_name, value) => {
+			command = value.handler;
+		},
+		on: () => {},
+	} as unknown as ExtensionAPI);
+	let consumes = 0;
+	t.mock.method(globalThis, "fetch", async (url: string) => {
+		if (url.endsWith("/consume")) consumes++;
+		return new Response(JSON.stringify({ code: "reset" }));
+	});
+	const notices: string[] = [];
+	const ctx = {
+		model: { provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api" },
+		modelRegistry: { getApiKeyForProvider: async () => token("a") },
+		ui: { confirm: async () => true, notify: (message: string) => notices.push(message) },
+	} as unknown as ExtensionCommandContext;
+	// Execute without read on the directory: file access still works, but open(dir, "r").sync must fail.
+	await chmod(dir, 0o333);
+	await command?.("", ctx);
+	assert.equal(consumes, 0);
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), pending);
+	assert.match(notices.at(-1) ?? "", /failed/);
+});
+
+const billedResponse = (id: string): SessionEntry =>
+	({
+		type: "message",
+		id,
+		parentId: null,
+		timestamp: "",
+		message: {
+			role: "assistant",
+			content: [],
+			api: "openai",
+			provider: "openai",
+			model: "gpt",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.4 },
+			},
+			stopReason: "stop",
+			timestamp: 0,
+		},
+	}) as unknown as SessionEntry;
+
+const markerEntry = (messageEntryId: string, parentId: string | null): SessionEntry => ({
+	type: "custom",
+	id: `billing-${messageEntryId}`,
+	parentId,
+	timestamp: "",
+	customType: SUBSCRIPTION_TURN_ENTRY,
+	data: { messageEntryId },
+});
+
+test("in-memory fork carries the endpoint's explicit billing marker with no parent file", () => {
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	let entries: SessionEntry[] = [];
+	const pi = {
+		registerCommand: () => {},
+		appendEntry: (customType: string, data: unknown) => {
+			entries.push({
+				type: "custom",
+				id: `appended-${entries.length}`,
+				parentId: entries.at(-1)?.id ?? null,
+				timestamp: "",
+				customType,
+				data,
+			} as SessionEntry);
+		},
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	const ctx = {
+		hasUI: false,
+		mode: "print",
+		sessionManager: {
+			getEntries: () => entries,
+			getLeafId: () => entries.at(-1)?.id ?? null,
+			getEntry: (id: string) => entries.find((entry) => entry.id === id),
+			getHeader: () => null,
+		},
+	} as unknown as ExtensionContext;
+	zContext(pi);
+	entries = [billedResponse("sub"), markerEntry("sub", "sub")];
+	handlers.get("session_before_fork")?.({ entryId: "sub", position: "at" }, ctx);
+	entries = [billedResponse("sub")]; // In-memory fork keeps the response, drops the child marker, sets no parent file.
+	handlers.get("session_start")?.({ reason: "fork" }, ctx);
+	assert.deepEqual(entries.at(-1)?.data, { messageEntryId: "sub" });
+	assert.equal(accumulateSessionUsage(entries).cost, 0);
+});
+
+test("in-memory fork carries markers for earlier responses retained on the target branch", () => {
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	let entries: SessionEntry[] = [];
+	const pi = {
+		registerCommand: () => {},
+		appendEntry: (customType: string, data: unknown) => {
+			entries.push({
+				type: "custom",
+				id: `appended-${entries.length}`,
+				parentId: entries.at(-1)?.id ?? null,
+				timestamp: "",
+				customType,
+				data,
+			} as SessionEntry);
+		},
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	const ctx = {
+		hasUI: false,
+		mode: "print",
+		sessionManager: {
+			getEntries: () => entries,
+			getLeafId: () => entries.at(-1)?.id ?? null,
+			getEntry: (id: string) => entries.find((entry) => entry.id === id),
+			getHeader: () => null,
+		},
+	} as unknown as ExtensionContext;
+	zContext(pi);
+	// Subscription A keeps its marker on a sibling branch; paid B is the fork endpoint under A.
+	entries = [billedResponse("a"), markerEntry("a", "a"), { ...billedResponse("b"), parentId: "a" }];
+	handlers.get("session_before_fork")?.({ entryId: "b", position: "at" }, ctx);
+	entries = [billedResponse("a"), { ...billedResponse("b"), parentId: "a" }];
+	handlers.get("session_start")?.({ reason: "fork" }, ctx);
+	assert.deepEqual(entries.at(-1)?.data, { messageEntryId: "a" });
+	assert.ok(Math.abs(accumulateSessionUsage(entries).cost - 0.4) < 1e-10);
+});
+
+test("session_start recovers markers from a persisted parent file and skips non-regular parents", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-fork-recover-"));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+	const parent = join(dir, "parent.jsonl");
+	await writeFile(
+		parent,
+		[
+			JSON.stringify({ type: "session", id: "p", timestamp: "", cwd: "" }),
+			JSON.stringify(billedResponse("sub")),
+			JSON.stringify(markerEntry("sub", "sub")),
+		].join("\n"),
+	);
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	const appended: unknown[] = [];
+	const pi = {
+		registerCommand: () => {},
+		appendEntry: (customType: string, data: unknown) => appended.push({ customType, data }),
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	const ctxFor = (parentSession: string): ExtensionContext =>
+		({
+			hasUI: false,
+			mode: "print",
+			sessionManager: { getEntries: () => [billedResponse("sub")], getHeader: () => ({ parentSession }) },
+		}) as unknown as ExtensionContext;
+	zContext(pi);
+	handlers.get("session_start")?.({ reason: "startup" }, ctxFor(parent));
+	assert.deepEqual(appended, [{ customType: SUBSCRIPTION_TURN_ENTRY, data: { messageEntryId: "sub" } }]);
+	appended.length = 0;
+	handlers.get("session_start")?.({ reason: "startup" }, ctxFor(dir)); // Non-regular parent: no read, no hang.
+	handlers.get("session_start")?.({ reason: "startup" }, ctxFor(join(dir, "missing.jsonl")));
+	assert.deepEqual(appended, []);
 });

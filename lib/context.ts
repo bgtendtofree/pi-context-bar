@@ -19,8 +19,25 @@ export type SessionUsage = Readonly<{
 export type AssistantMessage = Extract<SessionMessageEntry["message"], { role: "assistant" }>;
 export type AssistantUsage = AssistantMessage["usage"];
 
-/** Durable request-time billing identity; never infer old OpenAI bills from today's login. */
+/** Legacy billing marker stored after the response, referencing it by entry id. */
 export const SUBSCRIPTION_TURN_ENTRY = "pi-context-bar/subscription-turn";
+
+/** True when a marker carries a usable response id. */
+const subscriptionMarkerId = (entry: SessionEntry): string | undefined => {
+	if (entry.type !== "custom" || entry.customType !== SUBSCRIPTION_TURN_ENTRY || !isObject(entry.data))
+		return undefined;
+	return typeof entry.data.messageEntryId === "string" ? entry.data.messageEntryId : undefined;
+};
+
+/** Response ids billed on plan by markers anywhere in the supplied entries. */
+export const subscriptionMarkerIds = (entries: readonly SessionEntry[]): ReadonlySet<string> => {
+	const ids = new Set<string>();
+	for (const entry of entries) {
+		const id = subscriptionMarkerId(entry);
+		if (id !== undefined) ids.add(id);
+	}
+	return ids;
+};
 
 export const latestAssistantResponse = (entries: readonly SessionEntry[]): AssistantMessage | undefined => {
 	for (let index = entries.length - 1; index >= 0; index--) {
@@ -45,16 +62,8 @@ export const cacheHitRate = (usage: AssistantUsage): number | undefined => {
 const PLAN_PROVIDERS = new Set(["openai-codex", "ln"]);
 
 export const accumulateSessionUsage = (entries: readonly SessionEntry[]): SessionUsage => {
-	const subscriptions = new Set<string>();
-	for (const entry of entries) {
-		if (
-			entry.type === "custom" &&
-			entry.customType === SUBSCRIPTION_TURN_ENTRY &&
-			isObject(entry.data) &&
-			typeof entry.data.messageEntryId === "string"
-		)
-			subscriptions.add(entry.data.messageEntryId);
-	}
+	// Explicit ids bind each marker to one response, so a fork that drops the marker never reassigns it.
+	const subscriptions = subscriptionMarkerIds(entries);
 	let cost = 0;
 	let hitRate: number | undefined;
 	let promptTokens = 0;
@@ -86,4 +95,27 @@ export const accumulateSessionUsage = (entries: readonly SessionEntry[]): Sessio
 		cacheHitRate: hitRate,
 		cacheHitRateAvg: promptTokens > 0 ? (cacheReadTokens / promptTokens) * 100 : undefined,
 	};
+};
+
+/** Response ids billed on plan by markers in the parent session but absent from the forked branch. */
+export const recoverableSubscriptionMarkers = (
+	entries: readonly SessionEntry[],
+	parentEntries: readonly SessionEntry[],
+): readonly string[] => {
+	const present = new Set<string>();
+	const entryIds = new Set<string>();
+	for (const entry of entries) {
+		entryIds.add(entry.id);
+		const id = subscriptionMarkerId(entry);
+		if (id !== undefined) present.add(id);
+	}
+	const missing: string[] = [];
+	for (const entry of parentEntries) {
+		const id = subscriptionMarkerId(entry);
+		if (id !== undefined && entryIds.has(id) && !present.has(id)) {
+			present.add(id);
+			missing.push(id);
+		}
+	}
+	return missing;
 };

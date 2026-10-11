@@ -6,6 +6,7 @@ import {
 	accumulateSessionUsage,
 	cacheHitRate,
 	latestAssistantResponse,
+	recoverableSubscriptionMarkers,
 	SUBSCRIPTION_TURN_ENTRY,
 } from "./context.ts";
 
@@ -19,10 +20,15 @@ const assistantUsage = (partial: Partial<Omit<AssistantUsage, "cost">> = {}, tot
 	...partial,
 });
 
-const assistantEntry = (id: string, usage: AssistantUsage, provider = "test"): SessionMessageEntry => ({
+const assistantEntry = (
+	id: string,
+	usage: AssistantUsage,
+	provider = "test",
+	parentId: string | null = null,
+): SessionMessageEntry => ({
 	type: "message",
 	id,
-	parentId: null,
+	parentId,
 	timestamp: "",
 	message: {
 		role: "assistant",
@@ -63,9 +69,10 @@ const summaryEntry = (id: string, usage: AssistantUsage): SessionEntry => ({
 	usage,
 });
 
-const subscriptionEntry = (messageEntryId: unknown): Extract<SessionEntry, { type: "custom" }> => ({
+// Marker stored after the response, billing the referenced response id.
+const subscriptionMarker = (messageEntryId: unknown, id = "billing"): Extract<SessionEntry, { type: "custom" }> => ({
 	type: "custom",
-	id: "billing",
+	id,
 	parentId: null,
 	timestamp: "",
 	customType: SUBSCRIPTION_TURN_ENTRY,
@@ -77,7 +84,7 @@ describe("session usage", () => {
 		const result = accumulateSessionUsage([
 			assistantEntry("before", assistantUsage({}, 0.2), "openai"),
 			assistantEntry("sub", assistantUsage({ input: 10, cacheRead: 90 }, 0.5), "openai"),
-			subscriptionEntry("sub"),
+			subscriptionMarker("sub"),
 			assistantEntry("after", assistantUsage({}, 0.3), "openai"),
 			toolResultEntry("classifier", assistantUsage({}, 0.04)),
 		]);
@@ -86,14 +93,40 @@ describe("session usage", () => {
 		assert.equal(result.cacheHitRateAvg, 90);
 	});
 
-	test("ignores malformed and unrelated billing records", () => {
+	test("bills a forked response again until recovery re-appends its explicit marker", () => {
+		const forked = [
+			assistantEntry("before", assistantUsage({}, 0.2), "openai"),
+			assistantEntry("sub", assistantUsage({}, 0.5), "openai"),
+		];
+		assert.equal(accumulateSessionUsage(forked).cost, 0.7);
+		const recovered = [...forked, subscriptionMarker("sub")];
+		assert.ok(Math.abs(accumulateSessionUsage(recovered).cost - 0.2) < 1e-10);
+	});
+
+	test("bills a response referenced by a marker and ignores malformed markers", () => {
 		const result = accumulateSessionUsage([
-			assistantEntry("bill", assistantUsage({}, 0.2), "openai"),
-			{ ...subscriptionEntry("bill"), customType: "another-extension" },
-			...([null, [], {}, { messageEntryId: 0 }] as const).map((data) => ({ ...subscriptionEntry("bill"), data })),
-			subscriptionEntry("not-a-message"),
+			assistantEntry("old", assistantUsage({}, 0.5), "openai"),
+			subscriptionMarker("old"),
+			assistantEntry("after", assistantUsage({}, 0.3), "openai"),
 		]);
-		assert.equal(result.cost, 0.2);
+		assert.equal(result.cost, 0.3);
+
+		const orphan = accumulateSessionUsage([
+			assistantEntry("bill", assistantUsage({}, 0.2), "openai"),
+			{ ...subscriptionMarker("bill"), customType: "another-extension" },
+			...([null, [], { messageEntryId: 0 }] as const).map((data) => ({ ...subscriptionMarker("bill"), data })),
+			subscriptionMarker(0),
+		]);
+		assert.equal(orphan.cost, 0.2);
+	});
+
+	test("recovery re-appends only parent markers whose response is in the branch and unmarked", () => {
+		const before = assistantEntry("a", assistantUsage({}, 0.2), "openai");
+		const sub = assistantEntry("b", assistantUsage({}, 0.5), "openai");
+		const parent = [before, sub, subscriptionMarker("b")];
+		assert.deepEqual(recoverableSubscriptionMarkers([before], parent), []);
+		assert.deepEqual(recoverableSubscriptionMarkers([before, sub], parent), ["b"]);
+		assert.deepEqual(recoverableSubscriptionMarkers([before, sub, subscriptionMarker("b")], parent), []);
 	});
 
 	test("includes standalone usage without changing assistant cache metrics", () => {
@@ -187,7 +220,7 @@ test("routed response follows supplied branch and skips failures and aborts", ()
 		id: "aborted",
 		message: { ...routed.message, stopReason: "aborted" },
 	};
-	assert.equal(latestAssistantResponse([routed, subscriptionEntry("routed"), failed, aborted]), routed.message);
+	assert.equal(latestAssistantResponse([routed, subscriptionMarker("routed"), failed, aborted]), routed.message);
 	assert.equal(latestAssistantResponse([failed, aborted]), undefined);
 	assert.equal(latestAssistantResponse([toolResultEntry("tool", assistantUsage())]), undefined);
 	assert.equal(latestAssistantResponse([]), undefined);

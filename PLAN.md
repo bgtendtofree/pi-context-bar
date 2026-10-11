@@ -26,12 +26,14 @@ is shipped, what needs an owner decision, and what remains.
 - Prompt state: `❯` accent, `✗` error when the last completed turn stopped with `error`
   (`aborted` keeps the previous state). Derived from the session branch on start and tree nav.
 - Nerd Font icons in use: Pac-Man `󰮯`, ghost `󰊠`, reset countdown `󰦛`, reset credits `󰔖`,
-  provider badges `cod-openai` `` / `cod-claude` ``, thinking brain `󰧑`, cache database `󰆼`,
-  speedometer `󰓅`. ASCII fallback: `C`/`O`/`0`, `>`/`x`, `r52m`, `R1`, no provider badge, no brain,
-  `CH` cache label, plain `t/s`.
-- Icon grammar shipped: badges only for exact known non-virtual providers, brain only with a
-  thinking label (routed included), database replaces `CH` in Nerd mode, speedometer never alone.
+  provider badges `cod-openai` `` / `cod-claude` ``, cache database `󰆼`,
+  speedometer `󰓅`. ASCII fallback: `C`/`O`/`0`, `>`/`x`, `r52m`, `R1`, no provider badge, `CH` cache label, plain `t/s`.
+- Icon grammar shipped: badges only for exact known non-virtual providers, thinking level stays
+  plain dim text (no brain), database replaces `CH` in Nerd mode, speedometer never alone.
   All decorations drop before useful text or numbers; `asciiFallback` output is unchanged.
+- Quota hierarchy shipped: healthy windows show only label + used percent; a window above 70%
+  shows its reset countdown, and banked credits show only while any reported quota (weekly
+  included) is above 70%; countdowns and credits drop before window percentages.
 - Quota group spacing: one space inside a group, two between groups.
 
 ## Ground rules for anything added here
@@ -48,6 +50,24 @@ is shipped, what needs an owner decision, and what remains.
 - Pure logic in `lib/` with mirrored `node:test` coverage; `index.ts` stays wiring only.
 - Update README (and AGENTS.md when a rule changes) in the same change.
 
+## Current slice: quiet subscription quota (approved, shipped)
+
+- Keep one bottom border; do not add a quota row.
+- Model retains its selected-provider badge. Thinking levels stay dim plain text, including
+  routed thinking; remove the redundant brain glyph and its unused code.
+- Healthy quota windows show only their label and used percentage, e.g. `5h 53%  7d 43%`.
+- Show a future reset countdown only for a window whose used percentage is above 70%, matching
+  the existing warning boundary. At exactly 70% the window is still quiet.
+- Show available banked reset credits only when any reported quota is above 70%. Zero/unknown
+  credits remain hidden. This is display policy, not a change to reset redemption.
+- Fit model, essential quota percentages, and cache/cost first, then use spare width for
+  countdowns and credit detail. Optional quota detail must not displace those baseline readings.
+  Retain theme roles, quota fetching, and reset-command safety behavior.
+- Keep Pac-Man, provider, cache, and speed glyphs single-cell. Small provider/speed glyphs are
+  quiet secondary cues; no terminal configuration, font-size changes, or scaling escapes.
+- Mirror healthy/high/mixed/exact-threshold/expired/missing-data cases in Nerd and ASCII tests;
+  retain whole-editor width/metric-preservation coverage and native conversation rendering.
+
 ## Icon grammar (shipped)
 
 Use the existing `GlyphSet` and `asciiFallback`; do not add another setting or dependency.
@@ -56,24 +76,26 @@ Icons change presentation, not metric semantics or lifecycle behavior.
 | Information | Nerd Font rendering | ASCII / unsupported provider |
 |---|---|---|
 | Selected provider before model id | accent `cod-openai` U+EC81 / `cod-claude` U+EC82 | No badge; keep model id |
-| Thinking level | dim `· 󰧑 max` (`md-brain` U+F09D1) | Existing `· max` |
 | Cache hit | `󰆼 98/94%` (`md-database` U+F01BC) | Existing `CH98/94%` |
 | Token speed | dim `󰓅 ~218t/s` (`md-speedometer` U+F04C5) | Existing `~218t/s` |
+
+Thinking levels stay plain dim text (`· max`, routed thinking included); the brain icon was
+shipped and then removed as redundant in the quiet-quota slice.
 
 Implementation contract:
 
 - Verify names/code points against official `glyphnames.json` before implementation. State
   the actual minimum Nerd Font version for the selected badges; do not assume all v3 releases
   include newer Codicons. Verified: `cod-openai` U+EC81 and `cod-claude` U+EC82 first appear in
-  Nerd Font v3.5.0 (absent from v3.4.0 and earlier); `md-brain`/`md-database`/`md-speedometer`
+  Nerd Font v3.5.0 (absent from v3.4.0 and earlier); `md-database`/`md-speedometer`
   exist since v3.0.0.
 - Plumb selected `provider` into `ModelInfo`. Badge only exact known OpenAI
   (`openai`, `openai-codex`) and Anthropic (`anthropic`) providers. Unknown providers have no
   badge. Virtual selections have no provider badge; do not infer provider from a model id or
   pretend the selected provider is the routed physical provider.
-- Thinking icons appear only with an existing thinking label, including routed thinking.
-- Keep latest/average cache-hit calculation, threshold colors, cost, quota, and reset behavior
-  unchanged. The average stays dim; high cache hit stays quiet.
+- Keep latest/average cache-hit calculation, threshold colors, cost, and reset behavior
+  unchanged. The average stays dim; high cache hit stays quiet. Quota display follows the
+  quiet-quota slice above.
 - Keep `~`, numeric precision, and `t/s` units unchanged. Speed icon never appears alone.
 - Width fitting must count glyph plus spacing. Decorative icons drop before useful text or
   numeric information; existing model/route/thinking, quota, cache-before-cost, and

@@ -135,7 +135,7 @@ test("framed editor uses square frame tokens, no fills, and a four-column body i
 	// Ready glyph accent; model id accent; thinking and arrow dim.
 	assert.equal(seenTokens.get("❯")?.at(-1), "accent");
 	assert.equal(seenTokens.get("a-very-long-model-name")?.at(-1), "accent");
-	assert.equal(seenTokens.get(` · ${NERD_GLYPHS.thinking} medium`)?.at(-1), "dim");
+	assert.equal(seenTokens.get(" · medium")?.at(-1), "dim");
 
 	// Bash mode recolors the whole frame.
 	editor.setText("!ls");
@@ -192,43 +192,55 @@ test("framed editor uses square frame tokens, no fills, and a four-column body i
 	}
 });
 
+const buildFramedEditor = (
+	glyphs: typeof NERD_GLYPHS,
+	model: ModelInfo,
+	health: HealthState,
+): { render: (width: number) => readonly string[] } => {
+	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
+	const ctx = {
+		mode: "tui",
+		ui: {
+			theme: { fg: (_token: string, text: string) => text },
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (factory) {
+					const tui = { requestRender: () => {}, terminal: { rows: 20 } } as unknown as TUI;
+					const theme = { borderColor: (text: string) => text } as EditorTheme;
+					editor = factory(tui, theme, { matches: () => false } as unknown as Parameters<typeof factory>[2]);
+				}
+			},
+		},
+	} as unknown as ExtensionContext;
+	registerFramedEditor(ctx, {
+		getModel: () => model,
+		getThinkingLevel: () => "high",
+		getHealth: () => health,
+		glyphs,
+		onTui: () => {},
+	});
+	return editor as unknown as { render: (width: number) => readonly string[] };
+};
+
 test("decorative icons never push useful bottom-border info out", () => {
 	const model: ModelInfo = { id: "claude-opus", reasoning: true, provider: "anthropic" };
 	const health: HealthState = {
 		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
 		usage: { cost: 1.61, cacheHitRate: 98, cacheHitRateAvg: undefined },
-		quota: { weeklyPercent: 40, limits: [{ label: "5h", percent: 30 }] },
+		quota: {
+			weeklyPercent: 40,
+			limits: [
+				{ label: "5h", percent: 75, resetAt: Date.now() + 150 * 60_000 },
+				{ label: "7d", percent: 43, resetAt: Date.now() + 5 * 86_400_000 },
+			],
+			resetCredits: 3,
+		},
 		speed: { tokensPerSecond: 42.25, estimated: true },
 		frame: 0,
 		activity: "idle",
 		prompt: "success",
 	};
-	const makeEditor = (glyphs: typeof NERD_GLYPHS): { render: (width: number) => readonly string[] } => {
-		let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
-		const ctx = {
-			mode: "tui",
-			ui: {
-				theme: { fg: (_token: string, text: string) => text },
-				setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
-					if (factory) {
-						const tui = { requestRender: () => {}, terminal: { rows: 20 } } as unknown as TUI;
-						const theme = { borderColor: (text: string) => text } as EditorTheme;
-						editor = factory(tui, theme, { matches: () => false } as unknown as Parameters<typeof factory>[2]);
-					}
-				},
-			},
-		} as unknown as ExtensionContext;
-		registerFramedEditor(ctx, {
-			getModel: () => model,
-			getThinkingLevel: () => "high",
-			getHealth: () => health,
-			glyphs,
-			onTui: () => {},
-		});
-		return editor as unknown as { render: (width: number) => readonly string[] };
-	};
 	const lines = (glyphs: typeof NERD_GLYPHS, width: number): readonly string[] =>
-		makeEditor(glyphs).render(width).map(stripVTControlCharacters);
+		buildFramedEditor(glyphs, model, health).render(width).map(stripVTControlCharacters);
 	const top = (glyphs: typeof NERD_GLYPHS, width: number): string => lines(glyphs, width)[0] ?? "";
 	const bottom = (glyphs: typeof NERD_GLYPHS, width: number): string => lines(glyphs, width).at(-1) ?? "";
 
@@ -236,19 +248,21 @@ test("decorative icons never push useful bottom-border info out", () => {
 	const wideNerd = bottom(NERD_GLYPHS, 120);
 	const wideAscii = bottom(ASCII_GLYPHS, 120);
 	assert.ok(wideNerd.includes(NERD_GLYPHS.providerAnthropic));
-	assert.ok(wideNerd.includes(NERD_GLYPHS.thinking));
 	assert.ok(wideNerd.includes(NERD_GLYPHS.cache));
+	assert.ok(wideNerd.includes(NERD_GLYPHS.reset));
+	assert.ok(wideNerd.includes(NERD_GLYPHS.credit));
 	assert.ok(top(NERD_GLYPHS, 120).includes(NERD_GLYPHS.speed));
 	assert.ok(!wideAscii.includes(NERD_GLYPHS.providerAnthropic));
-	assert.ok(!wideAscii.includes(NERD_GLYPHS.thinking));
 	assert.ok(!wideAscii.includes(NERD_GLYPHS.cache));
 	assert.ok(wideAscii.includes("CH98%"));
+	assert.ok(wideAscii.includes("R3"));
 
 	// Guard the guard: the baseline really does show every metric we compare against.
 	const asciiWideTop = top(ASCII_GLYPHS, 160);
 	const asciiWideBottom = bottom(ASCII_GLYPHS, 160);
 	for (const token of ["(100K)", "42.3t/s"]) assert.ok(asciiWideTop.includes(token), token);
-	for (const token of ["claude-opus", "5h 30%", "CH98", "$1.61"]) assert.ok(asciiWideBottom.includes(token), token);
+	for (const token of ["claude-opus", "5h 75%", "7d 43%", "CH98", "$1.61"])
+		assert.ok(asciiWideBottom.includes(token), token);
 
 	for (let width = 16; width <= 160; width++) {
 		const nerdTop = top(NERD_GLYPHS, width);
@@ -256,10 +270,44 @@ test("decorative icons never push useful bottom-border info out", () => {
 		const asciiTop = top(ASCII_GLYPHS, width);
 		const asciiBottom = bottom(ASCII_GLYPHS, width);
 		if (asciiBottom.includes("claude-opus")) assert.ok(nerdBottom.includes("claude-opus"), `model width=${width}`);
-		if (asciiBottom.includes("5h 30%")) assert.ok(nerdBottom.includes("5h 30%"), `quota width=${width}`);
+		if (asciiBottom.includes("5h 75%")) assert.ok(nerdBottom.includes("5h 75%"), `quota width=${width}`);
+		if (asciiBottom.includes("7d 43%")) assert.ok(nerdBottom.includes("7d 43%"), `quota width=${width}`);
 		if (asciiBottom.includes("CH98")) assert.ok(nerdBottom.includes("98%"), `cache width=${width}`);
 		if (asciiBottom.includes("$1.61")) assert.ok(nerdBottom.includes("$1.61"), `cost width=${width}`);
 		if (asciiTop.includes("(100K)")) assert.ok(nerdTop.includes("(100K)"), `window width=${width}`);
 		if (asciiTop.includes("42.3t/s")) assert.ok(nerdTop.includes("42.3t/s"), `speed width=${width}`);
 	}
+});
+
+test("keeps window percents and cost when quota detail cannot fit", (t) => {
+	// Regression: width 51 where the Nerd reset/credit icons (two extra columns vs ASCII) used to
+	// drop the cost even though shrinking optional quota detail back to percentages fits everything.
+	const now = Date.parse("2026-07-01T00:00:00Z");
+	t.mock.method(Date, "now", () => now);
+	const health: HealthState = {
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 0.042, cacheHitRate: undefined, cacheHitRateAvg: undefined },
+		quota: {
+			weeklyPercent: undefined,
+			limits: [
+				{ label: "5h", percent: 92, resetAt: now + 150 * 60_000 },
+				{ label: "7d", percent: 43, resetAt: now + 150 * 60_000 },
+			],
+			resetCredits: 1,
+		},
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
+	for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
+		const line = stripVTControlCharacters(buildFramedEditor(glyphs, null, health).render(51).at(-1) ?? "");
+		assert.ok(line.includes("no-model"), line);
+		assert.ok(line.includes("5h 92%"), line);
+		assert.ok(line.includes("7d 43%"), line);
+		assert.ok(line.includes("$0.042"), line);
+	}
+	// The optional detail really does fit at 51 in ASCII, so the guard is meaningful.
+	const ascii = stripVTControlCharacters(buildFramedEditor(ASCII_GLYPHS, null, health).render(51).at(-1) ?? "");
+	assert.ok(ascii.includes("r2h 30m") && ascii.includes("R1"), ascii);
 });

@@ -16,7 +16,7 @@ import {
 	type GlyphSet,
 	type LaneActivity,
 	type QuotaUsage,
-	quotaMetricOptions,
+	quotaRender,
 	renderLaneStrip,
 } from "../lib/chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "../lib/context.ts";
@@ -168,11 +168,13 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			for (const [index, line] of body.entries()) {
 				result.push(wrap(line, "│", "│", index === 0 ? prompt : " ".repeat(BODY_INDENT)));
 			}
-			const quota = health.quota ? quotaMetricOptions(health.quota, styles, Date.now(), options.glyphs) : [""];
+			const quota = health.quota
+				? quotaRender(health.quota, styles, Date.now(), options.glyphs)
+				: { essentials: [""], upgrades: [] };
 			const modelInfo = options.getModel();
-			// Quota sits beside the model it belongs to; the model survives before quota.
+			// Essential baseline: model + window percentages; the model survives before quota.
 			const picked = editorModelOptions(modelInfo, options.getThinkingLevel())
-				.flatMap((model) => quota.map((quotaText) => ({ model, quotaText })))
+				.flatMap((model) => quota.essentials.map((quotaText) => ({ model, quotaText })))
 				.find(({ model, quotaText }) =>
 					bottomBorderFits({
 						width,
@@ -190,15 +192,28 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 				freeMetricOptions(health.usage, styles, options.glyphs).find(
 					(value) => value === "" || visibleWidth(value) + 4 <= width - 2 - usedByModel - scrollReserve,
 				) ?? "";
-			// Decorative provider badge and thinking brain are added only while the same model/quota/metric
-			// triple still fits; otherwise the icon drops, never quota, cache, or cost.
+			// Optional quota detail (countdowns, credits) expands only into width left after model +
+			// window percentages + cache/cost; it never displaces those essential readings.
+			const quotaText = picked
+				? (quota.upgrades.find((candidate) =>
+						bottomBorderFits({
+							width,
+							model: picked.model,
+							quota: candidate,
+							metric: metrics,
+							gap: MODEL_QUOTA_GAP,
+							scrollReserve,
+						}),
+					) ?? picked.quotaText)
+				: "";
+			// Decorative provider badge is added only while the chosen model/quota/metric triple fits.
 			const chosenModel = picked
 				? decorateModel(
 						picked.model,
 						modelInfo,
 						options.glyphs,
 						width,
-						picked.quotaText,
+						quotaText,
 						metrics,
 						MODEL_QUOTA_GAP,
 						scrollReserve,
@@ -206,9 +221,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 				: "";
 			const modelLabel = chosenModel ? styleModelLabel(chosenModel, ctx) : "";
 			const leftLabel =
-				chosenModel && picked?.quotaText
-					? `${modelLabel}${" ".repeat(MODEL_QUOTA_GAP)}${picked.quotaText}`
-					: modelLabel;
+				chosenModel && quotaText ? `${modelLabel}${" ".repeat(MODEL_QUOTA_GAP)}${quotaText}` : modelLabel;
 			result.push(
 				renderLabeledBorder(width, "└", "┘", leftLabel, metrics, frame, (space) => {
 					if (!scrollDown || space < 1) return "";

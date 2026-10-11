@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -99,9 +99,63 @@ test("another process cannot enter; killed owner leaves a blocking lock without 
 		/locked/,
 	);
 	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), pending);
-	// Recovery only after owner is stopped. Keep the unknown request and its idempotency ID.
-	await rmdir(`${path}.lock`);
+	// Recovery only after the owner is stopped. Keep the unknown request and its idempotency ID.
+	await rm(`${path}.lock`, { recursive: true, force: true });
 	await withPendingReset(path, async (store) => {
 		assert.deepEqual(await store.read(), pending);
 	});
+});
+
+test("reclaims a lock only when the owner is provably gone and the grace window has passed", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-reset-stale-"));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+	const path = join(dir, "pending.json");
+	const lock = `${path}.lock`;
+	const pending = { accountId: "a", creditId: "c", requestId: "r" };
+	const past = new Date(Date.now() - 10 * 60 * 1000);
+	await withPendingReset(path, async (store) => {
+		await store.save(pending);
+	});
+
+	// A live owner keeps its lock even when the directory looks old.
+	await mkdir(lock, { mode: 0o700 });
+	await writeFile(join(lock, "owner"), `${process.pid}\n`);
+	await utimes(lock, past, past);
+	await assert.rejects(
+		withPendingReset(path, async () => assert.fail("live owner lock was stolen")),
+		/locked/,
+	);
+
+	// A dead owner with an old lock is reclaimed, and the pending record survives.
+	const corpse = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+	const deadPid = corpse.pid ?? 0;
+	await once(corpse, "exit");
+	await writeFile(join(lock, "owner"), `${deadPid}\n`);
+	await utimes(lock, past, past);
+	await withPendingReset(path, async (store) => {
+		assert.deepEqual(await store.read(), pending);
+	});
+
+	// A dead owner with a fresh lock still fails closed inside the grace window.
+	await mkdir(lock, { mode: 0o700 });
+	await writeFile(join(lock, "owner"), `${deadPid}\n`);
+	await assert.rejects(
+		withPendingReset(path, async () => assert.fail("fresh lock was stolen")),
+		/locked/,
+	);
+
+	// An abandoned lock with no owner file is reclaimable once stale.
+	await utimes(lock, past, past);
+	await withPendingReset(path, async (store) => {
+		assert.deepEqual(await store.read(), pending);
+	});
+
+	// An owner file that cannot be read proves nothing, so a stale lock still fails closed.
+	await mkdir(lock, { mode: 0o700 });
+	await mkdir(join(lock, "owner"), { mode: 0o700 });
+	await utimes(lock, past, past);
+	await assert.rejects(
+		withPendingReset(path, async () => assert.fail("unreadable owner lock was stolen")),
+		/locked/,
+	);
 });

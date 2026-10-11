@@ -101,6 +101,17 @@ const whamHeaders = (apiKey: string): Record<string, string> => {
 	return { Authorization: `Bearer ${apiKey}`, "ChatGPT-Account-Id": accountId };
 };
 
+/** HTTP failure carrying the response status so callers can tell a refusal apart from an uncertain outcome. */
+class HttpResponseError extends Error {
+	readonly status: number;
+
+	constructor(message: string, status: number) {
+		super(message);
+		this.name = "HttpResponseError";
+		this.status = status;
+	}
+}
+
 const requestJson = async (url: string, label: string, init: RequestInit): Promise<Response> => {
 	const response = await fetch(url, {
 		...init,
@@ -109,7 +120,7 @@ const requestJson = async (url: string, label: string, init: RequestInit): Promi
 	});
 	if (!response.ok) {
 		await response.body?.cancel().catch(() => undefined);
-		throw new Error(`${label} ${response.status}`);
+		throw new HttpResponseError(`${label} ${response.status}`, response.status);
 	}
 	return response;
 };
@@ -166,13 +177,66 @@ export const parsePendingReset = (payload: unknown): PendingReset | undefined =>
 	return { accountId, creditId, requestId };
 };
 
+/**
+ * Expiry as epoch ms from an ISO string, epoch number, or a compact UTC stamp
+ * (8-digit YYYYMMDD / 14-digit YYYYMMDDHHMMSS). Values below 1e11 are epoch seconds.
+ */
+const parseExpiry = (raw: unknown): number | undefined => {
+	let value: number | undefined;
+	if (typeof raw === "number") value = raw;
+	else if (typeof raw === "string") {
+		const trimmed = raw.trim();
+		// Digit-only 8/14 width strings are compact stamps, never epoch seconds. An impossible
+		// stamp yields no expiry instead of a bogus 1970 date that would silently drop the credit.
+		if (COMPACT_STAMP_WIDTHS.test(trimmed)) return parseCompactDateStamp(trimmed);
+		const numeric = trimmed === "" ? Number.NaN : Number(trimmed);
+		value = Number.isFinite(numeric) ? numeric : Date.parse(raw);
+	}
+	if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
+	// Epoch seconds stay below 1e11 for the next few millennia; larger values are already milliseconds.
+	return value < 1e11 ? value * 1000 : value;
+};
+
+const COMPACT_STAMP_WIDTHS = /^(?:\d{8}|\d{14})$/;
+const COMPACT_DATE_STAMP = /^(\d{4})(\d{2})(\d{2})(?:(\d{2})(\d{2})(\d{2}))?$/;
+
+/** Parse a compact digit-only UTC date stamp; `Number()` on it would land in 1970. */
+const parseCompactDateStamp = (raw: string): number | undefined => {
+	const match = COMPACT_DATE_STAMP.exec(raw);
+	if (!match) return undefined;
+	const [, year, month, day, hour, minute, second] = match;
+	const stamp = Date.UTC(
+		Number(year),
+		Number(month) - 1,
+		Number(day),
+		Number(hour ?? "0"),
+		Number(minute ?? "0"),
+		Number(second ?? "0"),
+	);
+	const date = new Date(stamp);
+	// Reject out-of-range fields such as month 99, which `Date.UTC` would roll over.
+	if (date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(day)) return undefined;
+	return stamp > 0 ? stamp : undefined;
+};
+
+/**
+ * A credit list is an array or an object wrapping one. Explicit fields win over the generic `data`
+ * envelope, and a named container such as `rate_limit_reset_credits` is unwrapped once more.
+ */
+const isArray = (value: unknown): value is unknown[] => Array.isArray(value);
+const creditArray = (value: unknown): unknown[] | undefined => {
+	if (isArray(value)) return value;
+	if (!isObject(value)) return undefined;
+	for (const candidate of [value.credits, value.reset_credits, value.rate_limit_reset_credits, value.data]) {
+		const nested = creditArray(candidate);
+		if (nested) return nested;
+	}
+	return undefined;
+};
+
 /** Parse redeemable credits, consuming soonest-expiring reset first. */
 export const parseResetCredits = (payload: unknown, now = Date.now()): readonly ResetCredit[] => {
-	const items = Array.isArray(payload)
-		? payload
-		: isObject(payload)
-			? [payload.credits, payload.reset_credits, payload.rate_limit_reset_credits, payload.data].find(Array.isArray)
-			: undefined;
+	const items = creditArray(payload);
 	if (!items) return [];
 	const credits: ResetCredit[] = [];
 	for (const item of items) {
@@ -181,10 +245,9 @@ export const parseResetCredits = (payload: unknown, now = Date.now()): readonly 
 		if (typeof id !== "string" || !id) continue;
 		const status = String(item.status ?? "").toLowerCase();
 		if (status === "consumed" || status === "redeemed" || status === "expired") continue;
-		const rawExpiry = item.expires_at ?? item.expiresAt;
-		const expiry = typeof rawExpiry === "string" ? Date.parse(rawExpiry) : Number.NaN;
-		if (expiry <= now) continue;
-		credits.push({ id, ...(Number.isFinite(expiry) ? { expiresAt: expiry } : {}) });
+		const expiry = parseExpiry(item.expires_at ?? item.expiresAt);
+		if (expiry !== undefined && expiry <= now) continue;
+		credits.push({ id, ...(expiry !== undefined ? { expiresAt: expiry } : {}) });
 	}
 	return credits.sort((a, b) => {
 		if (a.expiresAt === undefined) return b.expiresAt === undefined ? 0 : 1;
@@ -202,24 +265,37 @@ export const fetchResetCredits = async (apiKey: string, baseUrl?: string): Promi
 	return parseResetCredits(await readJson(response));
 };
 
+/** Redeem outcome; `rejected` means the API refused the request, so no credit was spent. */
+export type ResetRedemption = "reset" | "already_redeemed" | "rejected" | "unknown";
+
+/** Statuses that unambiguously mean the request was refused rather than possibly applied. */
+const isDefinitiveRefusal = (status: number): boolean =>
+	status === 400 || status === 404 || status === 409 || status === 410 || status === 422;
+
 /** Redeem one banked reset with caller-owned idempotency so retries reuse same request ID. */
 export const redeemResetCredit = async (
 	apiKey: string,
 	creditId: string,
 	requestId: string,
 	baseUrl?: string,
-): Promise<"reset" | "already_redeemed" | "unknown"> => {
-	const response = await requestJson(
-		`${codexBase(baseUrl)}/wham/rate-limit-reset-credits/consume`,
-		"OpenAI reset consume API",
-		{
-			method: "POST",
-			headers: { ...whamHeaders(apiKey), "Content-Type": "application/json" },
-			body: JSON.stringify({ credit_id: creditId, redeem_request_id: requestId }),
-		},
-	);
+): Promise<ResetRedemption> => {
+	let response: Response;
+	try {
+		response = await requestJson(
+			`${codexBase(baseUrl)}/wham/rate-limit-reset-credits/consume`,
+			"OpenAI reset consume API",
+			{
+				method: "POST",
+				headers: { ...whamHeaders(apiKey), "Content-Type": "application/json" },
+				body: JSON.stringify({ credit_id: creditId, redeem_request_id: requestId }),
+			},
+		);
+	} catch (error) {
+		if (error instanceof HttpResponseError && isDefinitiveRefusal(error.status)) return "rejected";
+		throw error;
+	}
 	// A successful POST may have consumed the reset even if its response cannot be decoded.
 	const body = await readJson(response).catch(() => undefined);
-	// Internal API codes can change; only known completed outcomes permit pending cleanup.
+	// Internal API codes can change; only known completed or refused outcomes permit pending cleanup.
 	return isObject(body) && (body.code === "reset" || body.code === "already_redeemed") ? body.code : "unknown";
 };

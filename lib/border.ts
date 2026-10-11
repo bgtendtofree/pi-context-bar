@@ -1,6 +1,6 @@
 /** Pure model label fitting and framed border rendering. */
 
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { GlyphSet } from "./chrome.ts";
 
 export type ModelInfo = Readonly<{
@@ -106,9 +106,27 @@ export const renderLabeledBorder = (
 ): string => {
 	if (width <= 0) return "";
 	if (width === 1) return border("─");
+	if (width === 2) return `${border(leftCorner)}${border(rightCorner)}`;
+	if (width === 3) return `${border(leftCorner)}${border("─")}${border(rightCorner)}`;
 
-	const left = leftLabel ? `${border("─")} ${leftLabel} ` : border("─");
-	const right = rightLabel ? ` ${rightLabel} ${border("──")}` : border("─");
+	// A labeled block costs 3 extra columns on the left (`─ ` + label + ` `) and 4 on the right
+	// (` ` + label + ` ` + `──`); a bare edge costs one. Shrink whichever label is currently wider
+	// so labels degrade together instead of one label erasing the other.
+	const blockWidth = (labelWidth: number, chrome: number): number => (labelWidth > 0 ? labelWidth + chrome : 1);
+	const available = width - 2;
+	const leftLabelWidth = visibleWidth(leftLabel);
+	const rightLabelWidth = visibleWidth(rightLabel);
+	let leftWidth = leftLabelWidth;
+	let rightWidth = rightLabelWidth;
+	while (blockWidth(leftWidth, 3) + blockWidth(rightWidth, 4) > available && (leftWidth > 0 || rightWidth > 0)) {
+		if (leftWidth > rightWidth) leftWidth -= 1;
+		else rightWidth -= 1;
+	}
+
+	const fittedLeft = leftWidth < leftLabelWidth ? truncateToWidth(leftLabel, leftWidth, "") : leftLabel;
+	const fittedRight = rightWidth < rightLabelWidth ? truncateToWidth(rightLabel, rightWidth, "") : rightLabel;
+	const left = leftWidth > 0 ? `${border("─")} ${fittedLeft} ` : border("─");
+	const right = rightWidth > 0 ? ` ${fittedRight} ${border("──")}` : border("─");
 	const middleWidth = Math.max(0, width - 2 - visibleWidth(left) - visibleWidth(right));
 	const content = middle ? middle(middleWidth) : "";
 	const fillWidth = Math.max(0, middleWidth - visibleWidth(content));

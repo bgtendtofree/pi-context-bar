@@ -43,6 +43,9 @@ export type FramedEditorOptions = Readonly<{
 
 const isHorizontalBorder = (text: string): boolean => /^─+$/.test(stripVTControlCharacters(text));
 
+/** Pi's own scroll cue (`── ↑ 3 more ──`) already carries a frame; only it skips the prompt prefix. */
+export const isScrollCue = (text: string): boolean => /[↑↓] \d+ more /.test(stripVTControlCharacters(text));
+
 /** Frame side glyphs occupy one column each; popup rows get a two-column gutter. */
 export const FRAME_COLUMNS = 1;
 export const POPUP_INDENT = 2;
@@ -143,10 +146,10 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			const scrollReserve = scrollDown ? 1 : 0;
 			const prompt = `${" ".repeat(BODY_INDENT - 2)}${ctx.ui.theme.fg(promptColor(health.prompt), promptGlyph(health.prompt, options.glyphs))} `;
 			const wrap = (line: string, left: string, right: string, prefix: string): string => {
-				const borderLike = stripVTControlCharacters(line).endsWith("─");
-				const content = borderLike ? line : prefix + line;
+				const scrollCue = isScrollCue(line);
+				const content = scrollCue ? line : prefix + line;
 				const gap = Math.max(0, innerWidth - visibleWidth(content));
-				const fill = borderLike ? frame("─".repeat(gap)) : " ".repeat(gap);
+				const fill = scrollCue ? frame("─".repeat(gap)) : " ".repeat(gap);
 				return frame(left) + content + fill + frame(right);
 			};
 

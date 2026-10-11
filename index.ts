@@ -5,6 +5,7 @@ import { keyText, parseSessionEntries, VERSION } from "@earendil-works/pi-coding
 import type { ModelInfo } from "./lib/border.ts";
 import {
 	ASCII_GLYPHS,
+	activityAfterContext,
 	formatDuration,
 	type GlyphSet,
 	type LaneActivity,
@@ -26,6 +27,7 @@ import {
 	fetchResetCredits,
 	openAiAccountId,
 	type PendingReset,
+	type ResetRedemption,
 	redeemResetCredit,
 	shouldRefreshQuota,
 } from "./lib/openai.ts";
@@ -110,10 +112,13 @@ const refreshSnapshot = (ctx: ExtensionContext): void => {
 };
 
 const refreshSessionUsage = (ctx: ExtensionContext): void => {
-	// ponytail: full scan per new entry; track deltas only if long sessions show lag
+	// ponytail: usage only changes when a new entry becomes the leaf, so the leaf id memoizes the scan.
+	// A true delta fold is unsafe: a later subscription marker rebinds an already-counted response.
+	const leafId = ctx.sessionManager.getLeafId();
+	if (state.usageLeafId === leafId) return;
 	patch({
 		usage: accumulateSessionUsage(ctx.sessionManager.getEntries()),
-		usageLeafId: ctx.sessionManager.getLeafId(),
+		usageLeafId: leafId,
 	});
 };
 
@@ -129,7 +134,6 @@ const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void>
 		return;
 	}
 	const lookupId = ++quotaLookupId;
-	const baseUrl = ctx.model?.baseUrl;
 	try {
 		const key = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
 		if (lookupId !== quotaLookupId || !isCodexModel(ctx)) return;
@@ -142,7 +146,7 @@ const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void>
 		const now = performance.now();
 		if (!shouldRefreshQuota(state.quotaLastAttemptAt, now, force)) return;
 		patch({ quotaLastAttemptAt: now });
-		const quota = await fetchOpenAiUsage(key, baseUrl);
+		const quota = await fetchOpenAiUsage(key, ctx.model?.baseUrl);
 		if (!isCodexModel(ctx) || state.quotaAccountId !== accountId || state.quotaLastAttemptAt !== now) return;
 		patch({ quota });
 		requestRender();
@@ -283,8 +287,19 @@ const recoverForkSubscriptionMarkers = (pi: ExtensionAPI, ctx: ExtensionContext)
 		pi.appendEntry(SUBSCRIPTION_TURN_ENTRY, { messageEntryId });
 };
 
+/** Glyph set from user config; re-applied per session because shutdown resets state to Nerd defaults. */
+const configGlyphs = (): GlyphSet => (readConfig(configPath()).asciiFallback ? ASCII_GLYPHS : NERD_GLYPHS);
+
+const resetOutcomeNotice = (outcome: ResetRedemption): Readonly<{ message: string; level: "info" | "warning" }> => {
+	if (outcome === "reset") return { message: "OpenAI reset applied", level: "info" };
+	if (outcome === "already_redeemed") return { message: "OpenAI reset was already redeemed", level: "info" };
+	if (outcome === "rejected") return { message: "OpenAI refused the reset; no credit was spent", level: "warning" };
+	return { message: "OpenAI reset outcome unknown; rerun command to retry same request", level: "warning" };
+};
+
 const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
+	patch({ glyphs: configGlyphs() });
 	// Derive the prompt from the resumed branch so an errored leaf starts with the failure glyph.
 	patch({ prompt: promptStateFromEntries(ctx.sessionManager.getBranch()) });
 	refreshSnapshot(ctx);
@@ -317,7 +332,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 };
 
 export default function zContext(pi: ExtensionAPI): void {
-	patch({ glyphs: readConfig(configPath()).asciiFallback ? ASCII_GLYPHS : NERD_GLYPHS });
+	patch({ glyphs: configGlyphs() });
 
 	pi.registerCommand("openai-codex-reset", {
 		description: "Redeem a banked OpenAI Codex (ChatGPT plan) usage-limit reset",
@@ -388,12 +403,8 @@ export default function zContext(pi: ExtensionAPI): void {
 							ctx.model?.baseUrl,
 						);
 						if (outcome !== "unknown") await store.clear();
-						ctx.ui.notify(
-							outcome === "unknown"
-								? "OpenAI reset outcome unknown; rerun command to retry same request"
-								: `OpenAI reset: ${outcome}`,
-							outcome === "reset" ? "info" : "warning",
-						);
+						const notice = resetOutcomeNotice(outcome);
+						ctx.ui.notify(notice.message, notice.level);
 						await refreshQuota(ctx, true);
 						return;
 					}
@@ -440,12 +451,8 @@ export default function zContext(pi: ExtensionAPI): void {
 						ctx.model?.baseUrl,
 					);
 					if (outcome !== "unknown") await store.clear();
-					ctx.ui.notify(
-						outcome === "unknown"
-							? "OpenAI reset outcome unknown; rerun command to retry same request"
-							: `OpenAI reset: ${outcome}`,
-						outcome === "reset" ? "info" : "warning",
-					);
+					const notice = resetOutcomeNotice(outcome);
+					ctx.ui.notify(notice.message, notice.level);
 					await refreshQuota(ctx, true);
 				});
 			} catch (error) {
@@ -490,7 +497,7 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 
 	pi.on("context", (_event, ctx) => {
-		if (state.laneActivity !== "idle") changeLaneActivity("thinking");
+		changeLaneActivity(activityAfterContext(state.laneActivity));
 		refreshSnapshot(ctx);
 		requestRender();
 	});
@@ -583,7 +590,7 @@ export default function zContext(pi: ExtensionAPI): void {
 
 	pi.on("agent_end", (_event, ctx) => {
 		refreshSnapshot(ctx);
-		if (state.usageLeafId !== ctx.sessionManager.getLeafId()) refreshSessionUsage(ctx);
+		refreshSessionUsage(ctx);
 		requestRender();
 	});
 	pi.on("agent_settled", () => {
@@ -616,8 +623,10 @@ export default function zContext(pi: ExtensionAPI): void {
 		refreshSessionUsage(ctx);
 		requestRender();
 	});
-	pi.on("session_shutdown", (_event, ctx) => {
+	pi.on("session_shutdown", (event, ctx) => {
 		quotaLookupId++;
+		// Pi emits session_shutdown for a fork before session_start carries the ids forward, so keep them.
+		if (event.reason !== "fork") pendingForkSubscriptionIds = undefined;
 		if (state.rewindTimer) clearInterval(state.rewindTimer);
 		state = freshState();
 		if (ctx.mode === "tui") {

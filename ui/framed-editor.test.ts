@@ -12,6 +12,7 @@ import {
 	BODY_INDENT,
 	FRAME_COLUMNS,
 	type HealthState,
+	isScrollCue,
 	POPUP_INDENT,
 	registerFramedEditor,
 	remapEditorMouse,
@@ -43,6 +44,14 @@ test("keeps autocomplete outside editor shell", () => {
 			autocomplete: ["command 1", "command 2"],
 		},
 	);
+});
+
+test("only pi scroll cues skip the prompt prefix", () => {
+	assert.equal(isScrollCue("── ↑ 3 more ──"), true);
+	assert.equal(isScrollCue("─── ↓ 9 more "), true);
+	assert.equal(isScrollCue("────"), false);
+	assert.equal(isScrollCue("a note ────"), false);
+	assert.equal(isScrollCue("plain text"), false);
 });
 
 test("remaps popup clicks and body clicks from the frame/indent constants", () => {

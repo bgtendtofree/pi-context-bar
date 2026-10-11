@@ -108,6 +108,38 @@ describe("parseResetCredits", () => {
 		assert.deepEqual(parseResetCredits({ rate_limit_reset_credits: [{ id: "c2" }] }), [{ id: "c2" }]);
 	});
 
+	test("prefers a named credit field over a generic data envelope", () => {
+		assert.deepEqual(
+			parseResetCredits({ data: [{ id: "envelope" }], rate_limit_reset_credits: { credits: [{ id: "named" }] } }),
+			[{ id: "named" }],
+		);
+	});
+
+	test("reads compact digit-only expiry stamps as UTC dates", () => {
+		const now = Date.parse("2026-01-01T00:00:00Z");
+		assert.deepEqual(parseResetCredits({ credits: [{ id: "day", expires_at: "20260102" }] }, now), [
+			{ id: "day", expiresAt: Date.parse("2026-01-02T00:00:00Z") },
+		]);
+		assert.deepEqual(parseResetCredits({ credits: [{ id: "stamp", expires_at: "20260102120000" }] }, now), [
+			{ id: "stamp", expiresAt: Date.parse("2026-01-02T12:00:00Z") },
+		]);
+		// A compact stamp already in the past still expires instead of silently becoming 1970.
+		assert.deepEqual(parseResetCredits({ credits: [{ id: "old", expires_at: "20251231" }] }, now), []);
+		// Invalid compact fields fall through to the numeric path rather than inventing a date.
+		assert.deepEqual(parseResetCredits({ credits: [{ id: "roll", expires_at: "20260231" }] }, now), [{ id: "roll" }]);
+	});
+
+	test("unwraps the usage API's nested reset-credit container", () => {
+		assert.deepEqual(
+			parseResetCredits({
+				rate_limit: { primary_window: { used_percent: 80 } },
+				rate_limit_reset_credits: { available_count: 2, credits: [{ credit_id: "n1" }, { credit_id: "n2" }] },
+			}),
+			[{ id: "n1" }, { id: "n2" }],
+		);
+		assert.deepEqual(parseResetCredits({ rate_limit_reset_credits: { available_count: 0, credits: [] } }), []);
+	});
+
 	test("skips spent credits and entries without ids", () => {
 		const payload = [
 			{ credit_id: "used", status: "consumed" },
@@ -159,6 +191,43 @@ describe("parseResetCredits", () => {
 				now,
 			),
 			[{ id: "valid", expiresAt: Date.parse("2099-01-01") }, { id: "unknown" }],
+		);
+	});
+
+	test("reads numeric expiries in epoch seconds and milliseconds", () => {
+		const now = Date.parse("2026-06-01T00:00:00Z");
+		const seconds = Math.round(now / 1000) + 3600;
+		const millis = now + 7_200_000;
+		assert.deepEqual(
+			parseResetCredits(
+				[
+					{ id: "ms", expires_at: millis },
+					{ id: "seconds", expires_at: seconds },
+					{ id: "string-seconds", expires_at: String(seconds) },
+				],
+				now,
+			),
+			[
+				{ id: "seconds", expiresAt: seconds * 1000 },
+				{ id: "string-seconds", expiresAt: seconds * 1000 },
+				{ id: "ms", expiresAt: millis },
+			],
+		);
+	});
+
+	test("excludes numeric expiries that are already past", () => {
+		const now = Date.parse("2026-06-01T00:00:00Z");
+		assert.deepEqual(
+			parseResetCredits(
+				[
+					{ id: "expired-seconds", expires_at: Math.round(now / 1000) - 60 },
+					{ id: "expired-ms", expires_at: now - 1000 },
+					{ id: "expired-old-ms", expires_at: 946_684_800_000 },
+					{ id: "valid", expires_at: now + 60_000 },
+				],
+				now,
+			),
+			[{ id: "valid", expiresAt: now + 60_000 }],
 		);
 	});
 });
@@ -298,6 +367,20 @@ describe("openai fetch functions", () => {
 		await assert.rejects(redeemResetCredit(authedToken, "c1", "request-1"), /401/);
 	});
 
+	test("redeemResetCredit reports an unambiguous refusal as rejected", async (t) => {
+		for (const status of [400, 404, 409, 410, 422]) {
+			mockFetch(t, () => new Response(null, { status }));
+			assert.equal(await redeemResetCredit(authedToken, "c1", "request-1"), "rejected");
+		}
+	});
+
+	test("redeemResetCredit keeps ambiguous failures unknown", async (t) => {
+		for (const status of [403, 408, 429, 500, 503]) {
+			mockFetch(t, () => new Response(null, { status }));
+			await assert.rejects(redeemResetCredit(authedToken, "c1", "request-1"), new RegExp(String(status)));
+		}
+	});
+
 	test("tokens without an account id throw before any request", async (t) => {
 		const calls = mockFetch(t, jsonResponse({}));
 		await assert.rejects(fetchOpenAiUsage("bad-token"), /chatgpt_account_id/);
@@ -332,7 +415,15 @@ describe("openai fetch functions", () => {
 	});
 
 	test("bounds response body size", async (t) => {
-		mockFetch(t, new Response(new Uint8Array(64 * 1024 + 1)));
+		const payload = (totalBytes: number): string => {
+			const shape = (pad: string) => ({ rate_limit: { primary_window: { used_percent: 1 } }, pad });
+			const empty = JSON.stringify(shape(""));
+			return JSON.stringify(shape("a".repeat(totalBytes - empty.length)));
+		};
+		const bodies = [payload(64 * 1024), payload(64 * 1024 + 1)];
+		mockFetch(t, () => new Response(bodies.shift() ?? "{}"));
+		const atLimit = await fetchOpenAiUsage(authedToken);
+		assert.equal(atLimit.limits[0]?.percent, 1);
 		await assert.rejects(fetchOpenAiUsage(authedToken), /response exceeds size limit/);
 	});
 });

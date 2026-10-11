@@ -5,6 +5,7 @@ import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
 	ASCII_GLYPHS,
+	activityAfterContext,
 	type ChromeStyles,
 	formatCost,
 	formatDuration,
@@ -83,6 +84,10 @@ describe("health metric formatting", () => {
 		assert.equal(formatDuration(-1), "expired");
 		for (const ms of [1, 30_000, 59_999]) assert.equal(formatDuration(ms), "<1m");
 		assert.equal(formatDuration(60_000), "1m");
+		// Whole hours and days drop the zero component instead of printing "6h 0m".
+		assert.equal(formatDuration(left("2026-07-01T06:00:00Z")), "6h");
+		assert.equal(formatDuration(left("2026-07-02T00:00:00Z")), "1d");
+		assert.equal(formatDuration(left("2026-07-04T01:00:00Z")), "3d 1h");
 	});
 
 	test("builds wide and narrow options", () => {
@@ -201,6 +206,14 @@ describe("Pac-Man lane", () => {
 		assert.ok(
 			!stripVTControlCharacters(renderPacmanLane(snapshot(), 10, identityStyles, 1)).includes(PACMAN_FRAMES[1]),
 		);
+	});
+
+	test("context assembly only promotes a fresh model turn", () => {
+		assert.equal(activityAfterContext("working"), "thinking");
+		assert.equal(activityAfterContext("thinking"), "thinking");
+		assert.equal(activityAfterContext("assistant"), "assistant");
+		assert.equal(activityAfterContext("tools"), "tools");
+		assert.equal(activityAfterContext("idle"), "idle");
 	});
 
 	test("shows a token-colored ghost only while active", () => {
@@ -328,6 +341,10 @@ describe("lane strip", () => {
 	test("formats window sizes compactly", () => {
 		assert.equal(formatWindowSize(200_000), "200K");
 		assert.equal(formatWindowSize(372_000), "372K");
+		assert.equal(formatWindowSize(1_000_000), "1M");
+		assert.equal(formatWindowSize(999_999), "1M");
+		assert.equal(formatWindowSize(1_048_576), "1.0M");
+		assert.equal(formatWindowSize(999_499), "999K");
 		assert.equal(formatWindowSize(512), "512");
 		assert.equal(formatWindowSize(0), "0");
 	});

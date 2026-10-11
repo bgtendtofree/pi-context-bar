@@ -143,6 +143,21 @@ describe("rounded editor border", () => {
 		assert.equal(visibleWidth(renderLabeledBorder(12, "╰", "╯", "", "", (text) => text)), 12);
 	});
 
+	test("shrinks labels instead of overflowing the frame", () => {
+		const plain = (text: string): string => text;
+		assert.equal(renderLabeledBorder(2, "┌", "┐", "m", "CH98%", plain), "┌┐");
+		assert.equal(renderLabeledBorder(3, "┌", "┐", "m", "CH98%", plain), "┌─┐");
+		for (const width of [2, 3, 4, 5, 9, 12, 20, 48]) {
+			const border = renderLabeledBorder(width, "┌", "┐", "verylongmodellabel · high", "CH98%  $1.61  ↑3", plain);
+			assert.equal(visibleWidth(border), width, `width ${width} rendered ${border}`);
+		}
+	});
+
+	test("keeps labels that already fit untouched", () => {
+		const plain = (text: string): string => text;
+		assert.equal(renderLabeledBorder(24, "┌", "┐", "m", "CH", plain), `┌─ m ${"─".repeat(12)} CH ──┐`);
+	});
+
 	test("embeds middle content and fills the rest", () => {
 		const border = renderLabeledBorder(
 			30,

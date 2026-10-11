@@ -12,9 +12,10 @@ import type {
 	ExtensionContext,
 	SessionEntry,
 } from "@earendil-works/pi-coding-agent";
+import { VERSION } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import zContext from "./index.ts";
-import { NERD_GLYPHS } from "./lib/chrome.ts";
+import { ASCII_GLYPHS, NERD_GLYPHS } from "./lib/chrome.ts";
 import { type AssistantMessage, accumulateSessionUsage, SUBSCRIPTION_TURN_ENTRY } from "./lib/context.ts";
 
 const token = (accountId: string): string =>
@@ -553,10 +554,13 @@ test("in-memory fork carries the endpoint's explicit billing marker with no pare
 			getEntry: (id: string) => entries.find((entry) => entry.id === id),
 			getHeader: () => null,
 		},
+		ui: { setFooter: () => {} },
 	} as unknown as ExtensionContext;
 	zContext(pi);
 	entries = [billedResponse("sub"), markerEntry("sub", "sub")];
 	handlers.get("session_before_fork")?.({ entryId: "sub", position: "at" }, ctx);
+	// Pi tears the old session down before the fork's session_start, so the carried ids must survive this.
+	handlers.get("session_shutdown")?.({ reason: "fork" }, ctx);
 	entries = [billedResponse("sub")]; // In-memory fork keeps the response, drops the child marker, sets no parent file.
 	handlers.get("session_start")?.({ reason: "fork" }, ctx);
 	assert.deepEqual(entries.at(-1)?.data, { messageEntryId: "sub" });
@@ -589,15 +593,55 @@ test("in-memory fork carries markers for earlier responses retained on the targe
 			getEntry: (id: string) => entries.find((entry) => entry.id === id),
 			getHeader: () => null,
 		},
+		ui: { setFooter: () => {} },
 	} as unknown as ExtensionContext;
 	zContext(pi);
 	// Subscription A keeps its marker on a sibling branch; paid B is the fork endpoint under A.
 	entries = [billedResponse("a"), markerEntry("a", "a"), { ...billedResponse("b"), parentId: "a" }];
 	handlers.get("session_before_fork")?.({ entryId: "b", position: "at" }, ctx);
+	handlers.get("session_shutdown")?.({ reason: "fork" }, ctx);
 	entries = [billedResponse("a"), { ...billedResponse("b"), parentId: "a" }];
 	handlers.get("session_start")?.({ reason: "fork" }, ctx);
 	assert.deepEqual(entries.at(-1)?.data, { messageEntryId: "a" });
 	assert.ok(Math.abs(accumulateSessionUsage(entries).cost - 0.4) < 1e-10);
+});
+
+test("a non-fork shutdown drops carried fork markers instead of leaking them", () => {
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	let entries: SessionEntry[] = [];
+	const pi = {
+		registerCommand: () => {},
+		appendEntry: (customType: string, data: unknown) => {
+			entries.push({
+				type: "custom",
+				id: `appended-${entries.length}`,
+				parentId: entries.at(-1)?.id ?? null,
+				timestamp: "",
+				customType,
+				data,
+			} as SessionEntry);
+		},
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	const ctx = {
+		hasUI: false,
+		mode: "print",
+		sessionManager: {
+			getEntries: () => entries,
+			getLeafId: () => entries.at(-1)?.id ?? null,
+			getEntry: (id: string) => entries.find((entry) => entry.id === id),
+			getHeader: () => null,
+		},
+		ui: { setFooter: () => {} },
+	} as unknown as ExtensionContext;
+	zContext(pi);
+	entries = [billedResponse("sub"), markerEntry("sub", "sub")];
+	handlers.get("session_before_fork")?.({ entryId: "sub", position: "at" }, ctx);
+	handlers.get("session_shutdown")?.({ reason: "reload" }, ctx);
+	entries = [billedResponse("sub")];
+	handlers.get("session_start")?.({ reason: "fork" }, ctx);
+	assert.equal(entries.length, 1);
+	assert.ok(accumulateSessionUsage(entries).cost > 0);
 });
 
 test("session_start recovers markers from a persisted parent file and skips non-regular parents", async (t) => {
@@ -632,4 +676,222 @@ test("session_start recovers markers from a persisted parent file and skips non-
 	handlers.get("session_start")?.({ reason: "startup" }, ctxFor(dir)); // Non-regular parent: no read, no hang.
 	handlers.get("session_start")?.({ reason: "startup" }, ctxFor(join(dir, "missing.jsonl")));
 	assert.deepEqual(appended, []);
+});
+
+test("re-applies asciiFallback glyphs after Pi replaces the session", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-glyphs-"));
+	const previousDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = dir;
+	t.after(async () => {
+		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousDir;
+		await rm(dir, { recursive: true, force: true });
+	});
+	await writeFile(join(dir, "pi-context-bar.json"), JSON.stringify({ asciiFallback: true }));
+
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	let render = (): string => "";
+	const tui = { requestRender: () => {}, terminal: { rows: 40 } } as unknown as TUI;
+	const editorTheme = { borderColor: (text: string) => text } as EditorTheme;
+	const model = {
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		id: "gpt-test",
+		contextWindow: 100_000,
+		baseUrl: "https://chatgpt.com/backend-api",
+	};
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		model,
+		getContextUsage: () => ({ tokens: 0, contextWindow: model.contextWindow }),
+		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+		modelRegistry: { getApiKeyForProvider: async () => undefined },
+		ui: {
+			notify: () => {},
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+				style: (text: string) => text,
+			},
+			setWorkingVisible: () => {},
+			setHeader: () => {},
+			setFooter: () => {},
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (factory) {
+					const editor = factory(tui, editorTheme, {} as Parameters<NonNullable<typeof factory>>[2]);
+					render = () => stripVTControlCharacters(editor.render(100).join("\n"));
+				}
+			},
+		},
+	} as unknown as ExtensionContext;
+	const pi = {
+		registerCommand: () => {},
+		getThinkingLevel: () => "off",
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+
+	zContext(pi);
+	handlers.get("session_start")?.({ reason: "startup" }, ctx);
+	assert.ok(render().includes(ASCII_GLYPHS.pacmanOpen));
+	assert.ok(!render().includes(NERD_GLYPHS.pacmanOpen));
+
+	// Pi tears down and recreates the session without re-running the extension factory.
+	handlers.get("session_shutdown")?.({ reason: "new" }, ctx);
+	handlers.get("session_start")?.({ reason: "new" }, ctx);
+	assert.ok(render().includes(ASCII_GLYPHS.pacmanOpen));
+	assert.ok(!render().includes(NERD_GLYPHS.pacmanOpen));
+});
+
+test("lane chomps streamed tokens, reports live speed, and rewinds after compaction", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-lane-"));
+	const previousDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = dir;
+	t.after(async () => {
+		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousDir;
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	let render = (): string => "";
+	let drawHeader: (width: number) => string = () => "";
+	let headerRows = 0;
+	let expandHeader = (_next: boolean): void => {};
+	let usedTokens = 0;
+	const tui = { requestRender: () => {}, terminal: { rows: 40 } } as unknown as TUI;
+	const editorTheme = { borderColor: (text: string) => text } as EditorTheme;
+	const model = {
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		id: "gpt-test",
+		contextWindow: 100_000,
+		baseUrl: "https://chatgpt.com/backend-api",
+	};
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		model,
+		getContextUsage: () => ({ tokens: usedTokens, contextWindow: model.contextWindow }),
+		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+		modelRegistry: {
+			getApiKeyForProvider: async () => undefined,
+			find: () => undefined,
+			isUsingOAuth: () => false,
+			getProvider: () => undefined,
+		},
+		ui: {
+			notify: () => {},
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+				style: (text: string) => text,
+			},
+			setWorkingVisible: () => {},
+			setFooter: () => {},
+			setHeader: (factory: Parameters<ExtensionContext["ui"]["setHeader"]>[0]) => {
+				if (!factory) return;
+				const component = factory(tui, undefined as never);
+				drawHeader = (width: number) => {
+					const rows = component.render(width);
+					headerRows = rows.length;
+					return stripVTControlCharacters(rows.join("\n"));
+				};
+				expandHeader = (next: boolean) =>
+					(component as unknown as { setExpanded: (next: boolean) => void }).setExpanded(next);
+			},
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (factory) {
+					const editor = factory(tui, editorTheme, {} as Parameters<NonNullable<typeof factory>>[2]);
+					render = () => stripVTControlCharacters(editor.render(100).join("\n"));
+				}
+			},
+		},
+	} as unknown as ExtensionContext;
+	const pi = {
+		registerCommand: () => {},
+		getThinkingLevel: () => "medium",
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+
+	zContext(pi);
+	handlers.get("session_start")?.({ reason: "startup" }, ctx);
+	assert.ok(drawHeader(80).includes(VERSION));
+	// Hint keys resolve only inside a running Pi, so this proves expansion stays wired without throwing.
+	expandHeader(true);
+	assert.ok(drawHeader(80).includes(`v${VERSION}`));
+	assert.ok(headerRows >= 2);
+
+	usedTokens = 23_000;
+	handlers.get("context")?.({ type: "context", messages: [] }, ctx);
+	assert.ok(render().includes("23.0%"));
+	assert.ok(!render().includes(NERD_GLYPHS.ghost));
+
+	handlers.get("agent_start")?.({ type: "agent_start" }, ctx);
+	handlers.get("message_start")?.({ type: "message_start", message: { role: "user" } }, ctx);
+	handlers.get("message_start")?.(
+		{
+			type: "message_start",
+			message: { role: "assistant", provider: "openai", model: "gpt" },
+		},
+		ctx,
+	);
+	handlers.get("message_update")?.({ type: "message_update", assistantMessageEvent: { type: "text_start" } }, ctx);
+	// 10 streamed tokens land on frame 3, so the mouth is closed while the ghost trails the lane.
+	handlers.get("message_update")?.(
+		{
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_delta", delta: "y".repeat(40) },
+		},
+		ctx,
+	);
+	assert.ok(render().includes(NERD_GLYPHS.pacmanClosed));
+	// 110 tokens total: frame 36 is an open mouth, and live speed stays dim text beside the lane.
+	handlers.get("message_update")?.(
+		{
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", delta: "x".repeat(400) },
+		},
+		ctx,
+	);
+	const streamed = render();
+	assert.ok(streamed.includes(NERD_GLYPHS.ghost));
+	assert.ok(streamed.includes(NERD_GLYPHS.pacmanOpen));
+	assert.match(streamed, /\d+\.\dt\/s/);
+
+	handlers.get("tool_execution_start")?.({ type: "tool_execution_start" }, ctx);
+	handlers.get("message_end")?.({ type: "message_end", message: { role: "user" } }, ctx);
+	handlers.get("message_end")?.({ type: "message_end", message: { role: "assistant", usage: { output: 50 } } }, ctx);
+	handlers.get("turn_end")?.(
+		{
+			type: "turn_end",
+			turnIndex: 0,
+			message: { role: "assistant", stopReason: "stop" },
+			messageEntryId: "entry-1",
+			toolResults: [],
+			toolResultEntryIds: [],
+		},
+		ctx,
+	);
+	handlers.get("agent_end")?.({ type: "agent_end" }, ctx);
+	handlers.get("thinking_level_select")?.({}, ctx);
+	handlers.get("session_tree")?.({ type: "session_tree" }, ctx);
+	handlers.get("agent_settled")?.({ type: "agent_settled" }, ctx);
+	const idle = render();
+	assert.ok(!idle.includes(NERD_GLYPHS.ghost));
+	assert.ok(idle.includes(NERD_GLYPHS.pacmanOpen));
+
+	// Compaction slides Pac-Man back from the pre-compact percent, then self-clears.
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	usedTokens = 8_000;
+	handlers.get("session_compact")?.(
+		{ type: "session_compact", compactionEntry: {}, fromExtension: false, reason: "threshold", willRetry: false },
+		ctx,
+	);
+	assert.ok(render().includes("23.0%"));
+	t.mock.timers.tick(70);
+	assert.ok(render().includes("20.5%"));
+	t.mock.timers.tick(70 * 6);
+	assert.ok(render().includes("8.0%"));
+	t.mock.timers.reset();
 });

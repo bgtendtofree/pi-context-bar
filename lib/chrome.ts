@@ -75,12 +75,26 @@ export const GHOST_TOKENS: Readonly<Record<Exclude<LaneActivity, "idle">, ThemeC
 	tools: "accent",
 };
 
+/**
+ * Lane activity after Pi assembles context. Pi also emits `context` mid-tool, so an active tool or
+ * streaming phase must survive; only a fresh model turn promotes to thinking. Without this the
+ * ghost flickers tools → thinking → tools inside one tool loop.
+ */
+export const activityAfterContext = (current: LaneActivity): LaneActivity =>
+	current === "working" ? "thinking" : current;
+
 /** Role-based theme painter; the editor binds it to the live theme's `fg`. */
 export type ChromeStyles = Readonly<{ fg: (token: ThemeColor, text: string) => string }>;
 
 /** Compact context-window size: 200_000 → 200K, 512 → 512. */
-export const formatWindowSize = (tokens: number): string =>
-	tokens >= 1000 ? `${Math.round(tokens / 1000)}K` : `${tokens}`;
+export const formatWindowSize = (tokens: number): string => {
+	const thousands = Math.round(tokens / 1000);
+	if (thousands >= 1000) {
+		const millions = thousands / 1000;
+		return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
+	}
+	return tokens >= 1000 ? `${thousands}K` : `${tokens}`;
+};
 
 export const formatCost = (cost: number): string => {
 	if (cost <= 0) return "";
@@ -94,8 +108,11 @@ export const formatDuration = (ms: number): string => {
 	if (minutes === 0) return "<1m";
 	if (minutes < 60) return `${minutes}m`;
 	const hours = Math.floor(minutes / 60);
-	if (hours < 24) return `${hours}h ${minutes % 60}m`;
-	return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+	const remainingMinutes = minutes % 60;
+	if (hours < 24) return remainingMinutes === 0 ? `${hours}h` : `${hours}h ${remainingMinutes}m`;
+	const days = Math.floor(hours / 24);
+	const remainingHours = hours % 24;
+	return remainingHours === 0 ? `${days}d` : `${days}d ${remainingHours}h`;
 };
 
 const tint = (text: string, token: ThemeColor, styles: ChromeStyles): string => (text ? styles.fg(token, text) : "");

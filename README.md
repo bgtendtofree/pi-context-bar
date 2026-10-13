@@ -143,7 +143,19 @@ pi --no-extensions -e ./index.ts --no-session --no-tools -p "Reply ok"
 - Tests use built-in `node:test` and Node coverage
 - Runtime source and tests use separate TypeScript configs
 - Loads as `.ts` via jiti (no build step)
-- Pi core packages stay `*` peers per Pi's package guidance; development and CI test exact Pi `1.1.0`. Older API compatibility is not verified.
+- Pi core packages stay `*` peers per Pi's package guidance; development and CI test exact Pi `1.2.0`. Older API compatibility is not verified.
+
+### Pi 1.2.0 compatibility
+
+- Editor, theme-token, context usage, model registry, and session entry APIs used here remain compatible; no runtime shim is needed.
+- `before_agent_start` now also fires for extension-triggered custom-message runs and uses a `messageType: "user" | "custom"` union. This extension does not handle that event or send messages; its activity lifecycle still follows `agent_start` through `agent_settled`.
+- `showHardwareCursor` now uses only the terminal cursor. The framed editor delegates input and cursor rendering to Pi's `CustomEditor`, preserving its native cursor marker while adding frame and prompt indentation.
+- Theme files are now schema-validated at startup as well as reload. External themes (including generated `omarchy-system` files) must use the documented fields, put reusable colors in `vars`, and remove unsupported metadata/custom color keys. The published schema is `https://pi.dev/schemas/theme.schema.json`; this package ships no theme files and continues using semantic tokens only.
+- OpenRouter's per-key model lists provide key-specific context limits and prices; the existing native context snapshots and provider-reported usage costs need no local override. Router placeholder prices now resolve to zero rather than negative estimates.
+- New tool-definition `reachesTools`, namespace `aliases`, codemode timing/constraints, and MCP changes do not require editor chrome changes. Tool and conversation renderers stay native; tool elapsed time is not token speed.
+- OSC 52 clipboard support (`PI_CLIPBOARD_OSC52=1`) and compaction/terminal fixes remain Pi's responsibility; no duplicate clipboard, compaction, or terminal handling is added.
+
+See the [Pi 1.2.0 changelog](https://github.com/earendil-works/pi/blob/v1.2.0/packages/coding-agent/CHANGELOG.md).
 
 ### Pi 1.1.0 compatibility
 

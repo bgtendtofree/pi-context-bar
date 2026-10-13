@@ -3,7 +3,15 @@ import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import { parseColor, styleText, type TerminalColorMode, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	CURSOR_MARKER,
+	isFocusable,
+	parseColor,
+	renderFakeCursor,
+	styleText,
+	type TerminalColorMode,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { ModelInfo } from "../lib/border.ts";
 import { ASCII_GLYPHS, NERD_GLYPHS } from "../lib/chrome.ts";
 import type { PromptState } from "../lib/prompt.ts";
@@ -161,6 +169,28 @@ test("framed editor uses square frame tokens, no fills, and a four-column body i
 	// Typed input starts at column 5 (frame + two spaces + glyph + space).
 	editor.setText("input");
 	assert.equal(stripVTControlCharacters(editor.render(80)[1] ?? "").indexOf("input"), 5);
+
+	// Pi 1.2 resolves the fake cursor in TUI; preserve its marker and framed IME position.
+	assert.ok(isFocusable(editor));
+	editor.focused = true;
+	for (const text of ["", "input", "中文😀", "first\n中文😀"]) {
+		editor.setText(text);
+		for (const width of [24, 80]) {
+			const lines = editor.render(width);
+			const cursorLines = lines.filter((line) => line.includes(CURSOR_MARKER));
+			assert.equal(cursorLines.length, 1);
+			const line = cursorLines[0] ?? "";
+			const marker = line.indexOf(CURSOR_MARKER);
+			assert.equal(
+				visibleWidth(line.slice(0, marker)),
+				FRAME_COLUMNS + BODY_INDENT + visibleWidth(text.split("\n").at(-1) ?? ""),
+			);
+			assert.ok(line.slice(marker + CURSOR_MARKER.length).startsWith(renderFakeCursor(" ")));
+			assert.ok(lines.every((row) => visibleWidth(row) === width));
+		}
+	}
+	editor.focused = false;
+	assert.ok(editor.render(80).every((line) => !line.includes(CURSOR_MARKER)));
 
 	// Routed labels keep accent ids and a dim arrow.
 	model = { id: "router/auto", reasoning: true, routed: { id: "openai/gpt-test", thinkingLevel: "medium" } };

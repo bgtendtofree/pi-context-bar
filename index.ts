@@ -6,6 +6,7 @@ import type { ModelInfo } from "./lib/border.ts";
 import {
 	ASCII_GLYPHS,
 	activityAfterContext,
+	activityForAssistantEvent,
 	formatDuration,
 	type GlyphSet,
 	type LaneActivity,
@@ -555,12 +556,7 @@ export default function zContext(pi: ExtensionAPI): void {
 
 	pi.on("message_update", (event) => {
 		const type = event.assistantMessageEvent.type;
-		const next =
-			type === "thinking_start" || type === "thinking_delta"
-				? "thinking"
-				: type === "text_start" || type === "text_delta" || type === "toolcall_start" || type === "toolcall_delta"
-					? "assistant"
-					: undefined;
+		const next = activityForAssistantEvent(type);
 		if (next && changeLaneActivity(next)) requestRender();
 
 		const delta =

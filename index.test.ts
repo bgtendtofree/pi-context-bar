@@ -15,7 +15,7 @@ import type {
 import { VERSION } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import zContext from "./index.ts";
-import { ASCII_GLYPHS, NERD_GLYPHS } from "./lib/chrome.ts";
+import { ASCII_GLYPHS, GHOST_GLYPH, GHOST_TOKENS, NERD_GLYPHS } from "./lib/chrome.ts";
 import { type AssistantMessage, accumulateSessionUsage, SUBSCRIPTION_TURN_ENTRY } from "./lib/context.ts";
 
 const token = (accountId: string): string =>
@@ -989,4 +989,81 @@ test("honours quietStartup by leaving pi's own startup header alone", () => {
 	assert.equal(startSession({ quietStartup: "header" }), 1);
 	// A throwing or absent settings read must not cost the user the header.
 	assert.equal(startSession(undefined), 1);
+});
+
+test("tool-call events keep the generating ghost while only answer text succeeds", async () => {
+	// Regression: toolcall_start/toolcall_delta used to map to `assistant` (success), claiming an answer
+	// had started while the model was still generating tool arguments. This drives the real event
+	// handlers through the editor and reads the ghost's theme token, not just the static token table.
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	const painted: Array<readonly [string, string]> = [];
+	let render = (): string => "";
+	const tui = { requestRender: () => {}, terminal: { rows: 20 } } as unknown as TUI;
+	const editorTheme = { borderColor: (text: string) => text } as EditorTheme;
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		model: { api: "openai-responses", provider: "openai", id: "gpt-test", contextWindow: 100_000 },
+		getContextUsage: () => ({ tokens: 100_000, contextWindow: 100_000 }),
+		sessionManager: {
+			getEntries: () => [],
+			getLeafId: () => null,
+			getBranch: () => [],
+			getHeader: () => null,
+		},
+		modelRegistry: { getApiKeyForProvider: async () => undefined },
+		ui: {
+			notify: () => {},
+			theme: {
+				fg: (token: string, text: string) => {
+					painted.push([token, text]);
+					return text;
+				},
+				bold: (text: string) => text,
+				style: (text: string) => text,
+			},
+			setWorkingVisible: () => {},
+			setHeader: () => {},
+			setFooter: () => {},
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (factory) {
+					const editor = factory(tui, editorTheme, {} as Parameters<NonNullable<typeof factory>>[2]);
+					render = () => editor.render(100).join("\n");
+				}
+			},
+		},
+	} as unknown as ExtensionContext;
+	const pi = {
+		registerCommand: () => {},
+		getThinkingLevel: () => "off",
+		getSettings: () => ({}),
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => {
+			handlers.set(name, handler);
+		},
+	} as unknown as ExtensionAPI;
+	zContext(pi);
+	handlers.get("session_start")?.({}, ctx);
+	const ghostToken = (): string | undefined => {
+		painted.length = 0;
+		render();
+		return painted.filter(([, text]) => text.includes(GHOST_GLYPH)).at(-1)?.[0];
+	};
+	const update = (type: string): void => handlers.get("message_update")?.({ assistantMessageEvent: { type } }, ctx);
+
+	handlers.get("agent_start")?.({}, ctx);
+	assert.equal(ghostToken(), GHOST_TOKENS.working);
+	update("thinking_start");
+	assert.equal(ghostToken(), GHOST_TOKENS.thinking);
+	update("toolcall_start");
+	assert.equal(ghostToken(), GHOST_TOKENS.tools);
+	assert.notEqual(ghostToken(), GHOST_TOKENS.assistant);
+	update("toolcall_delta");
+	assert.equal(ghostToken(), GHOST_TOKENS.tools);
+	update("text_start");
+	assert.equal(ghostToken(), GHOST_TOKENS.assistant);
+	update("text_delta");
+	assert.equal(ghostToken(), GHOST_TOKENS.assistant);
+	handlers.get("agent_settled")?.({}, ctx);
+	assert.equal(ghostToken(), undefined);
+	handlers.get("session_shutdown")?.({}, ctx);
 });

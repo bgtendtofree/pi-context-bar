@@ -7,13 +7,14 @@ import {
 	editorModelOptions,
 	MODEL_ARROW,
 	type ModelInfo,
+	pickBottomBorderContent,
 	renderLabeledBorder,
 } from "../lib/border.ts";
 import {
 	type ChromeStyles,
-	freeMetricOptions,
 	type GlyphSet,
 	type LaneActivity,
+	metricOptions,
 	type QuotaUsage,
 	quotaRender,
 	renderLaneStrip,
@@ -178,26 +179,17 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 				? quotaRender(health.quota, styles, Date.now(), options.glyphs)
 				: { essentials: [""], upgrades: [] };
 			const modelInfo = options.getModel();
-			// Essential baseline: model + window percentages; the model survives before quota.
-			const picked = editorModelOptions(modelInfo, options.getThinkingLevel())
-				.flatMap((model) => quota.essentials.map((quotaText) => ({ model, quotaText })))
-				.find(({ model, quotaText }) =>
-					bottomBorderFits({
-						width,
-						model,
-						quota: quotaText,
-						metric: "",
-						gap: MODEL_QUOTA_GAP,
-						scrollReserve,
-					}),
-				);
-			const usedByModel = picked
-				? visibleWidth(picked.model) + (picked.quotaText ? visibleWidth(picked.quotaText) + MODEL_QUOTA_GAP : 0) + 3
-				: 1;
-			const metrics =
-				freeMetricOptions(health.usage, styles, options.glyphs).find(
-					(value) => value === "" || visibleWidth(value) + 4 <= width - 2 - usedByModel - scrollReserve,
-				) ?? "";
+			// Essential reading first: selected model id + window percentages + cache/cost. Optional model
+			// detail (thinking level, route arrow) and quota countdowns/credits only spend spare width.
+			const picked = pickBottomBorderContent({
+				width,
+				models: editorModelOptions(modelInfo, options.getThinkingLevel()),
+				quotas: quota.essentials,
+				metrics: metricOptions(health.usage, styles, options.glyphs),
+				gap: MODEL_QUOTA_GAP,
+				scrollReserve,
+			});
+			const metrics = picked?.metric ?? "";
 			// Optional quota detail (countdowns, credits) expands only into width left after model +
 			// window percentages + cache/cost; it never displaces those essential readings.
 			const quotaText = picked
@@ -210,7 +202,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 							gap: MODEL_QUOTA_GAP,
 							scrollReserve,
 						}),
-					) ?? picked.quotaText)
+					) ?? picked.quota)
 				: "";
 			// Decorative provider badge is added only while the chosen model/quota/metric triple fits.
 			const chosenModel = picked

@@ -28,6 +28,10 @@ export type GlyphSet = Readonly<{
 	cache: string;
 	/** Speedometer md-speedometer `\u{f04c5}`; never shown without `t/s`. */
 	speed: string;
+	/** Remaining-capacity pellet; ASCII's `.` keeps the lane single-cell in any font. */
+	pellet: string;
+	/** Power pellet marking the warning/error ratios; ASCII's `o` replaces the circular `○`. */
+	powerPellet: string;
 	/** ASCII fallbacks compact their reset/credit tokens ("r52m", "R1") and omit icons. */
 	ascii: boolean;
 }>;
@@ -44,6 +48,8 @@ export const NERD_GLYPHS: GlyphSet = {
 	providerAnthropic: "\uec82",
 	cache: "\u{f01bc}",
 	speed: "\u{f04c5}",
+	pellet: PELLET_GLYPH,
+	powerPellet: POWER_PELLET_GLYPH,
 	ascii: false,
 };
 
@@ -59,6 +65,8 @@ export const ASCII_GLYPHS: GlyphSet = {
 	providerAnthropic: "",
 	cache: "",
 	speed: "",
+	pellet: ".",
+	powerPellet: "o",
 	ascii: true,
 };
 
@@ -84,6 +92,17 @@ export const GHOST_TOKENS: Readonly<Record<Exclude<LaneActivity, "idle">, ThemeC
 	thinking: "accent",
 	assistant: "success",
 	tools: "accent",
+};
+
+/**
+ * Lane activity for one assistant streaming event. Tool-call arguments are model output, so they
+ * keep the generating `tools` ghost instead of promising an answer that has not started yet.
+ */
+export const activityForAssistantEvent = (type: string): Exclude<LaneActivity, "idle"> | undefined => {
+	if (type === "thinking_start" || type === "thinking_delta") return "thinking";
+	if (type === "text_start" || type === "text_delta") return "assistant";
+	if (type === "toolcall_start" || type === "toolcall_delta") return "tools";
+	return undefined;
 };
 
 /**
@@ -153,30 +172,58 @@ export const CH_AVG_DIVERGENCE_POINTS = 5;
  * ASCII keeps the `CH` label (`CH98/94%`). The latest turn keeps its warning/error color;
  * the average stays dim.
  */
-const cacheLabelOptions = (usage: SessionUsage, styles: ChromeStyles, glyphs: GlyphSet): readonly string[] => {
+/** One health reading: its plain label plus the same reading behind an optional decorative icon. */
+export type MetricOption = Readonly<{ plain: string; decorated: string }>;
+
+/**
+ * Cache/cost options, widest → tightest, styled at construction. The `plain` form carries only the
+ * numbers (ASCII keeps the `CH` label; Nerd stays number-only), and `decorated` is the same reading
+ * behind the cache icon when the glyph set has one. Keeping both forms explicit lets the border fit
+ * the plain reading first and add the icon only while the chosen model and quota still fit, instead
+ * of trying to parse already-styled strings. The latest-turn threshold color and the session average
+ * are preserved on both forms.
+ */
+export const metricOptions = (
+	usage: SessionUsage,
+	styles: ChromeStyles,
+	glyphs: GlyphSet = NERD_GLYPHS,
+): readonly MetricOption[] => {
+	const cost = tint(formatCost(usage.cost), "dim", styles);
+	const gap = styles.fg("dim", "  ");
 	const latest = usage.cacheHitRate;
-	if (latest === undefined) return [];
-	const avg = usage.cacheHitRateAvg;
-	const diverged = avg !== undefined && Math.abs(latest - avg) > CH_AVG_DIVERGENCE_POINTS;
-	const avgPart = diverged ? styles.fg("dim", `/${Math.round(avg)}`) : "";
-	const withIcon = styleCache(`${glyphs.cache} ${Math.round(latest)}`, latest, styles);
-	const withoutIcon = styleCache(`${glyphs.cache ? "" : "CH"}${Math.round(latest)}`, latest, styles);
-	return glyphs.cache ? [`${withIcon}${avgPart}%`, `${withoutIcon}${avgPart}%`] : [`${withoutIcon}${avgPart}%`];
+	const caches: MetricOption[] = [];
+	if (latest !== undefined) {
+		const avg = usage.cacheHitRateAvg;
+		const diverged = avg !== undefined && Math.abs(latest - avg) > CH_AVG_DIVERGENCE_POINTS;
+		const avgPart = diverged ? styles.fg("dim", `/${Math.round(avg)}`) : "";
+		const plain = `${styleCache(`${glyphs.ascii ? "CH" : ""}${Math.round(latest)}`, latest, styles)}${avgPart}%`;
+		caches.push({
+			plain,
+			decorated: glyphs.cache
+				? `${styleCache(`${glyphs.cache} ${Math.round(latest)}`, latest, styles)}${avgPart}%`
+				: plain,
+		});
+	}
+	const withCost =
+		caches.length > 0
+			? caches.map((cache) => ({
+					plain: `${cache.plain}${gap}${cost}`,
+					decorated: `${cache.decorated}${gap}${cost}`,
+				}))
+			: [{ plain: cost, decorated: cost }];
+	return [...(cost ? withCost : []), ...caches, { plain: "", decorated: "" }];
 };
 
-/** Cache/cost options, widest → tightest, styled at construction. CH survives before cost. */
+/** Flat widest → tightest list for callers that only need text; the decorated form precedes its plain form. */
 export const freeMetricOptions = (
 	usage: SessionUsage,
 	styles: ChromeStyles,
 	glyphs: GlyphSet = NERD_GLYPHS,
 ): readonly string[] => {
-	const cost = tint(formatCost(usage.cost), "dim", styles);
-	const gap = styles.fg("dim", "  ");
-	const caches = cacheLabelOptions(usage, styles, glyphs);
-	const withCost = caches.length > 0 ? caches.map((ch) => `${ch}${gap}${cost}`) : [cost];
-	const candidates = [...(cost ? withCost : []), ...caches, ""];
 	const options: string[] = [];
-	for (const value of candidates) if (options.at(-1) !== value) options.push(value);
+	for (const { plain, decorated } of metricOptions(usage, styles, glyphs)) {
+		for (const value of [decorated, plain]) if (options.at(-1) !== value) options.push(value);
+	}
 	return options;
 };
 
@@ -292,7 +339,7 @@ export const renderPacmanLane = (
 	);
 	const pellets = Array.from({ length: pelletCellCount }, (_, index) => {
 		const power = powerCells.has(consumedCellCount + 1 + index);
-		return laneCell(power ? "muted" : "dim", power ? POWER_PELLET_GLYPH : PELLET_GLYPH, cellWidth, styles);
+		return laneCell(power ? "muted" : "dim", power ? glyphs.powerPellet : glyphs.pellet, cellWidth, styles);
 	}).join("");
 	const ghostToken = activity === "idle" ? undefined : GHOST_TOKENS[activity];
 	const preferredGhostDistance = Math.floor(Math.abs(Math.trunc(animationFrame)) / 2) % 2 === 0 ? 2 : 3;

@@ -6,6 +6,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import {
 	ASCII_GLYPHS,
 	activityAfterContext,
+	activityForAssistantEvent,
 	type ChromeStyles,
 	formatCost,
 	formatDuration,
@@ -216,6 +217,15 @@ describe("Pac-Man lane", () => {
 		assert.equal(activityAfterContext("idle"), "idle");
 	});
 
+	test("maps assistant stream events to generating versus answering", () => {
+		// Tool-call arguments are still the model generating, never the answer itself.
+		for (const type of ["thinking_start", "thinking_delta"]) assert.equal(activityForAssistantEvent(type), "thinking");
+		for (const type of ["text_start", "text_delta"]) assert.equal(activityForAssistantEvent(type), "assistant");
+		for (const type of ["toolcall_start", "toolcall_delta"]) assert.equal(activityForAssistantEvent(type), "tools");
+		assert.equal(activityForAssistantEvent("done"), undefined);
+		assert.equal(activityForAssistantEvent(""), undefined);
+	});
+
 	test("shows a token-colored ghost only while active", () => {
 		const active = snapshot({ usedTokens: 100, contextWindow: 100 });
 		const idle = recorder();
@@ -289,6 +299,28 @@ describe("Pac-Man lane", () => {
 		assert.ok(!open.includes(PACMAN_GLYPH));
 		assert.ok(!closed.includes(PACMAN_FRAMES[1] ?? ""));
 		assert.ok(!ghost.includes(GHOST_GLYPH));
+		// ASCII replaces the ambiguous-width pellets too, so the lane stays single-cell in any font.
+		for (const lane of [open, closed, ghost]) {
+			assert.ok(!lane.includes(PELLET_GLYPH), lane);
+			assert.ok(!lane.includes(POWER_PELLET_GLYPH), lane);
+		}
+		assert.ok(open.includes(ASCII_GLYPHS.pellet));
+		assert.ok(open.includes(ASCII_GLYPHS.powerPellet));
+	});
+
+	test("keeps Nerd pellets and thresholds while ASCII swaps only the glyphs", () => {
+		const positions = (lane: string, glyph: string): readonly number[] =>
+			[...lane].flatMap((char, index) => (char === glyph ? [index] : []));
+		for (const width of [10, 18, 79, 80, 120]) {
+			const nerd = stripVTControlCharacters(renderPacmanLane(snapshot(), width, identityStyles));
+			const ascii = stripVTControlCharacters(
+				renderPacmanLane(snapshot(), width, identityStyles, 0, "idle", ASCII_GLYPHS),
+			);
+			assert.equal(visibleWidth(nerd), width);
+			assert.equal(visibleWidth(ascii), width);
+			assert.equal(nerd.split(PELLET_GLYPH).length, ascii.split(ASCII_GLYPHS.pellet).length);
+			assert.deepEqual(positions(ascii, ASCII_GLYPHS.powerPellet), positions(nerd, POWER_PELLET_GLYPH));
+		}
 	});
 
 	test("clamps unknown, negative, and overfull usage", () => {
@@ -491,6 +523,13 @@ describe("Nerd Font glyph grammar", () => {
 		assert.equal(ASCII_GLYPHS.speed, "");
 		assert.equal(ASCII_GLYPHS.reset, "r");
 		assert.equal(ASCII_GLYPHS.credit, "R");
+		assert.equal(NERD_GLYPHS.pellet, PELLET_GLYPH);
+		assert.equal(NERD_GLYPHS.powerPellet, POWER_PELLET_GLYPH);
+		assert.equal(ASCII_GLYPHS.pellet, ".");
+		assert.equal(ASCII_GLYPHS.powerPellet, "o");
+		assert.equal(visibleWidth(NERD_GLYPHS.pellet), 1);
+		assert.equal(visibleWidth(ASCII_GLYPHS.pellet), 1);
+		assert.equal(visibleWidth(ASCII_GLYPHS.powerPellet), 1);
 	});
 });
 

@@ -272,12 +272,19 @@ const buildFramedEditor = (
 	glyphs: typeof NERD_GLYPHS,
 	model: ModelInfo,
 	health: HealthState,
+	thinkingLevel = "high",
+	colorMode?: TerminalColorMode,
 ): { render: (width: number) => readonly string[]; setText: (text: string) => void } => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
 	const ctx = {
 		mode: "tui",
 		ui: {
-			theme: { fg: (_token: string, text: string) => text },
+			theme: {
+				fg: colorMode
+					? (token: string, text: string) =>
+							styleText(text, { fg: parseColor(TOKEN_HEX[token] ?? "#888888") }, colorMode)
+					: (_token: string, text: string) => text,
+			},
 			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
 				if (factory) {
 					const tui = { requestRender: () => {}, terminal: { rows: 20 } } as unknown as TUI;
@@ -289,13 +296,95 @@ const buildFramedEditor = (
 	} as unknown as ExtensionContext;
 	registerFramedEditor(ctx, {
 		getModel: () => model,
-		getThinkingLevel: () => "high",
+		getThinkingLevel: () => thinkingLevel,
 		getHealth: () => health,
 		glyphs,
 		onTui: () => {},
 	});
 	return editor as unknown as { render: (width: number) => readonly string[]; setText: (text: string) => void };
 };
+
+test("never trades useful text for the cache icon under real styled themes", () => {
+	// Regression (audit round 1, refined in round 2): the picker used to strip decoration from
+	// already-styled ANSI strings, so under a real theme `.startsWith(icon)` never matched and the
+	// md-database icon still bought its width by truncating the model. The styled formatter now
+	// carries explicit plain/decorated readings, so these assertions must hold for 256color and
+	// truecolor alike, not just with an identity fg.
+	const plainHealth = (usage: HealthState["usage"]): HealthState => ({
+		snapshot: { usedTokens: 0, contextWindow: 100_000 },
+		usage,
+		quota: undefined,
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	});
+	const cache98 = { cost: 0, cacheHitRate: 98, cacheHitRateAvg: undefined };
+	const long: ModelInfo = { id: "a-very-long-model-name", reasoning: false };
+	const thinking: ModelInfo = { id: "gpt", reasoning: true };
+	const routed: ModelInfo = {
+		id: "router/auto",
+		reasoning: true,
+		routed: { id: "openai/gpt-test", thinkingLevel: "medium" },
+	};
+	for (const colorMode of ["256color", "truecolor"] as const) {
+		const bottom = (model: ModelInfo, health: HealthState, level: string, width: number): string =>
+			stripVTControlCharacters(
+				buildFramedEditor(NERD_GLYPHS, model, health, level, colorMode).render(width).at(-1) ?? "",
+			);
+		// Styling is really active in this mode.
+		const styled = buildFramedEditor(NERD_GLYPHS, long, plainHealth(cache98), "off", colorMode).render(34).at(-1) ?? "";
+		assert.ok(styled.includes(colorMode === "256color" ? "\x1b[38;5;" : "\x1b[38;2;"), styled);
+
+		const tight = bottom(long, plainHealth(cache98), "off", 34);
+		assert.ok(tight.includes("a-very-long-model-name") && !tight.includes("…"), tight);
+		assert.ok(tight.includes("98%") && !tight.includes(NERD_GLYPHS.cache), tight);
+		assert.ok(bottom(long, plainHealth(cache98), "off", 36).includes(`${NERD_GLYPHS.cache} 98%`));
+
+		const thinkTight = bottom(thinking, plainHealth(cache98), "medium", 24);
+		assert.ok(thinkTight.includes("gpt · medium  98%") && !thinkTight.includes(NERD_GLYPHS.cache), thinkTight);
+		assert.ok(bottom(thinking, plainHealth(cache98), "medium", 26).includes(`${NERD_GLYPHS.cache} 98%`));
+
+		const costTight = bottom(thinking, plainHealth({ ...cache98, cost: 1.61 }), "medium", 31);
+		assert.ok(costTight.includes("98%  $1.61") && !costTight.includes(NERD_GLYPHS.cache), costTight);
+		assert.ok(
+			bottom(thinking, plainHealth({ ...cache98, cost: 1.61 }), "medium", 33).includes(
+				`${NERD_GLYPHS.cache} 98%  $1.61`,
+			),
+		);
+
+		const routeTight = bottom(routed, plainHealth(cache98), "medium", 27);
+		assert.ok(routeTight.includes("auto → gpt-test  98%") && !routeTight.includes(NERD_GLYPHS.cache), routeTight);
+		assert.ok(bottom(routed, plainHealth(cache98), "medium", 29).includes(`${NERD_GLYPHS.cache} 98%`));
+	}
+});
+
+test("keeps the full model name before the decorative cache icon", () => {
+	// Regression (audit round 1): the metric tier ran outside the model tier, so the md-database icon
+	// kept its place by truncating the selected model, even though the full model name plus the bare
+	// cache number fit. Decoration must drop before model text and before optional detail.
+	const model: ModelInfo = { id: "a-very-long-model-name", reasoning: false };
+	const health: HealthState = {
+		snapshot: { usedTokens: 0, contextWindow: 100_000 },
+		usage: { cost: 0, cacheHitRate: 98, cacheHitRateAvg: undefined },
+		quota: undefined,
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
+	const bottom = (width: number): string =>
+		stripVTControlCharacters(buildFramedEditor(NERD_GLYPHS, model, health).render(width).at(-1) ?? "");
+	const tight = bottom(34);
+	assert.ok(tight.includes("a-very-long-model-name"), tight);
+	assert.ok(!tight.includes("…"), tight);
+	assert.ok(tight.includes("98%"), tight);
+	assert.ok(!tight.includes(NERD_GLYPHS.cache), tight);
+	// Two columns wider and the icon fits beside the same full model and number.
+	const roomy = bottom(36);
+	assert.ok(roomy.includes("a-very-long-model-name"), roomy);
+	assert.ok(roomy.includes(`${NERD_GLYPHS.cache} 98%`), roomy);
+});
 
 test("falls back to pi's own layout when the frame cannot fit", () => {
 	const health: HealthState = {
@@ -415,4 +504,39 @@ test("keeps window percents and cost when quota detail cannot fit", (t) => {
 	// The optional detail really does fit at 51 in ASCII, so the guard is meaningful.
 	const ascii = stripVTControlCharacters(buildFramedEditor(ASCII_GLYPHS, null, health).render(51).at(-1) ?? "");
 	assert.ok(ascii.includes("r2h 30m") && ascii.includes("R1"), ascii);
+});
+
+test("keeps window percentages and cache before optional thinking on narrow borders", () => {
+	// Regression: fitting every model variant against an empty quota let the optional thinking level
+	// win, so `gpt-5.6 · medium` hid both window percentages and cache at widths where the bare model
+	// plus that essential reading fits. Nerd and ASCII must agree on which numbers survive.
+	const model: ModelInfo = { id: "gpt-5.6", reasoning: true };
+	const health: HealthState = {
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 1.61, cacheHitRate: 98, cacheHitRateAvg: undefined },
+		quota: {
+			weeklyPercent: undefined,
+			limits: [
+				{ label: "5h", percent: 75 },
+				{ label: "7d", percent: 43 },
+			],
+		},
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
+	for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
+		const bottom = (width: number): string =>
+			stripVTControlCharacters(buildFramedEditor(glyphs, model, health, "medium").render(width).at(-1) ?? "");
+		for (const width of [37, 40]) {
+			const line = bottom(width);
+			assert.ok(line.includes("gpt-5.6"), `model width=${width}: ${line}`);
+			assert.ok(line.includes("5h 75%") && line.includes("7d 43%"), `quota width=${width}: ${line}`);
+			assert.ok(line.includes("98"), `cache width=${width}: ${line}`);
+			assert.ok(!line.includes("medium"), `thinking squeezed numbers width=${width}: ${line}`);
+		}
+		const wide = bottom(120);
+		assert.ok(wide.includes("medium") && wide.includes("$1.61"), wide);
+	}
 });

@@ -106,7 +106,7 @@ test("another process cannot enter; killed owner leaves a blocking lock without 
 	});
 });
 
-test("reclaims a lock only when the owner is provably gone and the grace window has passed", async (t) => {
+test("old, dead-owner, and ownerless locks all fail closed without deleting pending", async (t) => {
 	const dir = await mkdtemp(join(tmpdir(), "pi-reset-stale-"));
 	t.after(() => rm(dir, { recursive: true, force: true }));
 	const path = join(dir, "pending.json");
@@ -116,46 +116,72 @@ test("reclaims a lock only when the owner is provably gone and the grace window 
 	await withPendingReset(path, async (store) => {
 		await store.save(pending);
 	});
-
-	// A live owner keeps its lock even when the directory looks old.
-	await mkdir(lock, { mode: 0o700 });
-	await writeFile(join(lock, "owner"), `${process.pid}\n`);
-	await utimes(lock, past, past);
-	await assert.rejects(
-		withPendingReset(path, async () => assert.fail("live owner lock was stolen")),
-		/locked/,
-	);
-
-	// A dead owner with an old lock is reclaimed, and the pending record survives.
 	const corpse = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
 	const deadPid = corpse.pid ?? 0;
 	await once(corpse, "exit");
-	await writeFile(join(lock, "owner"), `${deadPid}\n`);
-	await utimes(lock, past, past);
+
+	// Locks never expire automatically. Reclaiming one lets two contenders each read the old owner,
+	// so the loser can unlink the winner's live lock and run a second callback alongside it.
+	for (const owner of [undefined, `${deadPid}\n`, `${process.pid}\n`]) {
+		await mkdir(lock, { mode: 0o700 });
+		if (owner !== undefined) await writeFile(join(lock, "owner"), owner);
+		await utimes(lock, past, past);
+		await assert.rejects(
+			withPendingReset(path, async () => assert.fail("an existing lock was reclaimed")),
+			/locked/,
+		);
+		assert.deepEqual(JSON.parse(await readFile(path, "utf8")), pending);
+		await rm(lock, { recursive: true, force: true });
+	}
+});
+
+test("simultaneous contenders never both enter the callback", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-reset-race-"));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+	const path = join(dir, "pending.json");
+	const pending = { accountId: "a", creditId: "c", requestId: "r" };
 	await withPendingReset(path, async (store) => {
-		assert.deepEqual(await store.read(), pending);
+		await store.save(pending);
 	});
-
-	// A dead owner with a fresh lock still fails closed inside the grace window.
-	await mkdir(lock, { mode: 0o700 });
-	await writeFile(join(lock, "owner"), `${deadPid}\n`);
-	await assert.rejects(
-		withPendingReset(path, async () => assert.fail("fresh lock was stolen")),
-		/locked/,
+	const moduleUrl = JSON.stringify(new URL("./pending-reset.ts", import.meta.url).href);
+	const script = `
+		import { withPendingReset } from ${moduleUrl};
+		process.on("message", async (message) => {
+			if (message !== "go") return;
+			try {
+				await withPendingReset(${JSON.stringify(path)}, async (store) => {
+					await store.read();
+					process.send("entered");
+					await new Promise((resolve) => process.once("message", resolve));
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				process.send(message.includes("locked") ? "blocked" : "error:" + message);
+			}
+			process.exit(0);
+		});
+		process.send("ready");
+	`;
+	const children = Array.from({ length: 4 }, () =>
+		spawn(process.execPath, ["--input-type=module", "-e", script], {
+			stdio: ["ignore", "ignore", "inherit", "ipc"],
+		}),
 	);
-
-	// An abandoned lock with no owner file is reclaimable once stale.
-	await utimes(lock, past, past);
-	await withPendingReset(path, async (store) => {
-		assert.deepEqual(await store.read(), pending);
+	t.after(() => {
+		for (const child of children) child.kill("SIGKILL");
 	});
-
-	// An owner file that cannot be read proves nothing, so a stale lock still fails closed.
-	await mkdir(lock, { mode: 0o700 });
-	await mkdir(join(lock, "owner"), { mode: 0o700 });
-	await utimes(lock, past, past);
-	await assert.rejects(
-		withPendingReset(path, async () => assert.fail("unreadable owner lock was stolen")),
-		/locked/,
-	);
+	// Register exit promises before anything can exit: a blocked child exits as soon as it reports.
+	const exits = children.map((child) => once(child, "exit"));
+	const waitMessage = (child: (typeof children)[number]): Promise<string> =>
+		new Promise((resolve) => child.once("message", (message) => resolve(String(message))));
+	await Promise.all(children.map(waitMessage));
+	for (const child of children) child.send("go");
+	const outcomes = await Promise.all(children.map(waitMessage));
+	for (const outcome of outcomes)
+		assert.ok(outcome === "entered" || outcome === "blocked", `unexpected child outcome: ${outcome}`);
+	assert.equal(outcomes.filter((outcome) => outcome === "entered").length, 1);
+	assert.equal(outcomes.filter((outcome) => outcome === "blocked").length, children.length - 1);
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), pending);
+	children[outcomes.indexOf("entered")]?.send("release");
+	await Promise.all(exits);
 });

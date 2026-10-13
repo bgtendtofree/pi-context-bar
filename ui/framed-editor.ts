@@ -41,10 +41,11 @@ export type FramedEditorOptions = Readonly<{
 	onTui: (tui: TUI) => void;
 }>;
 
+/**
+ * Fallback for a bottom border we did not capture. Pi pads every body line to the full inner width,
+ * so a user-typed dash run never matches; only a real border is all dashes and nothing else.
+ */
 const isHorizontalBorder = (text: string): boolean => /^─+$/.test(stripVTControlCharacters(text));
-
-/** Pi's own scroll cue (`── ↑ 3 more ──`) already carries a frame; only it skips the prompt prefix. */
-export const isScrollCue = (text: string): boolean => /[↑↓] \d+ more /.test(stripVTControlCharacters(text));
 
 /** Frame side glyphs occupy one column each; popup rows get a two-column gutter. */
 export const FRAME_COLUMNS = 1;
@@ -145,12 +146,10 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			const scrollDown = this.hiddenBelow ? styles.fg("dim", `↓${this.hiddenBelow}`) : "";
 			const scrollReserve = scrollDown ? 1 : 0;
 			const prompt = `${" ".repeat(BODY_INDENT - 2)}${ctx.ui.theme.fg(promptColor(health.prompt), promptGlyph(health.prompt, options.glyphs))} `;
-			const wrap = (line: string, left: string, right: string, prefix: string): string => {
-				const scrollCue = isScrollCue(line);
-				const content = scrollCue ? line : prefix + line;
+			const wrap = (line: string, prefix: string): string => {
+				const content = prefix + line;
 				const gap = Math.max(0, innerWidth - visibleWidth(content));
-				const fill = scrollCue ? frame("─".repeat(gap)) : " ".repeat(gap);
-				return frame(left) + content + fill + frame(right);
+				return frame("│") + content + " ".repeat(gap) + frame("│");
 			};
 
 			const body = lines.slice(1, -1);
@@ -169,7 +168,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			];
 
 			for (const [index, line] of body.entries()) {
-				result.push(wrap(line, "│", "│", index === 0 ? prompt : " ".repeat(BODY_INDENT)));
+				result.push(wrap(line, index === 0 ? prompt : " ".repeat(BODY_INDENT)));
 			}
 			const quota = health.quota
 				? quotaRender(health.quota, styles, Date.now(), options.glyphs)

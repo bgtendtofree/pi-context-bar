@@ -20,7 +20,6 @@ import {
 	BODY_INDENT,
 	FRAME_COLUMNS,
 	type HealthState,
-	isScrollCue,
 	POPUP_INDENT,
 	registerFramedEditor,
 	remapEditorMouse,
@@ -52,14 +51,6 @@ test("keeps autocomplete outside editor shell", () => {
 			autocomplete: ["command 1", "command 2"],
 		},
 	);
-});
-
-test("only pi scroll cues skip the prompt prefix", () => {
-	assert.equal(isScrollCue("── ↑ 3 more ──"), true);
-	assert.equal(isScrollCue("─── ↓ 9 more "), true);
-	assert.equal(isScrollCue("────"), false);
-	assert.equal(isScrollCue("a note ────"), false);
-	assert.equal(isScrollCue("plain text"), false);
 });
 
 test("remaps popup clicks and body clicks from the frame/indent constants", () => {
@@ -169,6 +160,10 @@ test("framed editor uses square frame tokens, no fills, and a four-column body i
 	// Typed input starts at column 5 (frame + two spaces + glyph + space).
 	editor.setText("input");
 	assert.equal(stripVTControlCharacters(editor.render(80)[1] ?? "").indexOf("input"), 5);
+
+	// Text that reads like pi's scroll cue is still body text: framed and indented like any other.
+	editor.setText("↑ 3 more");
+	assert.equal(stripVTControlCharacters(editor.render(80)[1] ?? "").indexOf("↑ 3 more"), 5);
 
 	// Pi 1.2 resolves the fake cursor in TUI; preserve its marker and framed IME position.
 	assert.ok(isFocusable(editor));

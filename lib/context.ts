@@ -58,6 +58,14 @@ export const cacheHitRate = (usage: AssistantUsage): number | undefined => {
 	return promptTokens > 0 ? (usage.cacheRead / promptTokens) * 100 : undefined;
 };
 
+/**
+ * Drift anchor: pi already folds usage for its own footer, but only internally — `core/usage-totals.ts`
+ * (`createUsageTotals`/`addUsageToTotals`) and `core/cache-stats.ts` are absent from `index.d.ts`, and
+ * `ReadonlyFooterDataProvider` exposes git branch and statuses only. `docs/extensions.md` therefore
+ * points extensions at `ctx.getContextUsage()` plus token stats on `ctx.sessionManager.getEntries()`,
+ * which is what this module does. Verified against pi 1.2.0: re-check the two files above on a pi bump.
+ */
+
 /** Subscription plans bill by plan, not per token; their catalog rates are reference prices, not bills. */
 const PLAN_PROVIDERS = new Set(["openai-codex", "ln"]);
 

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
+import { CustomEditor, type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
+import type { EditorTheme, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import {
 	CURSOR_MARKER,
 	isFocusable,
@@ -176,6 +176,37 @@ test("framed editor uses square frame tokens, no fills, and a four-column body i
 	editor.setText("↑ 3 more");
 	assert.equal(stripVTControlCharacters(editor.render(80)[1] ?? "").indexOf("↑ 3 more"), 5);
 
+	// Guard pi's mouse convention: a body click lands the cursor on the clicked column. This is the
+	// check that fails if pi ever changes how handleMouse reads x, y, or width.
+	editor.setText("input");
+	editor.render(80);
+	const mouse = editor as unknown as {
+		handleMouse(event: TuiMouseEvent): unknown;
+		getCursor(): { line: number; col: number };
+	};
+	const click = (x: number, y: number): void => {
+		mouse.handleMouse({
+			type: "click",
+			button: "left",
+			x,
+			y,
+			screenX: x,
+			screenY: y,
+			width: 80,
+			height: 5,
+			shift: false,
+			alt: false,
+			ctrl: false,
+		});
+	};
+	for (const column of [0, 2, 5]) {
+		click(FRAME_COLUMNS + BODY_INDENT + column, 1);
+		assert.deepEqual(mouse.getCursor(), { line: 0, col: column }, `column=${column}`);
+	}
+	// A frame row is not a text row: clicking the top border leaves the cursor where it was.
+	click(FRAME_COLUMNS + BODY_INDENT + 3, 0);
+	assert.deepEqual(mouse.getCursor(), { line: 0, col: 5 });
+
 	// Pi 1.2 resolves the fake cursor in TUI; preserve its marker and framed IME position.
 	assert.ok(isFocusable(editor));
 	editor.focused = true;
@@ -241,7 +272,7 @@ const buildFramedEditor = (
 	glyphs: typeof NERD_GLYPHS,
 	model: ModelInfo,
 	health: HealthState,
-): { render: (width: number) => readonly string[] } => {
+): { render: (width: number) => readonly string[]; setText: (text: string) => void } => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
 	const ctx = {
 		mode: "tui",
@@ -263,8 +294,37 @@ const buildFramedEditor = (
 		glyphs,
 		onTui: () => {},
 	});
-	return editor as unknown as { render: (width: number) => readonly string[] };
+	return editor as unknown as { render: (width: number) => readonly string[]; setText: (text: string) => void };
 };
+
+test("falls back to pi's own layout when the frame cannot fit", () => {
+	const health: HealthState = {
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 1.61, cacheHitRate: 98, cacheHitRateAvg: undefined },
+		quota: undefined,
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
+	const framed = buildFramedEditor(NERD_GLYPHS, { id: "gpt-test", reasoning: false }, health);
+	// The stock editor is the oracle: below the frame's minimum width the extension must render
+	// exactly what pi would, so a pi layout change shows up here instead of as a mangled frame.
+	const tui = { requestRender: () => {}, terminal: { rows: 20 } } as unknown as TUI;
+	const stock = new CustomEditor(
+		tui,
+		{ borderColor: (text: string) => text } as EditorTheme,
+		{ matches: () => false } as unknown as KeybindingsManager,
+		{ paddingX: 0 },
+	);
+	for (const width of [1, 4, 8]) {
+		stock.setText("input");
+		framed.setText("input");
+		assert.deepEqual(framed.render(width), stock.render(width), `width=${width}`);
+	}
+	// One column more and the frame takes over.
+	assert.ok(stripVTControlCharacters(framed.render(9)[0] ?? "").includes("┌"));
+});
 
 test("decorative icons never push useful bottom-border info out", () => {
 	const model: ModelInfo = { id: "claude-opus", reasoning: true, provider: "anthropic" };

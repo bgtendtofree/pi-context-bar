@@ -1,4 +1,3 @@
-import { stripVTControlCharacters } from "node:util";
 import { CustomEditor, type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
@@ -41,12 +40,6 @@ export type FramedEditorOptions = Readonly<{
 	onTui: (tui: TUI) => void;
 }>;
 
-/**
- * Fallback for a bottom border we did not capture. Pi pads every body line to the full inner width,
- * so a user-typed dash run never matches; only a real border is all dashes and nothing else.
- */
-const isHorizontalBorder = (text: string): boolean => /^─+$/.test(stripVTControlCharacters(text));
-
 /** Frame side glyphs occupy one column each; popup rows get a two-column gutter. */
 export const FRAME_COLUMNS = 1;
 export const POPUP_INDENT = 2;
@@ -55,14 +48,18 @@ export const BODY_INDENT = 4;
 /** Two spaces separate the model label group from the quota group. */
 export const MODEL_QUOTA_GAP = 2;
 
+/**
+ * Split pi's editor render into the editor rows the frame wraps and the autocomplete rows shown above
+ * it. The bottom border is matched by the exact string `renderBottomBorder` handed us in this same
+ * render pass, never by guessing from text; a miss (pi changed its render shape) returns undefined so
+ * the caller can keep pi's own layout instead of framing rows it cannot identify.
+ */
 export const splitEditorRender = (
 	lines: readonly string[],
-	bottomBorder?: string,
-): Readonly<{ editor: readonly string[]; autocomplete: readonly string[] }> => {
-	const bottomIndex = lines.findLastIndex(
-		(line, index) => index > 0 && (bottomBorder ? line === bottomBorder : isHorizontalBorder(line)),
-	);
-	if (bottomIndex === -1) return { editor: lines, autocomplete: [] };
+	bottomBorder: string,
+): Readonly<{ editor: readonly string[]; autocomplete: readonly string[] }> | undefined => {
+	const bottomIndex = lines.findLastIndex((line, index) => index > 0 && line === bottomBorder);
+	if (bottomIndex === -1) return undefined;
 	return { editor: lines.slice(0, bottomIndex + 1), autocomplete: lines.slice(bottomIndex + 1) };
 };
 
@@ -130,8 +127,15 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			const innerWidth = width - FRAME_COLUMNS * 2;
 			// Text sits four columns in (frame + two spaces + glyph + space), so the editor renders four narrower.
 			const rendered = super.render(innerWidth - BODY_INDENT);
-			if (rendered.length < 2) return rendered;
-			const { editor: lines, autocomplete } = splitEditorRender(rendered, this.bottomBorder);
+			const split = splitEditorRender(rendered, this.bottomBorder);
+			// No captured bottom border means pi's render shape is not the one the frame assumes. Keep
+			// pi's own layout rather than framing rows we cannot identify; handleMouse then passes the
+			// event through untouched, matching pi's unshifted geometry.
+			if (!split) {
+				this.editorRows = 0;
+				return rendered;
+			}
+			const { editor: lines, autocomplete } = split;
 			this.editorRows = lines.length;
 			this.popupRows = autocomplete.length;
 

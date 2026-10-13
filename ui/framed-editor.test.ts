@@ -39,11 +39,11 @@ const TOKEN_HEX: Readonly<Record<string, string>> = {
 };
 
 test("keeps autocomplete outside editor shell", () => {
-	assert.deepEqual(splitEditorRender(["────", "prompt", "────", "command 1", "command 2"]), {
+	assert.deepEqual(splitEditorRender(["────", "prompt", "────", "command 1", "command 2"], "────"), {
 		editor: ["────", "prompt", "────"],
 		autocomplete: ["command 1", "command 2"],
 	});
-	assert.deepEqual(splitEditorRender(["prompt"]), { editor: ["prompt"], autocomplete: [] });
+	assert.deepEqual(splitEditorRender(["prompt", "────"], "────"), { editor: ["prompt", "────"], autocomplete: [] });
 	assert.deepEqual(
 		splitEditorRender(["── ↑ 3 more ──", "prompt", "── ↓ 9 more ──", "command 1", "command 2"], "── ↓ 9 more ──"),
 		{
@@ -51,6 +51,17 @@ test("keeps autocomplete outside editor shell", () => {
 			autocomplete: ["command 1", "command 2"],
 		},
 	);
+	// A body row that happens to repeat the border string is not the border; the last match is.
+	assert.deepEqual(splitEditorRender(["────", "────", "tail"], "────"), {
+		editor: ["────", "────"],
+		autocomplete: ["tail"],
+	});
+});
+
+test("refuses to frame a render whose bottom border it cannot find", () => {
+	// Pi's render shape changed: the caller keeps pi's own layout instead of framing arbitrary rows.
+	assert.equal(splitEditorRender(["prompt"], "────"), undefined);
+	assert.equal(splitEditorRender(["────", "prompt", "──── "], "────"), undefined);
 });
 
 test("remaps popup clicks and body clicks from the frame/indent constants", () => {

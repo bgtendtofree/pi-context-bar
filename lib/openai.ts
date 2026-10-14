@@ -73,7 +73,7 @@ export const parseOpenAiUsage = (payload: unknown): QuotaUsage => {
 	// The usage payload may nest the container under rate_limit; the unstyled shape carries it at the top level.
 	const resetContainer = payload.rate_limit_reset_credits ?? rateLimit.rate_limit_reset_credits;
 	const resetCredits = isObject(resetContainer) ? toNumber(resetContainer.available_count) : undefined;
-	return { weeklyPercent: undefined, limits, ...(resetCredits !== undefined ? { resetCredits } : {}) };
+	return { limits, ...(resetCredits !== undefined ? { resetCredits } : {}) };
 };
 
 const codexBase = (baseUrl?: string): string => {

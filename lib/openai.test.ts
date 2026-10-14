@@ -48,7 +48,6 @@ const mockFetch = (t: TestContext, response: Response | (() => Response)): Array
 describe("parseOpenAiUsage", () => {
 	test("parses the real wham/usage shape", () => {
 		assert.deepEqual(parseOpenAiUsage(usagePayload), {
-			weeklyPercent: undefined,
 			limits: [
 				{ label: "5h", percent: 6, resetAt: 1_738_300_000_000 },
 				{ label: "7d", percent: 24, resetAt: 1_738_900_000_000 },
@@ -100,7 +99,7 @@ describe("parseOpenAiUsage", () => {
 
 	test("returns empty usage for garbage", () => {
 		for (const payload of [undefined, null, 42, "nope", [], { rate_limit: "x" }]) {
-			assert.deepEqual(parseOpenAiUsage(payload), { weeklyPercent: undefined, limits: [] });
+			assert.deepEqual(parseOpenAiUsage(payload), { limits: [] });
 		}
 	});
 });

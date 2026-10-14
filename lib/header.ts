@@ -26,12 +26,12 @@ const MARK_GAP = "  ";
 /** One resolved keybinding hint: display key plus what it does. */
 export type Hint = Readonly<{ key: string; action: string }>;
 
-/** Keybinding ids mirrored from pi's built-in header, compact row. */
+/** Keybinding ids mirrored from pi's built-in header, compact row. `/` and `!` are plain keys, not bindings. */
 export const COMPACT_HINT_DEFS = [
 	{ id: "app.interrupt", action: "interrupt" },
 	{ id: "app.exit", action: "exit" },
-	{ id: "", action: "commands", rawKey: "/" },
-	{ id: "", action: "bash", rawKey: "!" },
+	{ action: "commands", rawKey: "/" },
+	{ action: "bash", rawKey: "!" },
 	{ id: "app.tools.expand", action: "more" },
 ] as const;
 

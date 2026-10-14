@@ -214,19 +214,6 @@ export const metricOptions = (
 	return [...(cost ? withCost : []), ...caches, { plain: "", decorated: "" }];
 };
 
-/** Flat widest → tightest list for callers that only need text; the decorated form precedes its plain form. */
-export const freeMetricOptions = (
-	usage: SessionUsage,
-	styles: ChromeStyles,
-	glyphs: GlyphSet = NERD_GLYPHS,
-): readonly string[] => {
-	const options: string[] = [];
-	for (const { plain, decorated } of metricOptions(usage, styles, glyphs)) {
-		for (const value of [decorated, plain]) if (options.at(-1) !== value) options.push(value);
-	}
-	return options;
-};
-
 export type QuotaLimit = Readonly<{
 	label: string;
 	/** Used percent 0–100 of this limit window. */
@@ -235,17 +222,15 @@ export type QuotaLimit = Readonly<{
 	resetAt?: number;
 }>;
 
-/** Shared subscription-quota snapshot; each provider parser fills the parts its plan reports. */
+/** Shared subscription-quota snapshot: reported rate-limit windows plus banked resets where the plan has them. */
 export type QuotaUsage = Readonly<{
-	/** Used percent 0–100 of the weekly quota, undefined when the plan reports none. */
-	weeklyPercent: number | undefined;
 	limits: readonly QuotaLimit[];
 	/** Banked usage-limit reset credits (OpenAI Codex plans); absent on providers without resets. */
 	resetCredits?: number;
 }>;
 
 /** Empty snapshot for absent or unparseable payloads. */
-export const EMPTY_QUOTA: QuotaUsage = { weeklyPercent: undefined, limits: [] };
+export const EMPTY_QUOTA: QuotaUsage = { limits: [] };
 
 /**
  * Quota label split for the bottom border. `essentials` are window percentages, widest →
@@ -268,8 +253,6 @@ export const quotaRender = (
 ): QuotaRender => {
 	const styledUsage = (text: string, percent: number): string => styleUsage(text, percent, styles);
 	const gap = styles.fg("dim", "  ");
-	const weekly =
-		usage.weeklyPercent !== undefined ? styledUsage(`W${Math.round(usage.weeklyPercent)}%`, usage.weeklyPercent) : "";
 	// Nerd icons breathe ("󰦛 52m"); ASCII tokens stay compact ("r52m").
 	const token = (icon: string, value: string): string =>
 		styles.fg("dim", glyphs.ascii ? `${icon}${value}` : `${icon} ${value}`);
@@ -284,9 +267,7 @@ export const quotaRender = (
 	};
 	const fullLimits = usage.limits.map((limit) => renderLimit(limit, true)).join(gap);
 	const plainLimits = usage.limits.map((limit) => renderLimit(limit, false)).join(gap);
-	const anyHigh = [usage.weeklyPercent, ...usage.limits.map((limit) => limit.percent)].some(
-		(percent) => percent !== undefined && percent > USAGE_WARNING_PERCENT,
-	);
+	const anyHigh = usage.limits.some((limit) => limit.percent > USAGE_WARNING_PERCENT);
 	// Banked resets are quiet chrome; zero, unknown, and healthy sessions keep them hidden.
 	const resets =
 		usage.resetCredits !== undefined && usage.resetCredits > 0 && anyHigh
@@ -298,11 +279,11 @@ export const quotaRender = (
 		for (const value of values) if (!unique.includes(value)) unique.push(value);
 		return unique;
 	};
-	const essentials = dedupe([group(weekly, plainLimits), weekly, ""]);
+	const essentials = dedupe([plainLimits, ""]);
 	const upgrades = dedupe([
-		resets ? group(weekly, fullLimits, resets) : "",
-		fullLimits === plainLimits ? "" : group(weekly, fullLimits),
-		resets ? group(weekly, plainLimits, resets) : "",
+		resets ? group(fullLimits, resets) : "",
+		fullLimits === plainLimits ? "" : fullLimits,
+		resets ? group(plainLimits, resets) : "",
 	])
 		.filter((value) => value !== "" && !essentials.includes(value))
 		.sort((left, right) => visibleWidth(right) - visibleWidth(left));

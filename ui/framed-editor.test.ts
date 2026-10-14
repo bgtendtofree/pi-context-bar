@@ -118,7 +118,7 @@ test("framed editor uses square frame tokens, no fills, and a four-column body i
 		getHealth: () => ({
 			snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
 			usage: { cost: 0, cacheHitRate: undefined, cacheHitRateAvg: undefined },
-			quota: { weeklyPercent: undefined, limits: [{ label: "5h", percent: 30 }] },
+			quota: { limits: [{ label: "5h", percent: 30 }] },
 			speed,
 			frame: 0,
 			activity: "idle",
@@ -421,7 +421,6 @@ test("decorative icons never push useful bottom-border info out", () => {
 		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
 		usage: { cost: 1.61, cacheHitRate: 98, cacheHitRateAvg: undefined },
 		quota: {
-			weeklyPercent: 40,
 			limits: [
 				{ label: "5h", percent: 75, resetAt: Date.now() + 150 * 60_000 },
 				{ label: "7d", percent: 43, resetAt: Date.now() + 5 * 86_400_000 },
@@ -482,7 +481,6 @@ test("keeps window percents and cost when quota detail cannot fit", (t) => {
 		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
 		usage: { cost: 0.042, cacheHitRate: undefined, cacheHitRateAvg: undefined },
 		quota: {
-			weeklyPercent: undefined,
 			limits: [
 				{ label: "5h", percent: 92, resetAt: now + 150 * 60_000 },
 				{ label: "7d", percent: 43, resetAt: now + 150 * 60_000 },
@@ -515,7 +513,6 @@ test("keeps window percentages and cache before optional thinking on narrow bord
 		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
 		usage: { cost: 1.61, cacheHitRate: 98, cacheHitRateAvg: undefined },
 		quota: {
-			weeklyPercent: undefined,
 			limits: [
 				{ label: "5h", percent: 75 },
 				{ label: "7d", percent: 43 },

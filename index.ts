@@ -231,11 +231,14 @@ const headerStyles = (ctx: ExtensionContext): HeaderStyles => ({
 	dim: (text) => ctx.ui.theme.fg("dim", text),
 });
 
+/** Keybinding id, derived from `keyText` so a typo in the hint tables fails the build instead of rendering raw. */
+type KeybindingId = Parameters<typeof keyText>[0];
+
 const resolveHints = (
-	defs: ReadonlyArray<Readonly<{ id: string; action: string; rawKey?: string }>>,
+	defs: ReadonlyArray<Readonly<{ id?: KeybindingId; action: string; rawKey?: string }>>,
 ): readonly Hint[] =>
 	defs.map(({ id, action, rawKey }) => ({
-		key: rawKey ?? keyText(id as never),
+		key: rawKey ?? (id ? keyText(id) : ""),
 		action,
 	}));
 

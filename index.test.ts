@@ -7,6 +7,7 @@ import { setImmediate } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
 import type {
 	AgentSettledEvent,
+	CustomEntry,
 	ExtensionAPI,
 	ExtensionCommandContext,
 	ExtensionContext,
@@ -21,6 +22,13 @@ import { type AssistantMessage, accumulateSessionUsage, SUBSCRIPTION_TURN_ENTRY 
 const token = (accountId: string): string =>
 	`x.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: accountId } })).toString("base64")}.y`;
 
+/** Last entry narrowed to a custom entry; the subscription-marker assertions only append those. */
+const lastCustom = (entries: readonly SessionEntry[]): CustomEntry => {
+	const last = entries.at(-1);
+	if (last?.type !== "custom") throw new Error(`expected a custom entry, got ${last?.type ?? "none"}`);
+	return last;
+};
+
 test("reset transactions block concurrent retries and forget, preserve IDs on unfamiliar codes, and recheck account/expiry", async (t) => {
 	const dir = await mkdtemp(join(tmpdir(), "pi-reset-command-"));
 	const previousDir = process.env.PI_CODING_AGENT_DIR;
@@ -33,7 +41,7 @@ test("reset transactions block concurrent retries and forget, preserve IDs on un
 	const path = join(dir, "pi-context-bar-reset-pending.json");
 	let command: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"] | undefined;
 	zContext({
-		registerCommand: (_name, value) => {
+		registerCommand: (_name: string, value: Parameters<ExtensionAPI["registerCommand"]>[1]) => {
 			command = value.handler;
 		},
 		on: () => {},
@@ -448,7 +456,7 @@ test("subscription identity is captured per request and persisted by assistant e
 	}
 	const records = entries.filter((entry) => entry.type === "custom" && entry.customType === SUBSCRIPTION_TURN_ENTRY);
 	assert.equal(records.length, 1);
-	assert.deepEqual(records[0]?.data, { messageEntryId: "subscription" });
+	assert.deepEqual(lastCustom(records).data, { messageEntryId: "subscription" });
 	assert.equal(accumulateSessionUsage(JSON.parse(JSON.stringify(entries)) as SessionEntry[]).cost, 0.5);
 	handlers.get("session_shutdown")?.({}, ctx);
 });
@@ -470,7 +478,7 @@ test("a directory-sync failure blocks the retry POST and keeps the pending recor
 	await writeFile(path, JSON.stringify(pending));
 	let command: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"] | undefined;
 	zContext({
-		registerCommand: (_name, value) => {
+		registerCommand: (_name: string, value: Parameters<ExtensionAPI["registerCommand"]>[1]) => {
 			command = value.handler;
 		},
 		on: () => {},
@@ -563,7 +571,7 @@ test("in-memory fork carries the endpoint's explicit billing marker with no pare
 	handlers.get("session_shutdown")?.({ reason: "fork" }, ctx);
 	entries = [billedResponse("sub")]; // In-memory fork keeps the response, drops the child marker, sets no parent file.
 	handlers.get("session_start")?.({ reason: "fork" }, ctx);
-	assert.deepEqual(entries.at(-1)?.data, { messageEntryId: "sub" });
+	assert.deepEqual(lastCustom(entries).data, { messageEntryId: "sub" });
 	assert.equal(accumulateSessionUsage(entries).cost, 0);
 });
 
@@ -602,7 +610,7 @@ test("in-memory fork carries markers for earlier responses retained on the targe
 	handlers.get("session_shutdown")?.({ reason: "fork" }, ctx);
 	entries = [billedResponse("a"), { ...billedResponse("b"), parentId: "a" }];
 	handlers.get("session_start")?.({ reason: "fork" }, ctx);
-	assert.deepEqual(entries.at(-1)?.data, { messageEntryId: "a" });
+	assert.deepEqual(lastCustom(entries).data, { messageEntryId: "a" });
 	assert.ok(Math.abs(accumulateSessionUsage(entries).cost - 0.4) < 1e-10);
 });
 

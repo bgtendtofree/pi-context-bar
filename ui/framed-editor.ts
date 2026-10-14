@@ -3,7 +3,6 @@ import type { EditorTheme, TUI, TuiMouseEvent, TuiMouseEventResult } from "@eare
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	bottomBorderFits,
-	decorateModel,
 	editorModelOptions,
 	MODEL_ARROW,
 	type ModelInfo,
@@ -201,7 +200,6 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 				Math.floor(now / 60_000),
 				modelInfo?.id ?? null,
 				modelInfo?.reasoning ?? null,
-				modelInfo?.provider ?? null,
 				modelInfo?.routed ?? null,
 				thinkingLevel,
 			];
@@ -261,19 +259,8 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 						}),
 					) ?? picked.quota)
 				: "";
-			// Decorative provider badge is added only while the chosen model/quota/metric triple fits.
-			const chosenModel = picked
-				? decorateModel(
-						picked.model,
-						modelInfo,
-						options.glyphs,
-						width,
-						quotaText,
-						metrics,
-						MODEL_QUOTA_GAP,
-						scrollReserve,
-					)
-				: "";
+			// The chosen model label is used verbatim; no decorative provider badge.
+			const chosenModel = picked?.model ?? "";
 			const modelLabel = chosenModel ? styleModelLabel(chosenModel, ctx) : "";
 			const leftLabel =
 				chosenModel && quotaText ? `${modelLabel}${" ".repeat(MODEL_QUOTA_GAP)}${quotaText}` : modelLabel;

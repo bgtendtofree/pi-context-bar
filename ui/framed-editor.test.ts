@@ -523,7 +523,7 @@ test("memoizes the bottom border while its inputs hold", (t) => {
 });
 
 test("decorative icons never push useful bottom-border info out", () => {
-	const model: ModelInfo = { id: "claude-opus", reasoning: true, provider: "anthropic" };
+	const model: ModelInfo = { id: "claude-opus", reasoning: true };
 	const health: HealthState = {
 		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
 		usage: { cost: 1.61, cacheHitRate: 98, cacheHitRateAvg: undefined },
@@ -547,12 +547,10 @@ test("decorative icons never push useful bottom-border info out", () => {
 	// Wide: Nerd decorates the same information; ASCII keeps CH and no icons.
 	const wideNerd = bottom(NERD_GLYPHS, 120);
 	const wideAscii = bottom(ASCII_GLYPHS, 120);
-	assert.ok(wideNerd.includes(NERD_GLYPHS.providerAnthropic));
 	assert.ok(wideNerd.includes(NERD_GLYPHS.cache));
 	assert.ok(wideNerd.includes(NERD_GLYPHS.reset));
 	assert.ok(wideNerd.includes(NERD_GLYPHS.credit));
 	assert.ok(top(NERD_GLYPHS, 120).includes(NERD_GLYPHS.speed));
-	assert.ok(!wideAscii.includes(NERD_GLYPHS.providerAnthropic));
 	assert.ok(!wideAscii.includes(NERD_GLYPHS.cache));
 	assert.ok(wideAscii.includes("CH98%"));
 	assert.ok(wideAscii.includes("R3"));

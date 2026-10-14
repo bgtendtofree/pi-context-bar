@@ -14,7 +14,7 @@ Square framed input shell plus one quiet health row. No multi-line footer. Envir
 - Editor bottom border: model/thinking + OpenAI Codex quota beside it on the left, `CH`/`$` right; never path or Git
 - Health metrics: `%` + quiet live `t/s` (top) · cache hit + optional `$` (bottom right); Nerd Font icons may decorate speed and replace `CH`, ASCII keeps `CH` and `t/s`
 - Scope: editor chrome/header/footer only; keep Pi's native conversation, thinking, tool-result, and compaction-notice renderers unchanged
-- Icon grammar: selected known non-virtual provider badge, plain dim thinking level (no brain icon), cache database, dim speedometer; decorations drop before useful text/numbers at narrow widths, all through `GlyphSet` with ASCII fallback
+- Icon grammar: plain dim thinking level (no brain icon), cache database, dim speedometer; decorations drop before useful text/numbers at narrow widths, all through `GlyphSet` with ASCII fallback
 - Startup header: Omarchy-aligned single-color block mark (pi's silhouette as `▀▀█`/`█▀ █` in `accent`, version `dim`), hint row on the mark's second line, indent at the editor prompt column, `pi vX` wordmark fallback when the mark cannot fit
 - `quietStartup: true` hides the replacement header as it hides Pi's own; the header never overrides that setting
 - Omarchy alignment: activity stays in `muted`/`accent`/`success`; `warning` and `error` are reserved for thresholds and failure, matching Omarchy's `urgent`-for-attention rule. The ghost has exactly three states — quiet `muted`, generating `accent`, answering `success` — so `thinking` and `tools` share `accent` deliberately: hue carries identity, magnitude, and failure, never activity kind, and the lane's shape/motion carries which work is running

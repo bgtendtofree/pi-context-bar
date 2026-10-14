@@ -1,15 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import {
-	bottomBorderFits,
-	decorateModel,
-	editorModelOptions,
-	pickBottomBorderContent,
-	providerBadge,
-	renderLabeledBorder,
-} from "./border.ts";
-import { ASCII_GLYPHS, type MetricOption, metricOptions, NERD_GLYPHS } from "./chrome.ts";
+import { bottomBorderFits, editorModelOptions, pickBottomBorderContent, renderLabeledBorder } from "./border.ts";
+import { type MetricOption, metricOptions, NERD_GLYPHS } from "./chrome.ts";
 
 /** Plain reading, optionally with the same reading behind the cache icon. */
 const pair = (plain: string, decorated = plain): MetricOption => ({ plain, decorated });
@@ -62,49 +55,6 @@ describe("editor model labels", () => {
 				option.endsWith("…"),
 			),
 		);
-	});
-});
-
-describe("provider badges", () => {
-	test("badges only exact known non-virtual providers", () => {
-		assert.equal(providerBadge("openai", NERD_GLYPHS), NERD_GLYPHS.providerOpenai);
-		assert.equal(providerBadge("openai-codex", NERD_GLYPHS), NERD_GLYPHS.providerOpenai);
-		assert.equal(providerBadge("anthropic", NERD_GLYPHS), NERD_GLYPHS.providerAnthropic);
-		for (const provider of [undefined, "", "pi-virtual", "azure", "openai-codex-fake", "OpenAI"])
-			assert.equal(providerBadge(provider, NERD_GLYPHS), "", String(provider));
-		assert.equal(providerBadge("openai", ASCII_GLYPHS), "");
-	});
-});
-
-describe("decorated model fitting", () => {
-	const info = { id: "claude", reasoning: true, provider: "anthropic" } as const;
-
-	test("keeps the badge when it fits", () => {
-		assert.equal(
-			decorateModel("claude · high", info, NERD_GLYPHS, 200, "", "", 2, 0),
-			`${NERD_GLYPHS.providerAnthropic} claude · high`,
-		);
-	});
-
-	test("drops the badge before the model text", () => {
-		assert.equal(
-			decorateModel("claude · high", info, NERD_GLYPHS, 21, "", "", 2, 0),
-			`${NERD_GLYPHS.providerAnthropic} claude · high`,
-		);
-		assert.equal(decorateModel("claude · high", info, NERD_GLYPHS, 20, "", "", 2, 0), "claude · high");
-	});
-
-	test("drops the badge before quota and metrics", () => {
-		const model = "gpt · high";
-		assert.equal(decorateModel(model, info, NERD_GLYPHS, 33, "5h 30%", "$1.61", 2, 0), model);
-		assert.equal(
-			decorateModel(model, info, NERD_GLYPHS, 34, "5h 30%", "$1.61", 2, 0),
-			`${NERD_GLYPHS.providerAnthropic} gpt · high`,
-		);
-	});
-
-	test("ASCII glyphs keep the plain label", () => {
-		assert.equal(decorateModel("claude · high", info, ASCII_GLYPHS, 200, "", "", 2, 0), "claude · high");
 	});
 });
 

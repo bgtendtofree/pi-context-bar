@@ -300,9 +300,6 @@ test("quota belongs to active account and model switches update context immediat
 	handlers.get("model_select")?.({}, ctx);
 	assert.doesNotMatch(render(), /5h 80%/);
 	assert.doesNotMatch(render(), /→/);
-	// Virtual selections suppress the provider badge even when the underlying provider id is known.
-	assert.doesNotMatch(render(), new RegExp(NERD_GLYPHS.providerOpenai));
-	assert.doesNotMatch(render(), new RegExp(NERD_GLYPHS.providerAnthropic));
 	await resetCommand?.("", ctx as ExtensionCommandContext);
 	assert.equal(notices.at(-1), "Active model is not a physical openai-codex model");
 	const message: AssistantMessage = {
@@ -341,7 +338,6 @@ test("quota belongs to active account and model switches update context immediat
 	assert.doesNotMatch(render(), /→/);
 	model = { ...model, api: "openai-responses", provider: "openai" };
 	handlers.get("model_select")?.({}, ctx);
-	assert.match(render(), new RegExp(NERD_GLYPHS.providerOpenai));
 	await resetCommand?.("", ctx as ExtensionCommandContext);
 	assert.equal(notices.length, 2);
 	assert.equal(calls, quotaCalls);

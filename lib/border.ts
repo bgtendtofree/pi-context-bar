@@ -1,50 +1,16 @@
 /** Pure model label fitting and framed border rendering. */
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { GlyphSet, MetricOption } from "./chrome.ts";
+import type { MetricOption } from "./chrome.ts";
 
 export type ModelInfo = Readonly<{
 	id: string;
 	reasoning: boolean;
-	/** Selected provider id; badges only through `providerBadge`, never inferred from the model id. */
-	provider?: string;
 	routed?: Readonly<{ id: string; thinkingLevel: string | undefined }> | undefined;
 }> | null;
 
 /** Routed labels separate the active and physical model with a dim arrow. */
 export const MODEL_ARROW = " → ";
-
-/** Provider badge for exact known selected providers; unknown or virtual selections stay badge-free. */
-export const providerBadge = (
-	provider: string | undefined,
-	glyphs: Pick<GlyphSet, "providerOpenai" | "providerAnthropic">,
-): string => {
-	if (provider === "openai" || provider === "openai-codex") return glyphs.providerOpenai;
-	if (provider === "anthropic") return glyphs.providerAnthropic;
-	return "";
-};
-
-/**
- * Apply the decorative provider badge to a fitted model label, keeping it only while the same
- * quota and metric still fit. The badge drops before any useful model, quota, cache, or cost text.
- */
-export const decorateModel = (
-	model: string,
-	modelInfo: ModelInfo,
-	glyphs: Pick<GlyphSet, "providerOpenai" | "providerAnthropic">,
-	width: number,
-	quota: string,
-	metric: string,
-	gap: number,
-	scrollReserve: number,
-): string => {
-	const badge = providerBadge(modelInfo?.provider, glyphs);
-	if (badge) {
-		const candidate = `${badge} ${model}`;
-		if (bottomBorderFits({ width, model: candidate, quota, metric, gap, scrollReserve })) return candidate;
-	}
-	return model;
-};
 
 /** Whether a bottom-border model/quota/metric triple fits; decorations must clear this before staying. */
 export const bottomBorderFits = (
@@ -72,8 +38,7 @@ export const bottomBorderFits = (
  *
  * Each metric carries a plain reading and the same reading with an optional decorative icon. The
  * plain form is what fits, because a decoration must never trade against useful text; the decorated
- * form is kept only when the chosen model, quota, and reading still fit with it — the same rule
- * `decorateModel` applies to the provider badge.
+ * form is kept only when the chosen model, quota, and reading still fit with it.
  */
 export const pickBottomBorderContent = (
 	input: Readonly<{

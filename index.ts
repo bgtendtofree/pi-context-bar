@@ -173,8 +173,6 @@ const currentModel = (ctx: ExtensionContext): ModelInfo => {
 	return {
 		id: model.id,
 		reasoning: Boolean(model.reasoning),
-		// Virtual selections have no physical provider badge; never infer one from the routed model.
-		...(model.api === "pi-virtual" ? {} : { provider: model.provider }),
 		routed: state.routed,
 	};
 };

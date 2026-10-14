@@ -514,29 +514,16 @@ describe("CH session average", () => {
 
 describe("Nerd Font glyph grammar", () => {
 	test("matches the official glyphnames.json code points and stays single-cell", () => {
-		assert.equal(NERD_GLYPHS.providerOpenai, "\uec81");
-		assert.equal(NERD_GLYPHS.providerAnthropic, "\uec82");
 		assert.equal(NERD_GLYPHS.cache, "\u{f01bc}");
 		assert.equal(NERD_GLYPHS.speed, "\u{f04c5}");
 		assert.equal(NERD_GLYPHS.reset, "\u{f099b}");
 		assert.equal(NERD_GLYPHS.credit, "\u{f0516}");
-		assert.equal(NERD_GLYPHS.providerOpenai.codePointAt(0), 0xec81);
-		assert.equal(NERD_GLYPHS.providerAnthropic.codePointAt(0), 0xec82);
 		assert.equal(NERD_GLYPHS.cache.codePointAt(0), 0xf01bc);
 		assert.equal(NERD_GLYPHS.speed.codePointAt(0), 0xf04c5);
 		assert.equal(NERD_GLYPHS.reset.codePointAt(0), 0xf099b);
 		assert.equal(NERD_GLYPHS.credit.codePointAt(0), 0xf0516);
-		for (const glyph of [
-			NERD_GLYPHS.providerOpenai,
-			NERD_GLYPHS.providerAnthropic,
-			NERD_GLYPHS.cache,
-			NERD_GLYPHS.speed,
-			NERD_GLYPHS.reset,
-			NERD_GLYPHS.credit,
-		])
+		for (const glyph of [NERD_GLYPHS.cache, NERD_GLYPHS.speed, NERD_GLYPHS.reset, NERD_GLYPHS.credit])
 			assert.equal(visibleWidth(glyph), 1);
-		assert.equal(ASCII_GLYPHS.providerOpenai, "");
-		assert.equal(ASCII_GLYPHS.providerAnthropic, "");
 		assert.equal(ASCII_GLYPHS.cache, "");
 		assert.equal(ASCII_GLYPHS.speed, "");
 		assert.equal(ASCII_GLYPHS.reset, "r");

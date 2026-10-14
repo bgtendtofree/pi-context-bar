@@ -21,9 +21,6 @@ export type GlyphSet = Readonly<{
 	promptFailure: string;
 	reset: string;
 	credit: string;
-	/** Provider badges: cod-openai `\uec81` / cod-claude `\uec82`, Nerd Font v3.5.0+. Empty when ASCII. */
-	providerOpenai: string;
-	providerAnthropic: string;
 	/** Cache-hit database md-database `\u{f01bc}`; replaces the `CH` label in Nerd mode. */
 	cache: string;
 	/** Speedometer md-speedometer `\u{f04c5}`; never shown without `t/s`. */
@@ -44,8 +41,6 @@ export const NERD_GLYPHS: GlyphSet = {
 	promptFailure: "✗",
 	reset: "󰦛",
 	credit: "󰔖",
-	providerOpenai: "\uec81",
-	providerAnthropic: "\uec82",
 	cache: "\u{f01bc}",
 	speed: "\u{f04c5}",
 	pellet: PELLET_GLYPH,
@@ -61,8 +56,6 @@ export const ASCII_GLYPHS: GlyphSet = {
 	promptFailure: "x",
 	reset: "r",
 	credit: "R",
-	providerOpenai: "",
-	providerAnthropic: "",
 	cache: "",
 	speed: "",
 	pellet: ".",

@@ -30,7 +30,7 @@ Every element uses Pi's active theme tokens, including truecolor/256-color capab
 
 | Zone | Content |
 |------|---------|
-| Editor border left | provider badge · model id (accent) · dim thinking level |
+| Editor border left | model id (accent) · dim thinking level |
 | Editor body | `❯` prompt (accent) · typed input |
 | Editor border right | cache database · optional `$` |
 | Pac-Man lane | empty consumed space → phase ghost while running → text Pac-Man → dim remaining pellets |
@@ -44,12 +44,11 @@ Nerd Font icons decorate information that is already in the frame; they never ad
 
 | Information | Nerd Font icon | ASCII fallback |
 |---|---|---|
-| Selected provider | accent `cod-openai` `` / `cod-claude` `` before the model id | no badge |
 | Cache hit | `md-database` `󰆼` replaces the `CH` label (`󰆼 98/94%`) | `CH98/94%` |
 | Token speed | dim `md-speedometer` `󰓅` before `t/s` (`󰓅 ~218t/s`) | `~218t/s` |
 | Remaining pellets | dim `•`, muted power pellet `○` at the 70% / 90% ratios | dim `.`, muted power pellet `o` |
 
-Thinking levels stay plain dim text (`· high`, routed thinking included); there is no thinking icon. When the icon itself does not fit, the Nerd cache label keeps the bare percent (`98/94%`) because that is two columns narrower than the `CH` label, and the number matters more than the label. Only the exact known non-virtual providers `openai`, `openai-codex`, and `anthropic` get a badge; virtual selections and other providers show the model id alone. Provider badges are never inferred from a model id or from the routed physical model. The cache latest/average math and threshold colors are unchanged.
+Thinking levels stay plain dim text (`· high`, routed thinking included); there is no thinking icon. When the icon itself does not fit, the Nerd cache label keeps the bare percent (`98/94%`) because that is two columns narrower than the `CH` label, and the number matters more than the label. The cache latest/average math and threshold colors are unchanged.
 
 The model id is accent and plain, with thinking dim after it. When the latest completed turn ends in a provider error the prompt becomes `✗` in the error token, until a turn finishes without error; user aborts keep the previous state. Context-window size stays dim even when usage warns. Wide lanes (80+ columns) space cells three columns apart instead of two, without capping the track; in Nerd mode circular `○` power pellets mark the 70% / 90% thresholds, and ASCII uses `o`.
 
@@ -89,7 +88,7 @@ A quiet welcome header appears immediately: pi's mark drawn as half blocks (`▀
 
 ## Font requirement
 
-Pac-Man `󰮯`, Ghost `󰊠`, and the `md-*` chrome icons (reset `󰦛`, reset credits `󰔖`, database `󰆼`, speedometer `󰓅`) are Material Design glyphs present since Nerd Font **v3.0.0**. The provider badges `cod-openai` `` and `cod-claude` `` are Codicons first shipped in Nerd Font **v3.5.0** (they are absent from v3.4.0 and earlier). Configure your terminal profile to use a **Nerd Font v3.5.0+** for the full chrome; installing the font without selecting it in the terminal is not enough. **JetBrainsMono Nerd Font Mono** is recommended because its icons stay single-cell and keep the lane aligned. There is no font detection: on an older release the badge codepoints have no glyph and may render as tofu or a terminal fallback, so upgrade to v3.5.0+ or set `asciiFallback` to omit them.
+Pac-Man `󰮯`, Ghost `󰊠`, and the `md-*` chrome icons (reset `󰦛`, reset credits `󰔖`, database `󰆼`, speedometer `󰓅`) are Material Design glyphs present since Nerd Font **v3.0.0**. Configure your terminal profile to use a **Nerd Font** for the full chrome; installing the font without selecting it in the terminal is not enough. **JetBrainsMono Nerd Font Mono** is recommended because its icons stay single-cell and keep the lane aligned.
 
 Terminals without a Nerd Font (SSH into a remote box, a locked-down corporate profile) fall back to ASCII glyphs via one config file — see [Config](#config).
 

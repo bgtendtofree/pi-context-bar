@@ -133,10 +133,12 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			const split = splitEditorRender(rendered, this.bottomBorder);
 			// No captured bottom border means pi's render shape is not the one the frame assumes. Keep
 			// pi's own layout rather than framing rows we cannot identify; handleMouse then passes the
-			// event through untouched, matching pi's unshifted geometry.
+			// event through untouched, matching pi's unshifted geometry. Re-render at the full width:
+			// `rendered` above is pi's layout narrowed by the frame's body indent, which would leave the
+			// editor six columns short of the terminal.
 			if (!split) {
 				this.editorRows = 0;
-				return rendered;
+				return super.render(width);
 			}
 			const { editor: lines, autocomplete } = split;
 			this.editorRows = lines.length;

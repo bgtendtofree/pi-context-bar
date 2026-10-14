@@ -276,7 +276,11 @@ const buildFramedEditor = (
 	health: HealthState,
 	thinkingLevel = "high",
 	colorMode?: TerminalColorMode,
-): { render: (width: number) => readonly string[]; setText: (text: string) => void } => {
+): {
+	render: (width: number) => readonly string[];
+	setText: (text: string) => void;
+	forceBorderMismatch: () => void;
+} => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
 	const ctx = {
 		mode: "tui",
@@ -303,7 +307,26 @@ const buildFramedEditor = (
 		glyphs,
 		onTui: () => {},
 	});
-	return editor as unknown as { render: (width: number) => readonly string[]; setText: (text: string) => void };
+	const built = editor as unknown as {
+		render: (width: number) => readonly string[];
+		setText: (text: string) => void;
+		renderBottomBorder: (width: number, hiddenLineCount: number) => string;
+		bottomBorder: string;
+	};
+	return {
+		render: (width) => built.render(width),
+		setText: (text) => built.setText(text),
+		// Force the frame to lose the border it captured this render pass, as if pi changed its render
+		// shape: the fallback must re-render pi's own layout at the full width.
+		forceBorderMismatch: () => {
+			const original = built.renderBottomBorder.bind(built);
+			built.renderBottomBorder = (width, hiddenLineCount) => {
+				const line = original(width, hiddenLineCount);
+				built.bottomBorder = "SENTINEL";
+				return line;
+			};
+		},
+	};
 };
 
 test("never trades useful text for the cache icon under real styled themes", () => {
@@ -415,6 +438,42 @@ test("falls back to pi's own layout when the frame cannot fit", () => {
 	}
 	// One column more and the frame takes over.
 	assert.ok(stripVTControlCharacters(framed.render(9)[0] ?? "").includes("┌"));
+});
+
+test("re-renders pi's layout at full width when the frame loses its captured border", () => {
+	// Regression: the fallback returned the body rendered six columns narrower (the frame's body
+	// indent) while handleMouse used full-width coordinates, so a pi render-shape change left a short
+	// editor with misaligned clicks. The fallback must be pi's own full-width layout.
+	const health: HealthState = {
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 1.61, cacheHitRate: 98, cacheHitRateAvg: undefined },
+		quota: undefined,
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
+	const framed = buildFramedEditor(NERD_GLYPHS, { id: "gpt-test", reasoning: false }, health);
+	framed.setText("input");
+	// The frame captures a border this render pass and then cannot find it again: force the mismatch.
+	framed.forceBorderMismatch();
+	const tui = { requestRender: () => {}, terminal: { rows: 20 } } as unknown as TUI;
+	const stock = new CustomEditor(
+		tui,
+		{ borderColor: (text: string) => text } as EditorTheme,
+		{ matches: () => false } as unknown as KeybindingsManager,
+		{ paddingX: 0 },
+	);
+	for (const width of [24, 80]) {
+		stock.setText("input");
+		const rows = framed.render(width);
+		assert.deepEqual(rows, stock.render(width), `width=${width}`);
+		assert.ok(
+			rows.every((row) => visibleWidth(row) === width),
+			`width=${width}`,
+		);
+		assert.ok(!stripVTControlCharacters(rows.join("\n")).includes("┌"), `width=${width}`);
+	}
 });
 
 test("decorative icons never push useful bottom-border info out", () => {

@@ -1,5 +1,9 @@
 {
-	"extends": "./tsconfig.json",
-	"include": ["index.ts", "index.test.ts", "lib/**/*.ts", "ui/**/*.ts"],
-	"exclude": ["coverage"]
+	"extends": "./tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"tsBuildInfoFile": ".tsbuild/test.tsbuildinfo"
+	},
+	"include": ["index.test.ts", "lib/**/*.test.ts", "ui/**/*.test.ts"],
+	"references": [{ "path": "./tsconfig.json" }]
 }

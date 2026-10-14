@@ -1,23 +1,11 @@
 {
+	"extends": "./tsconfig.base.json",
 	"compilerOptions": {
-		"target": "ES2024",
-		"module": "Preserve",
-		"moduleResolution": "Bundler",
-		"lib": ["ES2024"],
-		"strict": true,
-		"noUncheckedIndexedAccess": true,
-		"exactOptionalPropertyTypes": true,
-		"noImplicitOverride": true,
-		"noFallthroughCasesInSwitch": true,
-		"noUnusedLocals": true,
-		"noUnusedParameters": true,
-		"allowUnreachableCode": false,
-		"allowImportingTsExtensions": true,
-		"verbatimModuleSyntax": true,
-		"isolatedModules": true,
-		"noEmit": true,
-		"skipLibCheck": true,
-		"types": ["node"]
+		"composite": true,
+		"declaration": true,
+		"emitDeclarationOnly": true,
+		"outDir": ".tsbuild/src",
+		"tsBuildInfoFile": ".tsbuild/src.tsbuildinfo"
 	},
 	"include": ["index.ts", "lib/**/*.ts", "ui/**/*.ts"],
 	"exclude": ["coverage", "**/*.test.ts"]

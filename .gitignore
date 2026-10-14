@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+.tsbuild/
 .DS_Store
 *.log
 .biome/

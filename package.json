@@ -36,7 +36,7 @@
 		]
 	},
 	"scripts": {
-		"typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+		"typecheck": "tsc -b tsconfig.test.json",
 		"quality": "biome ci .",
 		"test": "node --test",
 		"test:coverage": "rm -rf coverage && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='lib/*.ts' --test-coverage-include='ui/*.ts' --test-coverage-exclude='**/*.test.ts' --test-coverage-lines=90 --test-coverage-functions=90 --test-coverage-branches=90 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info",

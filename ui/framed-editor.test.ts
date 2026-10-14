@@ -13,7 +13,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { ModelInfo } from "../lib/border.ts";
-import { ASCII_GLYPHS, NERD_GLYPHS } from "../lib/chrome.ts";
+import { ASCII_GLYPHS, NERD_GLYPHS, type QuotaUsage } from "../lib/chrome.ts";
 import type { PromptState } from "../lib/prompt.ts";
 import type { TokenSpeedSnapshot } from "../lib/speed.ts";
 import {
@@ -23,6 +23,7 @@ import {
 	POPUP_INDENT,
 	registerFramedEditor,
 	remapEditorMouse,
+	sameKey,
 	splitEditorRender,
 } from "./framed-editor.ts";
 
@@ -64,6 +65,15 @@ test("refuses to frame a render whose bottom border it cannot find", () => {
 	assert.equal(splitEditorRender(["────", "prompt", "──── "], "────"), undefined);
 	// An empty captured border would otherwise match every blank body row.
 	assert.equal(splitEditorRender(["────", "", "autocomplete"], ""), undefined);
+});
+
+test("compares memo keys by length and identity", () => {
+	const shared = {};
+	assert.equal(sameKey([1, "a", shared], [1, "a", shared]), true);
+	assert.equal(sameKey([1, "a", shared], [1, "a", {}]), false);
+	assert.equal(sameKey([1, 2], [1, 2, 3]), false);
+	// Object.is keeps a NaN entry stable so an idle quota does not churn the cache.
+	assert.equal(sameKey([Number.NaN], [Number.NaN]), true);
 });
 
 test("remaps popup clicks and body clicks from the frame/indent constants", () => {
@@ -279,17 +289,21 @@ const buildFramedEditor = (
 ): {
 	render: (width: number) => readonly string[];
 	setText: (text: string) => void;
+	setHealth: (next: HealthState) => void;
+	tokenCalls: () => number;
 	forceBorderMismatch: () => void;
 } => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
+	let fgCalls = 0;
+	let currentHealth = health;
 	const ctx = {
 		mode: "tui",
 		ui: {
 			theme: {
-				fg: colorMode
-					? (token: string, text: string) =>
-							styleText(text, { fg: parseColor(TOKEN_HEX[token] ?? "#888888") }, colorMode)
-					: (_token: string, text: string) => text,
+				fg: (token: string, text: string) => {
+					fgCalls++;
+					return colorMode ? styleText(text, { fg: parseColor(TOKEN_HEX[token] ?? "#888888") }, colorMode) : text;
+				},
 			},
 			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
 				if (factory) {
@@ -303,7 +317,7 @@ const buildFramedEditor = (
 	registerFramedEditor(ctx, {
 		getModel: () => model,
 		getThinkingLevel: () => thinkingLevel,
-		getHealth: () => health,
+		getHealth: () => currentHealth,
 		glyphs,
 		onTui: () => {},
 	});
@@ -316,6 +330,10 @@ const buildFramedEditor = (
 	return {
 		render: (width) => built.render(width),
 		setText: (text) => built.setText(text),
+		setHealth: (next) => {
+			currentHealth = next;
+		},
+		tokenCalls: () => fgCalls,
 		// Force the frame to lose the border it captured this render pass, as if pi changed its render
 		// shape: the fallback must re-render pi's own layout at the full width.
 		forceBorderMismatch: () => {
@@ -474,6 +492,34 @@ test("re-renders pi's layout at full width when the frame loses its captured bor
 		);
 		assert.ok(!stripVTControlCharacters(rows.join("\n")).includes("┌"), `width=${width}`);
 	}
+});
+
+test("memoizes the bottom border while its inputs hold", (t) => {
+	// Regression for the streamed-token hot path: every delta re-renders the lane, but the expensive
+	// bottom border must only restyle when one of its inputs actually changes.
+	t.mock.method(Date, "now", () => 1_700_000_000_000);
+	const quota: QuotaUsage = { limits: [{ label: "5h", percent: 72, resetAt: 1_700_003_600_000 }] };
+	const base: HealthState = {
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 1.61, cacheHitRate: 98, cacheHitRateAvg: undefined },
+		quota,
+		speed: { tokensPerSecond: 12, estimated: true },
+		frame: 4,
+		activity: "working",
+		prompt: "success",
+	};
+	const editor = buildFramedEditor(NERD_GLYPHS, { id: "gpt-test", reasoning: false }, base);
+	editor.setText("input");
+	editor.render(80);
+	const first = editor.tokenCalls();
+	editor.render(80);
+	const repeated = editor.tokenCalls() - first;
+	assert.ok(repeated > 0 && repeated < first, `first=${first} repeated=${repeated}`);
+	// A new usage identity invalidates the cache and restyles the metrics again.
+	editor.setHealth({ ...base, usage: { cost: 2.5, cacheHitRate: 40, cacheHitRateAvg: undefined } });
+	editor.render(80);
+	const changed = editor.tokenCalls() - first - repeated;
+	assert.ok(changed > repeated, `repeated=${repeated} changed=${changed}`);
 });
 
 test("decorative icons never push useful bottom-border info out", () => {

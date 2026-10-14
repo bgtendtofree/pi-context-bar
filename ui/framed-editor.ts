@@ -76,6 +76,10 @@ export const remapEditorMouse = (event: TuiMouseEvent, popupRows: number, editor
 	};
 };
 
+/** Element-wise identity compare for memo keys; object entries compare by reference. */
+export const sameKey = (a: readonly unknown[], b: readonly unknown[]): boolean =>
+	a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
+
 /** Model id in accent, thinking and routed arrow dim; no fill, no padding. */
 const styleModelLabel = (label: string, ctx: ExtensionContext): string => {
 	return label
@@ -98,6 +102,8 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 		private hiddenBelow = 0;
 		private popupRows = 0;
 		private editorRows = 0;
+		private bottomKey: readonly unknown[] | null = null;
+		private bottomResult: Readonly<{ leftLabel: string; metrics: string }> | null = null;
 
 		constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
 			super(tui, theme, keybindings, { paddingX: 0 });
@@ -179,15 +185,62 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			for (const [index, line] of body.entries()) {
 				result.push(wrap(line, index === 0 ? prompt : " ".repeat(BODY_INDENT)));
 			}
-			const quota = health.quota
-				? quotaRender(health.quota, styles, Date.now(), options.glyphs)
-				: { essentials: [""], upgrades: [] };
+			const now = Date.now();
 			const modelInfo = options.getModel();
+			const thinkingLevel = options.getThinkingLevel();
+			// The bottom border is the most expensive chrome to style and it changes far less often than the
+			// lane. Memoize it on the values it is built from so a streamed token only re-renders the lane;
+			// object identity catches new usage/quota, the theme identity catches a theme switch.
+			const key: readonly unknown[] = [
+				width,
+				scrollReserve,
+				ctx.ui.theme,
+				options.glyphs,
+				health.usage,
+				health.quota,
+				Math.floor(now / 60_000),
+				modelInfo?.id ?? null,
+				modelInfo?.reasoning ?? null,
+				modelInfo?.provider ?? null,
+				modelInfo?.routed ?? null,
+				thinkingLevel,
+			];
+			let bottom = this.bottomKey && sameKey(this.bottomKey, key) ? this.bottomResult : null;
+			if (!bottom) {
+				bottom = this.renderBottomContent(width, scrollReserve, health, modelInfo, thinkingLevel, styles, now);
+				this.bottomKey = key;
+				this.bottomResult = bottom;
+			}
+			const { leftLabel, metrics } = bottom;
+			result.push(
+				renderLabeledBorder(width, "└", "┘", leftLabel, metrics, frame, (space) => {
+					if (!scrollDown || space < 1) return "";
+					const label = truncateToWidth(scrollDown, space, "");
+					return frame("─".repeat(Math.floor((space - visibleWidth(label)) / 2))) + label;
+				}),
+			);
+			const popup = autocomplete.map((line) => `  ${line}${" ".repeat(Math.max(0, width - visibleWidth(line) - 2))}`);
+			return [...popup, ...result];
+		}
+
+		/** Bottom-border label + metrics, styled once and reused while its memo key holds. */
+		private renderBottomContent(
+			width: number,
+			scrollReserve: number,
+			health: HealthState,
+			modelInfo: ModelInfo,
+			thinkingLevel: string,
+			styles: ChromeStyles,
+			now: number,
+		): Readonly<{ leftLabel: string; metrics: string }> {
+			const quota = health.quota
+				? quotaRender(health.quota, styles, now, options.glyphs)
+				: { essentials: [""], upgrades: [] };
 			// Essential reading first: selected model id + window percentages + cache/cost. Optional model
 			// detail (thinking level, route arrow) and quota countdowns/credits only spend spare width.
 			const picked = pickBottomBorderContent({
 				width,
-				models: editorModelOptions(modelInfo, options.getThinkingLevel()),
+				models: editorModelOptions(modelInfo, thinkingLevel),
 				quotas: quota.essentials,
 				metrics: metricOptions(health.usage, styles, options.glyphs),
 				gap: MODEL_QUOTA_GAP,
@@ -224,15 +277,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			const modelLabel = chosenModel ? styleModelLabel(chosenModel, ctx) : "";
 			const leftLabel =
 				chosenModel && quotaText ? `${modelLabel}${" ".repeat(MODEL_QUOTA_GAP)}${quotaText}` : modelLabel;
-			result.push(
-				renderLabeledBorder(width, "└", "┘", leftLabel, metrics, frame, (space) => {
-					if (!scrollDown || space < 1) return "";
-					const label = truncateToWidth(scrollDown, space, "");
-					return frame("─".repeat(Math.floor((space - visibleWidth(label)) / 2))) + label;
-				}),
-			);
-			const popup = autocomplete.map((line) => `  ${line}${" ".repeat(Math.max(0, width - visibleWidth(line) - 2))}`);
-			return [...popup, ...result];
+			return { leftLabel, metrics };
 		}
 	}
 

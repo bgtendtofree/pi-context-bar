@@ -118,6 +118,8 @@ export type ChromeStyles = Readonly<{ fg: (token: ThemeColor, text: string) => s
 
 /** Compact context-window size: 200_000 → 200K, 1_500 → 1.5K, 1_048_576 → 1M, 512 → 512. */
 export const formatWindowSize = (tokens: number): string => {
+	// A non-finite or negative window has no honest compact form; callers drop the label.
+	if (!Number.isFinite(tokens) || tokens < 0) return "";
 	if (tokens < 1000) return `${tokens}`;
 	// Kept to one decimal in the current unit, so a mid-sized window stays honest instead of rounding away.
 	const thousands = Math.round(tokens / 100) / 10;
@@ -127,13 +129,15 @@ export const formatWindowSize = (tokens: number): string => {
 };
 
 export const formatCost = (cost: number): string => {
-	if (cost <= 0) return "";
+	if (!Number.isFinite(cost) || cost <= 0) return "";
+	// A sub-mill cost is real money; never round it down to a misleading `$0.000`.
+	if (cost < 0.001) return "<$0.001";
 	return `$${cost >= 1 ? cost.toFixed(2) : cost.toFixed(3)}`;
 };
 
 /** Compact remaining time: "2d 3h", "5h 10m", "12m", or "expired" once past. */
 export const formatDuration = (ms: number): string => {
-	if (ms <= 0) return "expired";
+	if (!Number.isFinite(ms) || ms <= 0) return "expired";
 	const minutes = Math.floor(ms / 60_000);
 	if (minutes === 0) return "<1m";
 	if (minutes < 60) return `${minutes}m`;
@@ -350,10 +354,9 @@ export const renderLaneStrip = (
 	const percentValue = snapshot.contextWindow > 0 ? (snapshot.usedTokens / snapshot.contextWindow) * 100 : 0;
 	const percent = styleUsage(`${percentValue.toFixed(1)}%`, percentValue, styles);
 	// Window size rides with the percent it is the denominator of; tight strips fall back to plain %.
+	const window = formatWindowSize(snapshot.contextWindow);
 	const percentOptions =
-		snapshot.contextWindow > 0
-			? [`${percent} ${styles.fg("dim", `(${formatWindowSize(snapshot.contextWindow)})`)}`, percent]
-			: [];
+		snapshot.contextWindow > 0 ? [...(window ? [`${percent} ${styles.fg("dim", `(${window})`)}`] : []), percent] : [];
 	const rawSpeed = formatTokenSpeed(speed);
 	// The speedometer is decorative: try it, then plain `t/s`, then drop speed entirely.
 	const speedOptions = rawSpeed

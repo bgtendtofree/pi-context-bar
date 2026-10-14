@@ -73,6 +73,11 @@ describe("health metric formatting", () => {
 		assert.equal(formatCost(0), "");
 		assert.equal(formatCost(0.042), "$0.042");
 		assert.equal(formatCost(1.61), "$1.61");
+		// A sub-mill cost is real money; it must never round down to a misleading `$0.000`.
+		assert.equal(formatCost(0.0004), "<$0.001");
+		assert.equal(formatCost(0.001), "$0.001");
+		assert.equal(formatCost(Number.NaN), "");
+		assert.equal(formatCost(Number.POSITIVE_INFINITY), "");
 	});
 
 	test("formats remaining time for quota windows and resets", () => {
@@ -89,6 +94,9 @@ describe("health metric formatting", () => {
 		assert.equal(formatDuration(left("2026-07-01T06:00:00Z")), "6h");
 		assert.equal(formatDuration(left("2026-07-02T00:00:00Z")), "1d");
 		assert.equal(formatDuration(left("2026-07-04T01:00:00Z")), "3d 1h");
+		// Non-finite input must not leak a `NaNd NaNh` reading into the border.
+		assert.equal(formatDuration(Number.NaN), "expired");
+		assert.equal(formatDuration(Number.POSITIVE_INFINITY), "expired");
 	});
 
 	test("builds wide and narrow options", () => {
@@ -388,6 +396,10 @@ describe("lane strip", () => {
 		assert.equal(formatWindowSize(1_500_000), "1.5M");
 		assert.equal(formatWindowSize(512), "512");
 		assert.equal(formatWindowSize(0), "0");
+		// A non-finite or negative window has no compact form; the caller drops the label.
+		assert.equal(formatWindowSize(-1), "");
+		assert.equal(formatWindowSize(Number.NaN), "");
+		assert.equal(formatWindowSize(Number.POSITIVE_INFINITY), "");
 	});
 
 	test("drops window size to plain percent on narrow strips", () => {

@@ -62,6 +62,8 @@ test("refuses to frame a render whose bottom border it cannot find", () => {
 	// Pi's render shape changed: the caller keeps pi's own layout instead of framing arbitrary rows.
 	assert.equal(splitEditorRender(["prompt"], "────"), undefined);
 	assert.equal(splitEditorRender(["────", "prompt", "──── "], "────"), undefined);
+	// An empty captured border would otherwise match every blank body row.
+	assert.equal(splitEditorRender(["────", "", "autocomplete"], ""), undefined);
 });
 
 test("remaps popup clicks and body clicks from the frame/indent constants", () => {

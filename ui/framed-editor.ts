@@ -52,13 +52,15 @@ export const MODEL_QUOTA_GAP = 2;
 /**
  * Split pi's editor render into the editor rows the frame wraps and the autocomplete rows shown above
  * it. The bottom border is matched by the exact string `renderBottomBorder` handed us in this same
- * render pass, never by guessing from text; a miss (pi changed its render shape) returns undefined so
- * the caller can keep pi's own layout instead of framing rows it cannot identify.
+ * render pass, never by guessing from text; an empty or missing border (pi changed its render shape,
+ * or never rendered one) returns undefined so the caller can keep pi's own layout instead of framing
+ * rows it cannot identify — a blank line must never count as a border match.
  */
 export const splitEditorRender = (
 	lines: readonly string[],
 	bottomBorder: string,
 ): Readonly<{ editor: readonly string[]; autocomplete: readonly string[] }> | undefined => {
+	if (!bottomBorder) return undefined;
 	const bottomIndex = lines.findLastIndex((line, index) => index > 0 && line === bottomBorder);
 	if (bottomIndex === -1) return undefined;
 	return { editor: lines.slice(0, bottomIndex + 1), autocomplete: lines.slice(bottomIndex + 1) };

@@ -58,9 +58,9 @@ export const bottomBorderFits = (
 	}>,
 ): boolean => {
 	const { width, model, quota, metric, gap, scrollReserve } = input;
-	const quotaWidth = quota ? visibleWidth(quota) + gap : 0;
-	if (2 + visibleWidth(model) + quotaWidth + 3 + 1 + scrollReserve > width) return false;
+	// Measured once: every caller tries many candidate combinations against the same strings.
 	const usedByModel = visibleWidth(model) + (quota ? visibleWidth(quota) + gap : 0) + 3;
+	if (usedByModel + 3 + scrollReserve > width) return false;
 	return metric === "" || visibleWidth(metric) + 4 <= width - 2 - usedByModel - scrollReserve;
 };
 

@@ -70,8 +70,14 @@ export const ASCII_GLYPHS: GlyphSet = {
 	ascii: true,
 };
 
-/** Lane ratios matching the warning/error metric thresholds. */
-export const POWER_PELLET_RATIOS = [0.7, 0.9] as const;
+/** Used percent above which health metrics warn; shared by context usage and quota windows. */
+export const USAGE_WARNING_PERCENT = 70;
+
+/** Used percent above which health metrics fail; the upper power-pellet ratio. */
+export const USAGE_ERROR_PERCENT = 90;
+
+/** Lane ratios derived from the metric thresholds so pellets and colors cannot drift apart. */
+export const POWER_PELLET_RATIOS = [USAGE_WARNING_PERCENT / 100, USAGE_ERROR_PERCENT / 100] as const;
 
 export type LaneActivity = "idle" | "working" | "thinking" | "assistant" | "tools";
 
@@ -151,19 +157,20 @@ export const formatDuration = (ms: number): string => {
 
 const tint = (text: string, token: ThemeColor, styles: ChromeStyles): string => (text ? styles.fg(token, text) : "");
 
-/** Used percent above which health metrics warn; shared by context usage and quota windows. */
-export const USAGE_WARNING_PERCENT = 70;
-
-/** Color health metrics by usage: error > 90%, warning > 70%, else quiet dim. */
+/** Color health metrics by usage: error above the error threshold, warning above the warning one. */
 export const styleUsage = (text: string, percent: number, styles: ChromeStyles): string => {
-	if (percent > 90) return styles.fg("error", text);
+	if (percent > USAGE_ERROR_PERCENT) return styles.fg("error", text);
 	if (percent > USAGE_WARNING_PERCENT) return styles.fg("warning", text);
 	return styles.fg("dim", text);
 };
 
+/** Cache-hit rate is healthy at/above 80%, warns down to 50%, and fails below. */
+const CACHE_QUIET_PERCENT = 80;
+const CACHE_WARNING_PERCENT = 50;
+
 const styleCache = (text: string, rate: number | undefined, styles: ChromeStyles): string => {
-	if (rate === undefined || rate >= 80) return styles.fg("dim", text);
-	if (rate >= 50) return styles.fg("warning", text);
+	if (rate === undefined || rate >= CACHE_QUIET_PERCENT) return styles.fg("dim", text);
+	if (rate >= CACHE_WARNING_PERCENT) return styles.fg("warning", text);
 	return styles.fg("error", text);
 };
 

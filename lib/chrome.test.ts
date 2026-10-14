@@ -25,6 +25,8 @@ import {
 	quotaRender,
 	renderLaneStrip,
 	renderPacmanLane,
+	USAGE_ERROR_PERCENT,
+	USAGE_WARNING_PERCENT,
 } from "./chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
 
@@ -269,6 +271,18 @@ describe("Pac-Man lane", () => {
 		);
 		assert.equal(pastError.includes(POWER_PELLET_GLYPH), false);
 		assert.equal(pastError.includes(PELLET_GLYPH), false);
+	});
+
+	test("ties the power-pellet ratios and the color thresholds together", () => {
+		// The pellets mark the same percents that flip the metric color, so they must be derived from
+		// the shared thresholds instead of duplicated literals that can drift apart.
+		assert.deepEqual([...POWER_PELLET_RATIOS], [USAGE_WARNING_PERCENT / 100, USAGE_ERROR_PERCENT / 100]);
+		const at = (percent: number): string =>
+			renderLaneStrip(snapshot({ usedTokens: percent, contextWindow: 100 }), 80, markedStyles);
+		assert.ok(at(USAGE_WARNING_PERCENT).includes(`<dim>${USAGE_WARNING_PERCENT}.0%</dim>`));
+		assert.ok(at(USAGE_WARNING_PERCENT + 0.1).includes(`<warning>${USAGE_WARNING_PERCENT + 0.1}%</warning>`));
+		assert.ok(at(USAGE_ERROR_PERCENT).includes(`<warning>${USAGE_ERROR_PERCENT}.0%</warning>`));
+		assert.ok(at(USAGE_ERROR_PERCENT + 0.1).includes(`<error>${USAGE_ERROR_PERCENT + 0.1}%</error>`));
 	});
 
 	test("moves ghost chase distance and handles tiny lanes", () => {

@@ -98,22 +98,20 @@ const codexBase = (baseUrl?: string): string => {
 	return DEFAULT_BASE_URL;
 };
 
+/** Official Codex base URL for a model endpoint, or undefined when that endpoint cannot host quota. */
+export const officialCodexBaseUrl = (baseUrl?: string): string | undefined => {
+	try {
+		return codexBase(baseUrl);
+	} catch {
+		return undefined;
+	}
+};
+
 const whamHeaders = (apiKey: string): Record<string, string> => {
 	const accountId = openAiAccountId(apiKey);
 	if (!accountId) throw new Error("OpenAI token has no chatgpt_account_id");
 	return { Authorization: `Bearer ${apiKey}`, "ChatGPT-Account-Id": accountId };
 };
-
-/** HTTP failure carrying the response status so callers can tell a refusal apart from an uncertain outcome. */
-class HttpResponseError extends Error {
-	readonly status: number;
-
-	constructor(message: string, status: number) {
-		super(message);
-		this.name = "HttpResponseError";
-		this.status = status;
-	}
-}
 
 const requestJson = async (url: string, label: string, init: RequestInit): Promise<Response> => {
 	const response = await fetch(url, {
@@ -123,7 +121,7 @@ const requestJson = async (url: string, label: string, init: RequestInit): Promi
 	});
 	if (!response.ok) {
 		await response.body?.cancel().catch(() => undefined);
-		throw new HttpResponseError(`${label} ${response.status}`, response.status);
+		throw new Error(`${label} ${response.status}`);
 	}
 	return response;
 };
@@ -268,12 +266,12 @@ export const fetchResetCredits = async (apiKey: string, baseUrl?: string): Promi
 	return parseResetCredits(await readJson(response));
 };
 
-/** Redeem outcome; `rejected` means the API refused the request, so no credit was spent. */
-export type ResetRedemption = "reset" | "already_redeemed" | "rejected" | "unknown";
-
-/** Statuses that unambiguously mean the request was refused rather than possibly applied. */
-const isDefinitiveRefusal = (status: number): boolean =>
-	status === 400 || status === 404 || status === 409 || status === 410 || status === 422;
+/**
+ * Redeem outcome; only the two exact completed codes are trustworthy. Every HTTP failure, including
+ * 4xx, stays `unknown` (thrown) because a refusal response is never read and 409 can mean a request
+ * already applied, so cleanup must keep the saved credit/request IDs for a same-request retry.
+ */
+export type ResetRedemption = "reset" | "already_redeemed" | "unknown";
 
 /** Redeem one banked reset with caller-owned idempotency so retries reuse same request ID. */
 export const redeemResetCredit = async (
@@ -282,23 +280,17 @@ export const redeemResetCredit = async (
 	requestId: string,
 	baseUrl?: string,
 ): Promise<ResetRedemption> => {
-	let response: Response;
-	try {
-		response = await requestJson(
-			`${codexBase(baseUrl)}/wham/rate-limit-reset-credits/consume`,
-			"OpenAI reset consume API",
-			{
-				method: "POST",
-				headers: { ...whamHeaders(apiKey), "Content-Type": "application/json" },
-				body: JSON.stringify({ credit_id: creditId, redeem_request_id: requestId }),
-			},
-		);
-	} catch (error) {
-		if (error instanceof HttpResponseError && isDefinitiveRefusal(error.status)) return "rejected";
-		throw error;
-	}
+	const response = await requestJson(
+		`${codexBase(baseUrl)}/wham/rate-limit-reset-credits/consume`,
+		"OpenAI reset consume API",
+		{
+			method: "POST",
+			headers: { ...whamHeaders(apiKey), "Content-Type": "application/json" },
+			body: JSON.stringify({ credit_id: creditId, redeem_request_id: requestId }),
+		},
+	);
 	// A successful POST may have consumed the reset even if its response cannot be decoded.
 	const body = await readJson(response).catch(() => undefined);
-	// Internal API codes can change; only known completed or refused outcomes permit pending cleanup.
+	// Internal API codes can change; only known completed outcomes permit pending cleanup.
 	return isObject(body) && (body.code === "reset" || body.code === "already_redeemed") ? body.code : "unknown";
 };

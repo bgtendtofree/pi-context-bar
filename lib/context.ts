@@ -4,7 +4,8 @@ import type { SessionEntry, SessionMessageEntry } from "@earendil-works/pi-codin
 import { isObject } from "./json.ts";
 
 export type ContextSnapshot = Readonly<{
-	usedTokens: number;
+	/** Used tokens, or null while Pi reports no usable reading (e.g. right after compaction). */
+	usedTokens: number | null;
 	contextWindow: number;
 }>;
 
@@ -69,9 +70,16 @@ export const cacheHitRate = (usage: AssistantUsage): number | undefined => {
 /** Subscription plans bill by plan, not per token; their catalog rates are reference prices, not bills. */
 const PLAN_PROVIDERS = new Set(["openai-codex", "ln"]);
 
-export const accumulateSessionUsage = (entries: readonly SessionEntry[]): SessionUsage => {
+export const accumulateSessionUsage = (
+	entries: readonly SessionEntry[],
+	options: Readonly<{ provisionalSubscriptionId?: string | undefined }> = {},
+): SessionUsage => {
 	// Explicit ids bind each marker to one response, so a fork that drops the marker never reassigns it.
 	const subscriptions = subscriptionMarkerIds(entries);
+	// A subscription turn persists its response at `message_end`, before `turn_end` appends the marker.
+	// During that window the caller passes the captured provisional response id so it is treated as
+	// on-plan; earlier paid bills and tool costs still count.
+	const provisionalId = options.provisionalSubscriptionId;
 	let cost = 0;
 	let hitRate: number | undefined;
 	let promptTokens = 0;
@@ -80,7 +88,8 @@ export const accumulateSessionUsage = (entries: readonly SessionEntry[]): Sessio
 	for (const entry of entries) {
 		if (entry.type === "message" && entry.message.role === "assistant") {
 			const usage = entry.message.usage;
-			if (!PLAN_PROVIDERS.has(entry.message.provider) && !subscriptions.has(entry.id)) cost += usage.cost.total;
+			if (!PLAN_PROVIDERS.has(entry.message.provider) && !subscriptions.has(entry.id) && entry.id !== provisionalId)
+				cost += usage.cost.total;
 			const rate = cacheHitRate(usage);
 			if (rate !== undefined) {
 				hitRate = rate;

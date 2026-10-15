@@ -377,15 +377,10 @@ describe("openai fetch functions", () => {
 		await assert.rejects(redeemResetCredit(authedToken, "c1", "request-1"), /401/);
 	});
 
-	test("redeemResetCredit reports an unambiguous refusal as rejected", async (t) => {
-		for (const status of [400, 404, 409, 410, 422]) {
-			mockFetch(t, () => new Response(null, { status }));
-			assert.equal(await redeemResetCredit(authedToken, "c1", "request-1"), "rejected");
-		}
-	});
-
-	test("redeemResetCredit keeps ambiguous failures unknown", async (t) => {
-		for (const status of [403, 408, 429, 500, 503]) {
+	test("redeemResetCredit never reads a refusal body and rejects every non-2xx, including 4xx", async (t) => {
+		// A 4xx body is not read, and 409 can mean a request already applied, so no status may be mapped
+		// to a definitive refusal that would let the caller clear its pending record.
+		for (const status of [400, 403, 404, 408, 409, 410, 422, 429, 500, 503]) {
 			mockFetch(t, () => new Response(null, { status }));
 			await assert.rejects(redeemResetCredit(authedToken, "c1", "request-1"), new RegExp(String(status)));
 		}

@@ -340,6 +340,20 @@ describe("Pac-Man lane", () => {
 	test("clamps unknown, negative, and overfull usage", () => {
 		const unknown = stripVTControlCharacters(renderPacmanLane(snapshot({ contextWindow: 0 }), 10, identityStyles));
 		assert.equal(unknown.startsWith(PACMAN_GLYPH), true);
+		// Null tokens are unknown, not zero; the lane stays neutral (Pac-Man then blank space, no pellets).
+		const unknownLane = stripVTControlCharacters(
+			renderPacmanLane(snapshot({ usedTokens: null, contextWindow: 100 }), 18, identityStyles),
+		);
+		assert.ok(unknownLane.startsWith(PACMAN_GLYPH));
+		assert.ok(!unknownLane.includes(PELLET_GLYPH));
+		assert.ok(!unknownLane.includes(POWER_PELLET_GLYPH));
+		assert.equal(visibleWidth(unknownLane), 18);
+		// A known zero still claims remaining capacity with pellets.
+		assert.ok(
+			stripVTControlCharacters(
+				renderPacmanLane(snapshot({ usedTokens: 0, contextWindow: 100 }), 18, identityStyles),
+			).includes(PELLET_GLYPH),
+		);
 		const negative = stripVTControlCharacters(
 			renderPacmanLane(snapshot({ usedTokens: -10, contextWindow: 100 }), 10, identityStyles),
 		);
@@ -363,6 +377,17 @@ describe("lane strip", () => {
 			stripVTControlCharacters(renderLaneStrip(active, 60, identityStyles, 0, "tools")),
 		);
 		assert.equal(renderPacmanLane(active, 1, fgOnlyStyles, 0, "idle", ASCII_GLYPHS), "\x1b[38;5;7mC\x1b[39m");
+	});
+
+	test("shows an unavailable reading instead of a false zero when tokens are unknown", () => {
+		const unknown = stripVTControlCharacters(renderLaneStrip(snapshot({ usedTokens: null }), 60, identityStyles));
+		assert.ok(unknown.includes("?%"));
+		assert.ok(!unknown.includes("0.0%"));
+		assert.ok(unknown.includes(PACMAN_GLYPH));
+		// A known window plus unknown tokens still shows the quiet reading at a tight width.
+		assert.ok(
+			stripVTControlCharacters(renderLaneStrip(snapshot({ usedTokens: null }), 12, identityStyles)).includes("?%"),
+		);
 	});
 
 	test("fills the width with lane, percent, and quiet speed", () => {

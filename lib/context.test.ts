@@ -121,6 +121,31 @@ describe("session usage", () => {
 		assert.equal(orphan.cost, 0.2);
 	});
 
+	test("keeps a provisional subscription response out of cost while still counting paid bills and tools", () => {
+		const before = assistantEntry("paid", assistantUsage({}, 0.2), "openai");
+		const provisional = assistantEntry("sub", assistantUsage({ input: 10, cacheRead: 90 }, 0.5), "openai");
+		const tool = toolResultEntry("tool", assistantUsage({}, 0.04));
+		const entries = [before, provisional, tool];
+		// The caller passes the response id captured for THIS subscription request, so it is on-plan even
+		// before turn_end appends the marker, while earlier paid bills and tool costs still count.
+		const provisionalUsage = accumulateSessionUsage(entries, { provisionalSubscriptionId: "sub" });
+		assert.ok(Math.abs(provisionalUsage.cost - 0.24) < 1e-10);
+		assert.equal(provisionalUsage.cacheHitRate, 90);
+		// Without the captured identity the same unmarked response is billed.
+		assert.ok(Math.abs(accumulateSessionUsage(entries).cost - 0.74) < 1e-10);
+		// Once the marker lands, the response is on-plan regardless of the provisional id.
+		assert.ok(Math.abs(accumulateSessionUsage([...entries, subscriptionMarker("sub")]).cost - 0.24) < 1e-10);
+	});
+
+	test("never excludes an earlier paid response just because a subscription turn started", () => {
+		// Before this request's response is persisted the boundary yields no provisional id, so the old
+		// paid bill must stay billed throughout message_start and streaming deltas.
+		const oldPaid = assistantEntry("old-paid", assistantUsage({}, 0.4), "openai");
+		assert.equal(accumulateSessionUsage([oldPaid]).cost, 0.4);
+		assert.equal(accumulateSessionUsage([oldPaid], { provisionalSubscriptionId: undefined }).cost, 0.4);
+		assert.equal(accumulateSessionUsage([oldPaid], { provisionalSubscriptionId: "not-persisted" }).cost, 0.4);
+	});
+
 	test("recovery re-appends only parent markers whose response is in the branch and unmarked", () => {
 		const before = assistantEntry("a", assistantUsage({}, 0.2), "openai");
 		const sub = assistantEntry("b", assistantUsage({}, 0.5), "openai");

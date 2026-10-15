@@ -27,6 +27,7 @@ import { COMPACT_HINT_DEFS, EXPANDED_HINT_DEFS, type HeaderStyles, type Hint, re
 import {
 	fetchOpenAiUsage,
 	fetchResetCredits,
+	officialCodexBaseUrl,
 	openAiAccountId,
 	type PendingReset,
 	QUOTA_ENDPOINT_MESSAGE,
@@ -50,6 +51,9 @@ type ChromeState = Readonly<{
 	context: ContextSnapshot;
 	usage: SessionUsage;
 	usageLeafId: string | null | undefined;
+	usageProvisional: boolean | undefined;
+	/** Entry ids present when a captured subscription request started; later assistant entries are that request. */
+	provisionalBaseIds: ReadonlySet<string> | undefined;
 	routed: NonNullable<ModelInfo>["routed"];
 	subscriptionTurn: boolean;
 	chompTokens: number;
@@ -72,9 +76,11 @@ type ChromeState = Readonly<{
 }>;
 
 const freshState = (): ChromeState => ({
-	context: { usedTokens: 0, contextWindow: 0 },
+	context: { usedTokens: null, contextWindow: 0 },
 	usage: { cost: 0, cacheHitRate: undefined, cacheHitRateAvg: undefined },
 	usageLeafId: undefined,
+	usageProvisional: undefined,
+	provisionalBaseIds: undefined,
 	routed: undefined,
 	subscriptionTurn: false,
 	chompTokens: 0,
@@ -109,10 +115,16 @@ const patch = (next: Partial<ChromeState>): void => {
 const refreshSnapshot = (ctx: ExtensionContext): void => {
 	if (!ctx.hasUI) return;
 	const usage = ctx.getContextUsage();
+	const usedTokens = usage?.tokens ?? null;
 	const response =
 		ctx.model?.api === "pi-virtual" ? latestAssistantResponse(ctx.sessionManager.getBranch()) : undefined;
+	// A new unknown reading must cancel any running rewind; its old numeric snapshot must not override it.
+	if (usedTokens === null && state.rewind) {
+		if (state.rewindTimer) clearInterval(state.rewindTimer);
+		patch({ rewind: undefined, rewindTimer: undefined });
+	}
 	patch({
-		context: { usedTokens: usage?.tokens ?? 0, contextWindow: usage?.contextWindow ?? 0 },
+		context: { usedTokens, contextWindow: usage?.contextWindow ?? 0 },
 		routed: response ? { id: response.model, thinkingLevel: response.thinkingLevel } : undefined,
 	});
 };
@@ -121,10 +133,23 @@ const refreshSessionUsage = (ctx: ExtensionContext): void => {
 	// ponytail: usage only changes when a new entry becomes the leaf, so the leaf id memoizes the scan.
 	// A true delta fold is unsafe: a later subscription marker rebinds an already-counted response.
 	const leafId = ctx.sessionManager.getLeafId();
-	if (state.usageLeafId === leafId) return;
+	// The scan decision only changes with the leaf or the subscription-turn boundary; message_start can flip
+	// the turn without a new entry, so include it in the memo without reading entries on every render.
+	if (state.usageLeafId === leafId && state.usageProvisional === state.subscriptionTurn) return;
+	const entries = ctx.sessionManager.getEntries();
+	// A subscription turn persists its response after `message_start`; only an assistant entry created
+	// after that captured boundary may be provisionally on-plan, never an earlier paid response.
+	const provisionalId =
+		state.subscriptionTurn && state.provisionalBaseIds
+			? entries.findLast(
+					(entry) =>
+						entry.type === "message" && entry.message.role === "assistant" && !state.provisionalBaseIds?.has(entry.id),
+				)?.id
+			: undefined;
 	patch({
-		usage: accumulateSessionUsage(ctx.sessionManager.getEntries()),
+		usage: accumulateSessionUsage(entries, { provisionalSubscriptionId: provisionalId }),
 		usageLeafId: leafId,
+		usageProvisional: state.subscriptionTurn,
 	});
 };
 
@@ -132,20 +157,43 @@ const refreshSessionUsage = (ctx: ExtensionContext): void => {
 const isCodexModel = (ctx: ExtensionContext): boolean =>
 	ctx.model?.provider === "openai-codex" && ctx.model.api !== "pi-virtual";
 
+/** Drop the shown quota and its retry anchor; used whenever the account or endpoint can no longer host it. */
+const dropQuota = (accountId: string | undefined): void => {
+	patch({ quota: undefined, quotaAccountId: accountId, quotaLastAttemptAt: undefined });
+};
+
+/** Warn once per session when the active Codex model does not use the official ChatGPT endpoint. */
+const warnQuotaEndpointOnce = (ctx: ExtensionContext): void => {
+	if (state.quotaEndpointWarned) return;
+	patch({ quotaEndpointWarned: true });
+	if (ctx.hasUI)
+		ctx.ui.notify("OpenAI Codex quota is off: the active model does not use the official ChatGPT endpoint");
+};
+
 /** Refresh OpenAI quota on activity, at most once per throttle; failures keep the last snapshot. */
 const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void> => {
 	if (!isCodexModel(ctx)) {
 		quotaLookupId++;
-		patch({ quota: undefined, quotaAccountId: undefined, quotaLastAttemptAt: undefined });
+		dropQuota(undefined);
+		return;
+	}
+	// Validate the active endpoint before the throttle: switching to a custom/proxy endpoint must clear
+	// a previously shown official quota instead of letting a failed poll keep it alive.
+	if (officialCodexBaseUrl(ctx.model?.baseUrl) === undefined) {
+		quotaLookupId++;
+		dropQuota(undefined);
+		warnQuotaEndpointOnce(ctx);
+		requestRender();
 		return;
 	}
 	const lookupId = ++quotaLookupId;
 	try {
 		const key = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
-		if (lookupId !== quotaLookupId || !isCodexModel(ctx)) return;
+		if (lookupId !== quotaLookupId || !isCodexModel(ctx) || officialCodexBaseUrl(ctx.model?.baseUrl) === undefined)
+			return;
 		const accountId = key ? openAiAccountId(key) : undefined;
 		if (accountId !== state.quotaAccountId) {
-			patch({ quota: undefined, quotaAccountId: accountId, quotaLastAttemptAt: undefined });
+			dropQuota(accountId);
 			requestRender();
 		}
 		if (!key || !accountId) return;
@@ -153,16 +201,21 @@ const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void>
 		if (!shouldRefreshQuota(state.quotaLastAttemptAt, now, force)) return;
 		patch({ quotaLastAttemptAt: now });
 		const quota = await fetchOpenAiUsage(key, ctx.model?.baseUrl);
-		if (!isCodexModel(ctx) || state.quotaAccountId !== accountId || state.quotaLastAttemptAt !== now) return;
+		// Recheck the endpoint on the delayed reply: a switch to a proxy must discard an in-flight official
+		// result instead of attaching it to the unsupported model. A concurrent throttled same-endpoint
+		// lookup must not drop a valid result, so only the account and attempt anchor gate it, not lookupId.
+		if (
+			!isCodexModel(ctx) ||
+			officialCodexBaseUrl(ctx.model?.baseUrl) === undefined ||
+			state.quotaAccountId !== accountId ||
+			state.quotaLastAttemptAt !== now
+		)
+			return;
 		patch({ quota });
 		requestRender();
 	} catch (error) {
 		// A custom endpoint can never host Codex quota, so say so once instead of polling forever in silence.
-		if (error instanceof Error && error.message === QUOTA_ENDPOINT_MESSAGE && !state.quotaEndpointWarned) {
-			patch({ quotaEndpointWarned: true });
-			if (ctx.hasUI)
-				ctx.ui.notify("OpenAI Codex quota is off: the active model does not use the official ChatGPT endpoint");
-		}
+		if (error instanceof Error && error.message === QUOTA_ENDPOINT_MESSAGE) warnQuotaEndpointOnce(ctx);
 		// ponytail: quota is advisory chrome; a failed poll must never break the editor
 	}
 };
@@ -195,13 +248,13 @@ const resetTurnSpeed = (): void => {
 		speedTurnActiveMs: 0,
 		chompTokens: 0,
 		subscriptionTurn: false,
+		provisionalBaseIds: undefined,
 	});
 };
 
 /** Slide Pac-Man back from pre-compact usage to reclaimed usage, then self-clear. */
-const startRewind = (fromUsedTokens: number): void => {
+const startRewind = (fromUsedTokens: number, toUsedTokens: number): void => {
 	if (state.rewindTimer) clearInterval(state.rewindTimer);
-	const toUsedTokens = state.context.usedTokens;
 	patch({ rewind: { usedTokens: fromUsedTokens, frame: 0 } });
 	patch({
 		rewindTimer: setInterval(() => {
@@ -311,9 +364,11 @@ const configGlyphs = (): GlyphSet => (readConfig(configPath()).asciiFallback ? A
 const resetOutcomeNotice = (outcome: ResetRedemption): Readonly<{ message: string; level: "info" | "warning" }> => {
 	if (outcome === "reset") return { message: "OpenAI reset applied", level: "info" };
 	if (outcome === "already_redeemed") return { message: "OpenAI reset was already redeemed", level: "info" };
-	if (outcome === "rejected") return { message: "OpenAI refused the reset; no credit was spent", level: "warning" };
 	return { message: "OpenAI reset outcome unknown; rerun command to retry same request", level: "warning" };
 };
+
+/** Only the two exact completed codes permit automatic pending cleanup; every HTTP error keeps the record. */
+const resetCompleted = (outcome: ResetRedemption): boolean => outcome === "reset" || outcome === "already_redeemed";
 
 /** Pi hides its own startup header on `quietStartup: true`; the replacement header obeys the same setting. */
 const startupHeaderSuppressed = (pi: ExtensionAPI): boolean => {
@@ -340,15 +395,24 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	registerFramedEditor(ctx, {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
-		getHealth: () => ({
-			snapshot: state.rewind ? { ...state.context, usedTokens: state.rewind.usedTokens } : state.context,
-			usage: state.usage,
-			quota: state.quota,
-			speed: state.tokenSpeed,
-			frame: Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0),
-			activity: state.laneActivity,
-			prompt: state.prompt,
-		}),
+		getHealth: () => {
+			// Pi appends background usage entries (e.g. cache warming) while idle and only triggers a render; no
+			// extension lifecycle hook fires. The leaf-id memo keeps this cheap and rescans only on a new leaf.
+			// During a captured subscription turn, treat the provisional unmarked response as on-plan.
+			refreshSessionUsage(ctx);
+			return {
+				snapshot:
+					state.context.usedTokens !== null && state.rewind
+						? { ...state.context, usedTokens: state.rewind.usedTokens }
+						: state.context,
+				usage: state.usage,
+				quota: state.quota,
+				speed: state.tokenSpeed,
+				frame: Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0),
+				activity: state.laneActivity,
+				prompt: state.prompt,
+			};
+		},
 		glyphs: state.glyphs,
 		onTui: (tui) => {
 			patch({ tui });
@@ -429,7 +493,7 @@ export default function zContext(pi: ExtensionAPI): void {
 							pending.requestId,
 							ctx.model?.baseUrl,
 						);
-						if (outcome !== "unknown") await store.clear();
+						if (resetCompleted(outcome)) await store.clear();
 						const notice = resetOutcomeNotice(outcome);
 						ctx.ui.notify(notice.message, notice.level);
 						await refreshQuota(ctx, true);
@@ -477,7 +541,7 @@ export default function zContext(pi: ExtensionAPI): void {
 						operation.requestId,
 						ctx.model?.baseUrl,
 					);
-					if (outcome !== "unknown") await store.clear();
+					if (resetCompleted(outcome)) await store.clear();
 					const notice = resetOutcomeNotice(outcome);
 					ctx.ui.notify(notice.message, notice.level);
 					await refreshQuota(ctx, true);
@@ -544,14 +608,19 @@ export default function zContext(pi: ExtensionAPI): void {
 			event.message.provider === "openai"
 				? ctx.modelRegistry.find(event.message.provider, event.message.model)
 				: undefined;
+		const subscriptionTurn = Boolean(
+			model &&
+				ctx.modelRegistry.isUsingOAuth(model) &&
+				ctx.modelRegistry.getProvider(model.provider)?.auth.oauth?.isSubscription,
+		);
 		patch({
 			speedStreamTokens: 0,
 			speedStreamStartedAt: undefined,
-			subscriptionTurn: Boolean(
-				model &&
-					ctx.modelRegistry.isUsingOAuth(model) &&
-					ctx.modelRegistry.getProvider(model.provider)?.auth.oauth?.isSubscription,
-			),
+			subscriptionTurn,
+			// Boundary: only an assistant entry created after this point belongs to the captured request.
+			provisionalBaseIds: subscriptionTurn
+				? new Set(ctx.sessionManager.getEntries().map((entry) => entry.id))
+				: undefined,
 		});
 	});
 
@@ -603,6 +672,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		patch({
 			tokenSpeed: completedTokenSpeed(state.speedTurnOutputTokens, state.speedTurnActiveMs) ?? state.tokenSpeed,
 			subscriptionTurn: false,
+			provisionalBaseIds: undefined,
 		});
 		refreshSnapshot(ctx);
 		refreshSessionUsage(ctx);
@@ -633,9 +703,11 @@ export default function zContext(pi: ExtensionAPI): void {
 			ctx.mode === "tui" &&
 			before.contextWindow > 0 &&
 			before.contextWindow === state.context.contextWindow &&
+			before.usedTokens !== null &&
+			state.context.usedTokens !== null &&
 			state.context.usedTokens < before.usedTokens
 		) {
-			startRewind(before.usedTokens);
+			startRewind(before.usedTokens, state.context.usedTokens);
 		}
 		requestRender();
 	});

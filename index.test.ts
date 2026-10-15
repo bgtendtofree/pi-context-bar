@@ -62,6 +62,7 @@ test("reset transactions block concurrent retries and forget, preserve IDs on un
 	const response = Promise.withResolvers<Response>();
 	const bodies: unknown[] = [];
 	let outcome = "processing";
+	let consumeStatus = 200;
 	let credits: unknown = [{ id: "new" }];
 	t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
 		if (url.endsWith("/consume")) {
@@ -70,6 +71,7 @@ test("reset transactions block concurrent retries and forget, preserve IDs on un
 				posted.resolve();
 				return response.promise;
 			}
+			if (consumeStatus !== 200) return new Response(null, { status: consumeStatus });
 			return new Response(JSON.stringify({ code: outcome }));
 		}
 		return new Response(JSON.stringify(url.endsWith("/wham/usage") ? {} : credits));
@@ -108,16 +110,27 @@ test("reset transactions block concurrent retries and forget, preserve IDs on un
 	assert.equal(notices.at(-1), "OpenAI reset outcome unknown; rerun command to retry same request");
 	assert.deepEqual(bodies[2], bodies[1]);
 	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), saved);
+
+	// A 4xx (e.g. 409 processing) is a non-2xx HTTP error whose body is never read; it may already have
+	// applied, so the saved IDs must survive and the notice must not claim no credit was spent.
+	consumeStatus = 409;
+	await reset("", ctx);
+	assert.match(notices.at(-1) ?? "", /outcome uncertain/);
+	assert.ok(!notices.some((notice) => notice.includes("no credit was spent")));
+	assert.deepEqual(bodies[3], bodies[1]);
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), saved);
+	consumeStatus = 200;
+
 	outcome = "already_redeemed";
 	await reset("", ctx);
-	assert.deepEqual(bodies[3], bodies[1]);
+	assert.deepEqual(bodies[4], bodies[1]);
 	await assert.rejects(stat(path), { code: "ENOENT" });
 
 	await writeFile(path, JSON.stringify(old));
 	key = token("other");
 	await reset("", ctx);
 	assert.match(notices.at(-1) ?? "", /another account/);
-	assert.equal(bodies.length, 4);
+	assert.equal(bodies.length, 5);
 	key = token("a");
 	confirm = async () => {
 		key = token("other");
@@ -154,7 +167,7 @@ test("reset transactions block concurrent retries and forget, preserve IDs on un
 	};
 	await reset("", ctx);
 	assert.match(notices.at(-1) ?? "", /expired/);
-	assert.equal(bodies.length, 4); // Confirmation crossed expiry: no POST.
+	assert.equal(bodies.length, 5); // Confirmation crossed expiry: no POST.
 	await assert.rejects(stat(path), { code: "ENOENT" });
 
 	credits = [{ id: "uncertain" }];
@@ -531,6 +544,26 @@ const markerEntry = (messageEntryId: string, parentId: string | null): SessionEn
 	customType: SUBSCRIPTION_TURN_ENTRY,
 	data: { messageEntryId },
 });
+
+/** Standalone provider usage (e.g. cache warming) that Pi appends without a turn or agent event. */
+const usageEntry = (id: string, total: number): SessionEntry =>
+	({
+		type: "usage",
+		id,
+		parentId: null,
+		timestamp: "",
+		kind: "cache_warm",
+		provider: "test",
+		model: "test",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
+		},
+	}) as unknown as SessionEntry;
 
 test("in-memory fork carries the endpoint's explicit billing marker with no parent file", () => {
 	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
@@ -1069,5 +1102,357 @@ test("tool-call events keep the generating ghost while only answer text succeeds
 	assert.equal(ghostToken(), GHOST_TOKENS.assistant);
 	handlers.get("agent_settled")?.({}, ctx);
 	assert.equal(ghostToken(), undefined);
+	handlers.get("session_shutdown")?.({}, ctx);
+});
+
+test("unknown native context tokens stay unavailable through compaction and recover numerically", async (t) => {
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	let render = (): string => "";
+	let tokens: number | null = null;
+	const tui = { requestRender: () => {}, terminal: { rows: 40 } } as unknown as TUI;
+	const editorTheme = { borderColor: (text: string) => text } as EditorTheme;
+	const model = {
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		id: "gpt-test",
+		contextWindow: 100_000,
+		baseUrl: "https://chatgpt.com/backend-api",
+	};
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		model,
+		getContextUsage: () => ({ tokens, contextWindow: model.contextWindow }),
+		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+		modelRegistry: { getApiKeyForProvider: async () => undefined },
+		ui: {
+			notify: () => {},
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+				style: (text: string) => text,
+			},
+			setWorkingVisible: () => {},
+			setHeader: () => {},
+			setFooter: () => {},
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (factory) {
+					const editor = factory(tui, editorTheme, {} as Parameters<NonNullable<typeof factory>>[2]);
+					render = () => stripVTControlCharacters(editor.render(100).join("\n"));
+				}
+			},
+		},
+	} as unknown as ExtensionContext;
+	const pi = {
+		registerCommand: () => {},
+		getThinkingLevel: () => "off",
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	zContext(pi);
+	// Native pi 1.2 payload right after compaction: window known, tokens null. It must read unavailable, not zero.
+	handlers.get("session_start")?.({ reason: "startup" }, ctx);
+	assert.ok(render().includes("?%"));
+	assert.ok(!render().includes("0.0%"));
+	// A numeric reading first, then a null compaction, must not rewind Pac-Man back to zero.
+	tokens = 30_000;
+	handlers.get("context")?.({ type: "context", messages: [] }, ctx);
+	assert.ok(render().includes("30.0%"));
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	tokens = null;
+	handlers.get("session_compact")?.(
+		{ type: "session_compact", compactionEntry: {}, fromExtension: false, reason: "threshold", willRetry: false },
+		ctx,
+	);
+	assert.ok(render().includes("?%"));
+	t.mock.timers.tick(70 * 8);
+	assert.ok(render().includes("?%"));
+	assert.ok(!render().includes("0.0%"));
+	t.mock.timers.reset();
+	// A usable post-compaction response restores the normal numeric reading.
+	tokens = 8_000;
+	handlers.get("agent_end")?.({}, ctx);
+	assert.ok(render().includes("8.0%"));
+	assert.ok(!render().includes("?%"));
+	handlers.get("session_shutdown")?.({}, ctx);
+});
+
+test("editor health scans background usage on render without a turn or agent event", () => {
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	let render = (): string => "";
+	let entries: SessionEntry[] = [];
+	let leafId: string | null = null;
+	const tui = { requestRender: () => {}, terminal: { rows: 40 } } as unknown as TUI;
+	const editorTheme = { borderColor: (text: string) => text } as EditorTheme;
+	const model = { api: "openai-responses", provider: "openai", id: "gpt-test", contextWindow: 100_000 };
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		model,
+		getContextUsage: () => ({ tokens: 1_000, contextWindow: model.contextWindow }),
+		sessionManager: { getEntries: () => entries, getLeafId: () => leafId, getBranch: () => [] },
+		modelRegistry: { getApiKeyForProvider: async () => undefined },
+		ui: {
+			notify: () => {},
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+				style: (text: string) => text,
+			},
+			setWorkingVisible: () => {},
+			setHeader: () => {},
+			setFooter: () => {},
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (factory) {
+					const editor = factory(tui, editorTheme, {} as Parameters<NonNullable<typeof factory>>[2]);
+					render = () => stripVTControlCharacters(editor.render(100).join("\n"));
+				}
+			},
+		},
+	} as unknown as ExtensionContext;
+	const pi = {
+		registerCommand: () => {},
+		getThinkingLevel: () => "off",
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	zContext(pi);
+	handlers.get("session_start")?.({ reason: "startup" }, ctx);
+	// Pi appends a standalone cache-warming usage entry while idle and only asks for a render; no
+	// turn_end/agent_end fires, so the health callback itself must notice the new leaf.
+	entries = [usageEntry("warm", 0.25)];
+	leafId = "warm";
+	assert.ok(render().includes("$0.250"));
+	// The same render path still reclassifies a billed response when its marker becomes the leaf.
+	const response = billedResponse("billed");
+	entries = [response];
+	leafId = "billed";
+	assert.ok(render().includes("$0.400"));
+	entries = [response, markerEntry("billed", "billed")];
+	leafId = "billing-billed";
+	assert.ok(!render().includes("$0.400"));
+	handlers.get("session_shutdown")?.({}, ctx);
+});
+
+test("quota is validated against the active endpoint before and after the request", async (t) => {
+	const OFFICIAL = "https://chatgpt.com/backend-api";
+	const PROXY = "https://proxy.example.com/backend-api";
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	const notices: string[] = [];
+	let render = (): string => "";
+	const tui = { requestRender: () => {}, terminal: { rows: 40 } } as unknown as TUI;
+	const editorTheme = { borderColor: (text: string) => text } as EditorTheme;
+	let model = {
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		id: "gpt-test",
+		contextWindow: 100_000,
+		baseUrl: OFFICIAL,
+	};
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		get model() {
+			return model;
+		},
+		getContextUsage: () => ({ tokens: 1_000, contextWindow: model.contextWindow }),
+		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+		modelRegistry: {
+			getApiKeyForProvider: async () =>
+				`x.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "A" } })).toString("base64")}.y`,
+		},
+		ui: {
+			notify: (text: string) => notices.push(text),
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+				style: (text: string) => text,
+			},
+			setWorkingVisible: () => {},
+			setHeader: () => {},
+			setFooter: () => {},
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (factory) {
+					const editor = factory(tui, editorTheme, {} as Parameters<NonNullable<typeof factory>>[2]);
+					render = () => stripVTControlCharacters(editor.render(100).join("\n"));
+				}
+			},
+		},
+	} as unknown as ExtensionContext;
+	const pi = {
+		registerCommand: () => {},
+		getThinkingLevel: () => "off",
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	const fetched: string[] = [];
+	const pending: Array<(response: Response) => void> = [];
+	t.mock.method(globalThis, "fetch", async (url: string) => {
+		fetched.push(String(url));
+		return new Promise<Response>((resolve) => pending.push(resolve));
+	});
+	const usage = (percent: number): Response =>
+		new Response(
+			JSON.stringify({ rate_limit: { primary_window: { used_percent: percent, limit_window_seconds: 18_000 } } }),
+		);
+	zContext(pi);
+	handlers.get("session_start")?.({ reason: "startup" }, ctx);
+	await setImmediate();
+	assert.equal(fetched.length, 1);
+	pending[0]?.(usage(12));
+	await setImmediate();
+	assert.match(render(), /5h 12%/);
+
+	// Switching the same account's physical model to a proxy clears the previously shown official quota,
+	// warns once, and never forwards credentials to the proxy endpoint.
+	model = { ...model, baseUrl: PROXY };
+	handlers.get("model_select")?.({}, ctx);
+	await setImmediate();
+	assert.doesNotMatch(render(), /5h 12%/);
+	assert.equal(fetched.length, 1);
+	assert.deepEqual(notices, ["OpenAI Codex quota is off: the active model does not use the official ChatGPT endpoint"]);
+
+	// An official request already in flight must discard its delayed reply after the switch.
+	model = { ...model, baseUrl: OFFICIAL };
+	handlers.get("model_select")?.({}, ctx);
+	await setImmediate();
+	assert.equal(fetched.length, 2);
+	model = { ...model, baseUrl: PROXY };
+	handlers.get("model_select")?.({}, ctx);
+	await setImmediate();
+	assert.equal(fetched.length, 2);
+	pending[1]?.(usage(88));
+	await setImmediate();
+	assert.doesNotMatch(render(), /5h 88%/);
+	assert.equal(notices.length, 1);
+	assert.ok(fetched.every((url) => url.startsWith("https://chatgpt.com/backend-api/")));
+
+	// A later throttled same-endpoint lookup must not drop the valid in-flight result.
+	model = { ...model, baseUrl: OFFICIAL };
+	handlers.get("model_select")?.({}, ctx);
+	await setImmediate();
+	assert.equal(fetched.length, 3);
+	handlers.get("model_select")?.({}, ctx);
+	await setImmediate();
+	assert.equal(fetched.length, 3);
+	pending[2]?.(usage(77));
+	await setImmediate();
+	assert.match(render(), /5h 77%/);
+	handlers.get("session_shutdown")?.({}, ctx);
+});
+
+test("does not bill a captured subscription response before its marker lands at turn_end", () => {
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	let render = (): string => "";
+	let entries: SessionEntry[] = [];
+	let leafId: string | null = null;
+	const tui = { requestRender: () => {}, terminal: { rows: 40 } } as unknown as TUI;
+	const editorTheme = { borderColor: (text: string) => text } as EditorTheme;
+	const model = { api: "openai-responses", provider: "openai", id: "gpt", contextWindow: 100_000 };
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		model,
+		getContextUsage: () => ({ tokens: 1_000, contextWindow: model.contextWindow }),
+		sessionManager: { getEntries: () => entries, getLeafId: () => leafId, getBranch: () => [] },
+		modelRegistry: {
+			find: () => model,
+			isUsingOAuth: () => true,
+			getProvider: () => ({ auth: { oauth: { isSubscription: true } } }),
+			getApiKeyForProvider: async () => undefined,
+		},
+		ui: {
+			notify: () => {},
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+				style: (text: string) => text,
+			},
+			setWorkingVisible: () => {},
+			setHeader: () => {},
+			setFooter: () => {},
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (factory) {
+					const editor = factory(tui, editorTheme, {} as Parameters<NonNullable<typeof factory>>[2]);
+					render = () => stripVTControlCharacters(editor.render(100).join("\n"));
+				}
+			},
+		},
+	} as unknown as ExtensionContext;
+	const pi = {
+		registerCommand: () => {},
+		getThinkingLevel: () => "off",
+		appendEntry: (customType: string, data: unknown) => {
+			const id = `appended-${entries.length}`;
+			entries.push({ type: "custom", id, parentId: leafId, timestamp: "", customType, data } as SessionEntry);
+			leafId = id;
+		},
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	zContext(pi);
+	handlers.get("session_start")?.({}, ctx);
+	entries = [billedResponse("paid")];
+	leafId = "paid";
+	const message: AssistantMessage = {
+		role: "assistant",
+		content: [],
+		api: "openai-responses",
+		provider: "openai",
+		model: "gpt",
+		stopReason: "toolUse",
+		timestamp: 0,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.5 },
+		},
+	};
+	handlers.get("turn_start")?.({}, ctx);
+	handlers.get("message_start")?.({ message: { role: "user" } }, ctx);
+	handlers.get("message_start")?.({ message }, ctx);
+	handlers.get("message_end")?.({ message }, ctx);
+	// Streaming renders before persistence must keep the earlier paid bill; the captured boundary has no
+	// new assistant entry yet, so nothing may be provisionally excluded.
+	assert.ok(render().includes("$0.400"));
+	assert.ok(!render().includes("$0.500"));
+	// Native pi persists the response at message_end; the marker is appended only at turn_end, after tools.
+	entries = [billedResponse("paid"), { type: "message", id: "subscription", parentId: "paid", timestamp: "", message }];
+	leafId = "subscription";
+	handlers.get("tool_execution_start")?.({}, ctx);
+	assert.ok(render().includes("$0.400"));
+	assert.ok(!render().includes("$0.900"));
+	// A tool result cost still counts while the provisional subscription response stays out.
+	entries = [
+		...entries,
+		{
+			type: "message",
+			id: "tool",
+			parentId: "subscription",
+			timestamp: "",
+			message: {
+				role: "toolResult",
+				toolCallId: "call",
+				toolName: "generateImage",
+				content: [],
+				isError: false,
+				timestamp: 0,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.04 },
+				},
+			},
+		},
+	];
+	leafId = "tool";
+	assert.ok(render().includes("$0.440"));
+	assert.ok(!render().includes("$0.940"));
+	// turn_end appends the marker; the response stays excluded and the paid/tool total is unchanged.
+	handlers.get("turn_end")?.({ message, messageEntryId: "subscription" }, ctx);
+	assert.ok(render().includes("$0.440"));
+	assert.ok(!render().includes("$0.940"));
 	handlers.get("session_shutdown")?.({}, ctx);
 });

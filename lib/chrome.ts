@@ -315,17 +315,21 @@ export const renderPacmanLane = (
 	// Wide lanes breathe more; narrow lanes keep finer usage resolution.
 	const cellWidth = width >= 80 ? 3 : 2;
 	const cellCount = Math.max(1, Math.floor(width / cellWidth));
-	const ratio = snapshot.contextWindow > 0 ? Math.min(1, Math.max(0, snapshot.usedTokens / snapshot.contextWindow)) : 0;
+	const known = snapshot.contextWindow > 0 && snapshot.usedTokens !== null;
+	const ratio = known ? Math.min(1, Math.max(0, snapshot.usedTokens / snapshot.contextWindow)) : 0;
 	const consumedCellCount = Math.round(ratio * Math.max(0, cellCount - 1));
 	const pelletCellCount = Math.max(0, cellCount - consumedCellCount - 1);
 	const pacman = laneCell("text", pacmanGlyph, cellWidth, styles);
 	const powerCells = new Set(
 		POWER_PELLET_RATIOS.map((powerRatio) => Math.round(powerRatio * Math.max(0, cellCount - 1))),
 	);
-	const pellets = Array.from({ length: pelletCellCount }, (_, index) => {
-		const power = powerCells.has(consumedCellCount + 1 + index);
-		return laneCell(power ? "muted" : "dim", power ? glyphs.powerPellet : glyphs.pellet, cellWidth, styles);
-	}).join("");
+	// An unknown reading is a neutral lane: blank trailing cells instead of pellets that would claim full capacity.
+	const pellets = known
+		? Array.from({ length: pelletCellCount }, (_, index) => {
+				const power = powerCells.has(consumedCellCount + 1 + index);
+				return laneCell(power ? "muted" : "dim", power ? glyphs.powerPellet : glyphs.pellet, cellWidth, styles);
+			}).join("")
+		: " ".repeat(pelletCellCount * cellWidth);
 	const ghostToken = activity === "idle" ? undefined : GHOST_TOKENS[activity];
 	const preferredGhostDistance = Math.floor(Math.abs(Math.trunc(animationFrame)) / 2) % 2 === 0 ? 2 : 3;
 	const ghostDistance = Math.min(preferredGhostDistance, consumedCellCount);
@@ -351,10 +355,17 @@ export const renderLaneStrip = (
 	glyphs: GlyphSet = NERD_GLYPHS,
 ): string => {
 	if (width <= 2) return "";
-	const percentValue = snapshot.contextWindow > 0 ? (snapshot.usedTokens / snapshot.contextWindow) * 100 : 0;
-	const percent = styleUsage(`${percentValue.toFixed(1)}%`, percentValue, styles);
+	const percentValue =
+		snapshot.contextWindow > 0 && snapshot.usedTokens !== null
+			? (snapshot.usedTokens / snapshot.contextWindow) * 100
+			: undefined;
+	// An unknown reading is `?%`, never a false `0.0%` that would claim full capacity.
+	const percent =
+		percentValue === undefined
+			? styles.fg("dim", "?%")
+			: styleUsage(`${percentValue.toFixed(1)}%`, percentValue, styles);
 	// Window size rides with the percent it is the denominator of; tight strips fall back to plain %.
-	const window = formatWindowSize(snapshot.contextWindow);
+	const window = percentValue === undefined ? "" : formatWindowSize(snapshot.contextWindow);
 	const percentOptions =
 		snapshot.contextWindow > 0 ? [...(window ? [`${percent} ${styles.fg("dim", `(${window})`)}`] : []), percent] : [];
 	const rawSpeed = formatTokenSpeed(speed);

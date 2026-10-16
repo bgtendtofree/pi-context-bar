@@ -27,9 +27,8 @@ is shipped, what needs an owner decision, and what remains.
 - Prompt state: `❯` accent, `✗` error when the last completed turn stopped with `error`
   (`aborted` keeps the previous state). Derived from the session branch on start and tree nav.
 - Nerd Font icons in use: Pac-Man `󰮯`, ghost `󰊠`, reset countdown `󰦛`, reset credits `󰔖`,
-  provider badges `cod-openai` `` / `cod-claude` ``, cache database `󰆼`,
-  speedometer `󰓅`. ASCII fallback: `C`/`O`/`0`, `>`/`x`, `r52m`, `R1`, no provider badge, `CH` cache label, plain `t/s`.
-- Icon grammar shipped: badges only for exact known non-virtual providers, thinking level stays
+  cache database `󰆼`, speedometer `󰓅`. ASCII fallback: `C`/`O`/`0`, `>`/`x`, `r52m`, `R1`, `CH` cache label, plain `t/s`.
+- Icon grammar shipped: thinking level stays
   plain dim text (no brain), database replaces `CH` in Nerd mode, speedometer never alone.
   All decorations drop before useful text or numbers; `asciiFallback` output is unchanged.
 - Quota hierarchy shipped: healthy windows show only label + used percent; a window above 70%
@@ -43,6 +42,17 @@ is shipped, what needs an owner decision, and what remains.
   `dim` beside it, hints on the mark's second row, indent at the editor's prompt column. Single-color
   silhouette, no background fills, fallback to the `pi vX` wordmark when the width cannot fit the mark.
   `quietStartup: true` skips the replacement header so Pi's own startup output stays hidden.
+- Apple Terminal forces the `pi vX` wordmark instead of the half-block mark, matching Pi's own
+  `supportsPiLogo()`; the decision is the pure `headerMark(ascii, appleTerminal)` in `lib/header.ts`.
+- `/context-bar ascii-fallback [on|off|toggle]` switches the glyph set for the rest of the session.
+  Runtime only: nothing is written and the next session start reads the config file again, so the
+  file stays the single source of truth and the command never rewrites keys it does not own.
+- Slot ownership: this extension holds the header, footer, and editor slots, and Pi keeps exactly one
+  owner per slot with the last install winning. README states the conflict with other chrome
+  extensions instead of letting one silently replace half the chrome.
+- Unrecognized Pi editor layout: when the frame loses the border it captured this render pass, it keeps
+  Pi's own editor and reports it once per editor through `onUnrecognizedLayout`. The known
+  narrow-width fallback stays silent because it is intended.
 
 ## Ground rules for anything added here
 
@@ -61,7 +71,7 @@ is shipped, what needs an owner decision, and what remains.
 ## Current slice: quiet subscription quota (approved, shipped)
 
 - Keep one bottom border; do not add a quota row.
-- Model retains its selected-provider badge. Thinking levels stay dim plain text, including
+- Thinking levels stay dim plain text, including
   routed thinking; remove the redundant brain glyph and its unused code.
 - Healthy quota windows show only their label and used percentage, e.g. `5h 53%  7d 43%`.
 - Show a future reset countdown only for a window whose used percentage is above 70%, matching
@@ -83,7 +93,6 @@ Icons change presentation, not metric semantics or lifecycle behavior.
 
 | Information | Nerd Font rendering | ASCII / unsupported provider |
 |---|---|---|
-| Selected provider before model id | accent `cod-openai` U+EC81 / `cod-claude` U+EC82 | No badge; keep model id |
 | Cache hit | `󰆼 98/94%` (`md-database` U+F01BC) | Existing `CH98/94%` |
 | Token speed | dim `󰓅 ~218t/s` (`md-speedometer` U+F04C5) | Existing `~218t/s` |
 
@@ -92,15 +101,12 @@ shipped and then removed as redundant in the quiet-quota slice.
 
 Implementation contract:
 
-- Verify names/code points against official `glyphnames.json` before implementation. State
-  the actual minimum Nerd Font version for the selected badges; do not assume all v3 releases
-  include newer Codicons. Verified: `cod-openai` U+EC81 and `cod-claude` U+EC82 first appear in
-  Nerd Font v3.5.0 (absent from v3.4.0 and earlier); `md-database`/`md-speedometer`
-  exist since v3.0.0.
-- Plumb selected `provider` into `ModelInfo`. Badge only exact known OpenAI
-  (`openai`, `openai-codex`) and Anthropic (`anthropic`) providers. Unknown providers have no
-  badge. Virtual selections have no provider badge; do not infer provider from a model id or
-  pretend the selected provider is the routed physical provider.
+- Verify names/code points against official `glyphnames.json` before implementation. Verified:
+  `md-database` and `md-speedometer` exist since Nerd Font v3.0.0. Provider badges were shipped
+  and then removed: they carried no information the model id did not already carry, and the
+  Codicon codepoints they needed only exist from v3.5.0.
+- Do not infer a provider from a model id, and do not pretend the selected provider is the
+  routed physical provider; routed thinking stays plain dim text beside the route arrow.
 - Keep latest/average cache-hit calculation, threshold colors, cost, and reset behavior
   unchanged. The average stays dim; high cache hit stays quiet. Quota display follows the
   quiet-quota slice above.
@@ -137,6 +143,19 @@ These are not part of the Nerd Font implementation:
 - Session totals (tokens, elapsed): competes with `$` for the same slot, low value.
 - Account badge (`PLUS` / `API`): only meaningful beside quota; revisit if quota confusion
   comes up.
+- Reading other extensions' statuses (`ctx.ui.setStatus` / `footerData.getExtensionStatuses()`) into the
+  frame: the chrome erases the footer, so there is no read point left, and the values that exist in the
+  wild (an MCP badge from a third-party adapter, `active-agent` from a subagent extension) publish
+  nothing on a machine without those extensions. Pi's own MCP extension publishes no status at all.
+- Reporting agent state outward to an orchestrator through the chrome: the orchestrator already owns
+  that view (herdr reports per-pane agent state over its own socket, not through Pi's status bus).
+- Persisting the ASCII toggle into the config file: the file is read once at startup, and writing it
+  would mean rewriting a user's file to preserve keys this extension does not own.
+- A resource-panel style startup screen (loaded context, skills, prompts, extensions grouped by
+  provenance): it needs a bridge into Pi's private startup-panel structure and grows without a row
+  budget, so it fights the one-frame, no-extra-rows rule.
+- Checking installed package extensions against the npm registry at startup: a network request and a
+  second diagnostic surface for a chrome extension that reports this session's health.
 
 ## Open decisions (owner)
 

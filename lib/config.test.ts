@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
-import { DEFAULT_CONFIG, readConfig } from "./config.ts";
+import { DEFAULT_CONFIG, nextAsciiFallback, readConfig } from "./config.ts";
 
 const tempDirs: string[] = [];
 const tempConfig = (content: string | undefined): string => {
@@ -40,5 +40,31 @@ describe("readConfig", () => {
 
 	test("unknown keys and wrong types are ignored", () => {
 		assert.deepEqual(readConfig(tempConfig('{ "asciiFallback": "yes", "other": 1 }')), DEFAULT_CONFIG);
+	});
+});
+
+describe("nextAsciiFallback", () => {
+	test("omitted mode toggles the live value", () => {
+		assert.equal(nextAsciiFallback("ascii-fallback", false), true);
+		assert.equal(nextAsciiFallback("ascii-fallback", true), false);
+		assert.equal(nextAsciiFallback("ascii-fallback toggle", true), false);
+	});
+
+	test("on and off set the value regardless of the live one", () => {
+		assert.equal(nextAsciiFallback("ascii-fallback on", false), true);
+		assert.equal(nextAsciiFallback("ascii-fallback on", true), true);
+		assert.equal(nextAsciiFallback("ascii-fallback off", true), false);
+		assert.equal(nextAsciiFallback("ascii-fallback off", false), false);
+	});
+
+	test("tolerates case and surrounding whitespace", () => {
+		assert.equal(nextAsciiFallback("  ASCII-Fallback  ON ", false), true);
+	});
+
+	test("an unknown command, mode, or extra argument means nothing happens", () => {
+		assert.equal(nextAsciiFallback("", true), undefined);
+		assert.equal(nextAsciiFallback("ascii", true), undefined);
+		assert.equal(nextAsciiFallback("ascii-fallback maybe", true), undefined);
+		assert.equal(nextAsciiFallback("ascii-fallback on extra", true), undefined);
 	});
 });

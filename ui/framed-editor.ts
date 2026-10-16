@@ -36,7 +36,11 @@ export type FramedEditorOptions = Readonly<{
 	getModel: () => ModelInfo;
 	getThinkingLevel: () => string;
 	getHealth: () => HealthState;
-	glyphs: GlyphSet;
+	/**
+	 * Read per render rather than captured once: the ASCII fallback is switchable at runtime, and the
+	 * bottom-border memo key below needs the live set to notice the switch.
+	 */
+	getGlyphs: () => GlyphSet;
 	onTui: (tui: TUI) => void;
 }>;
 
@@ -159,7 +163,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 					: "";
 			const scrollDown = this.hiddenBelow ? styles.fg("dim", `↓${this.hiddenBelow}`) : "";
 			const scrollReserve = scrollDown ? 1 : 0;
-			const prompt = `${" ".repeat(BODY_INDENT - 2)}${ctx.ui.theme.fg(promptColor(health.prompt), promptGlyph(health.prompt, options.glyphs))} `;
+			const prompt = `${" ".repeat(BODY_INDENT - 2)}${ctx.ui.theme.fg(promptColor(health.prompt), promptGlyph(health.prompt, options.getGlyphs()))} `;
 			const wrap = (line: string, prefix: string): string => {
 				const content = prefix + line;
 				const gap = Math.max(0, innerWidth - visibleWidth(content));
@@ -176,7 +180,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 						health.frame,
 						health.activity,
 						health.speed,
-						options.glyphs,
+						options.getGlyphs(),
 					),
 				),
 			];
@@ -194,7 +198,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 				width,
 				scrollReserve,
 				ctx.ui.theme,
-				options.glyphs,
+				options.getGlyphs(),
 				health.usage,
 				health.quota,
 				Math.floor(now / 60_000),
@@ -232,7 +236,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			now: number,
 		): Readonly<{ leftLabel: string; metrics: string }> {
 			const quota = health.quota
-				? quotaRender(health.quota, styles, now, options.glyphs)
+				? quotaRender(health.quota, styles, now, options.getGlyphs())
 				: { essentials: [""], upgrades: [] };
 			// Essential reading first: selected model id + window percentages + cache/cost. Optional model
 			// detail (thinking level, route arrow) and quota countdowns/credits only spend spare width.
@@ -240,7 +244,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 				width,
 				models: editorModelOptions(modelInfo, thinkingLevel),
 				quotas: quota.essentials,
-				metrics: metricOptions(health.usage, styles, options.glyphs),
+				metrics: metricOptions(health.usage, styles, options.getGlyphs()),
 				gap: MODEL_QUOTA_GAP,
 				scrollReserve,
 			});

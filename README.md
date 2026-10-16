@@ -127,6 +127,8 @@ Write `~/.pi/agent/pi-context-bar.json` as strict JSON (no comments):
 
 The file is read once at startup; a missing or corrupt file silently uses defaults.
 
+`/context-bar ascii-fallback [on|off|toggle]` switches the same glyph set for the rest of the session (an omitted mode toggles), so a terminal can be checked without editing the file. The switch is runtime only: nothing is written, and the next session start reads the file again — the file stays the single source of truth, and this command never has to rewrite keys it does not own.
+
 ## Dev
 
 ```bash

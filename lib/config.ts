@@ -11,6 +11,19 @@ export type ContextBarConfig = Readonly<{
 
 export const DEFAULT_CONFIG: ContextBarConfig = { asciiFallback: false };
 
+/**
+ * `/context-bar ascii-fallback [on|off|toggle]`: the glyphs to use next, or undefined when the command
+ * line means nothing. An omitted mode toggles, and the live value decides the result.
+ */
+export const nextAsciiFallback = (args: string, current: boolean): boolean | undefined => {
+	const [command, mode, ...extra] = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
+	if (command !== "ascii-fallback" || extra.length > 0) return undefined;
+	if (mode === undefined || mode === "toggle") return !current;
+	if (mode === "on") return true;
+	if (mode === "off") return false;
+	return undefined;
+};
+
 export const configPath = (): string => join(getAgentDir(), "pi-context-bar.json");
 
 /** One optional knob; unknown keys and bad JSON stay silent defaults so config never breaks the editor. */

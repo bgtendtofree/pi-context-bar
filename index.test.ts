@@ -715,6 +715,89 @@ test("session_start recovers markers from a persisted parent file and skips non-
 	assert.deepEqual(appended, []);
 });
 
+test("runtime ascii-fallback toggle swaps editor glyphs without rewriting the config file", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-toggle-"));
+	const previousDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = dir;
+	t.after(async () => {
+		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousDir;
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	let command: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"] | undefined;
+	let render = (): string => "";
+	const notices: Array<{ message: string; level: string }> = [];
+	const tui = { requestRender: () => {}, terminal: { rows: 40 } } as unknown as TUI;
+	const editorTheme = { borderColor: (text: string) => text } as EditorTheme;
+	const model = {
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		id: "gpt-test",
+		contextWindow: 100_000,
+		baseUrl: "https://chatgpt.com/backend-api",
+	};
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		model,
+		getContextUsage: () => ({ tokens: 0, contextWindow: model.contextWindow }),
+		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+		modelRegistry: { getApiKeyForProvider: async () => undefined },
+		ui: {
+			notify: (message: string, level: string) => notices.push({ message, level }),
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+				style: (text: string) => text,
+			},
+			setWorkingVisible: () => {},
+			setHeader: () => {},
+			setFooter: () => {},
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (factory) {
+					const editor = factory(tui, editorTheme, {} as Parameters<NonNullable<typeof factory>>[2]);
+					render = () => stripVTControlCharacters(editor.render(100).join("\n"));
+				}
+			},
+		},
+	} as unknown as ExtensionContext;
+	const pi = {
+		registerCommand: (name: string, value: Parameters<ExtensionAPI["registerCommand"]>[1]) => {
+			if (name === "context-bar") command = value.handler;
+		},
+		getThinkingLevel: () => "off",
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+
+	zContext(pi);
+	assert.ok(command);
+	const contextBar = command;
+	handlers.get("session_start")?.({ reason: "startup" }, ctx);
+	assert.ok(render().includes(NERD_GLYPHS.pacmanOpen));
+
+	await contextBar("ascii-fallback on", ctx as unknown as ExtensionCommandContext);
+	assert.ok(render().includes(ASCII_GLYPHS.pacmanOpen));
+	assert.ok(!render().includes(NERD_GLYPHS.pacmanOpen));
+
+	// The file is re-read at session start, so a runtime choice never outlives its session.
+	handlers.get("session_start")?.({ reason: "new" }, ctx);
+	assert.ok(render().includes(NERD_GLYPHS.pacmanOpen));
+
+	// Both switches share one command; the argument decides which one moved.
+	await contextBar("ascii-fallback", ctx as unknown as ExtensionCommandContext);
+	assert.ok(render().includes(ASCII_GLYPHS.pacmanOpen));
+	assert.deepEqual(notices.at(-1), { message: "ASCII glyphs on", level: "info" });
+
+	await contextBar("ascii-fallback maybe", ctx as unknown as ExtensionCommandContext);
+	assert.ok(render().includes(ASCII_GLYPHS.pacmanOpen));
+	assert.deepEqual(notices.at(-1), {
+		message: "Usage: /context-bar ascii-fallback [on|off|toggle]",
+		level: "warning",
+	});
+});
+
 test("re-applies asciiFallback glyphs after Pi replaces the session", async (t) => {
 	const dir = await mkdtemp(join(tmpdir(), "pi-glyphs-"));
 	const previousDir = process.env.PI_CODING_AGENT_DIR;

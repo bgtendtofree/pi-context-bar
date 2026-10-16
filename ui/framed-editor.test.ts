@@ -136,7 +136,7 @@ test("framed editor uses square frame tokens, no fills, and a four-column body i
 			activity: "idle",
 			prompt,
 		}),
-		glyphs: NERD_GLYPHS,
+		getGlyphs: () => NERD_GLYPHS,
 		onTui: () => {},
 	});
 	assert.ok(editor);
@@ -318,7 +318,7 @@ const buildFramedEditor = (
 		getModel: () => model,
 		getThinkingLevel: () => thinkingLevel,
 		getHealth: () => currentHealth,
-		glyphs,
+		getGlyphs: () => glyphs,
 		onTui: () => {},
 	});
 	const built = editor as unknown as {

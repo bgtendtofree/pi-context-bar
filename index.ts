@@ -14,7 +14,7 @@ import {
 	NERD_GLYPHS,
 	type QuotaUsage,
 } from "./lib/chrome.ts";
-import { configPath, readConfig } from "./lib/config.ts";
+import { configPath, nextAsciiFallback, readConfig } from "./lib/config.ts";
 import {
 	accumulateSessionUsage,
 	type ContextSnapshot,
@@ -421,7 +421,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 				prompt: state.prompt,
 			};
 		},
-		glyphs: state.glyphs,
+		getGlyphs: () => state.glyphs,
 		onTui: (tui) => {
 			patch({ tui });
 		},
@@ -432,6 +432,23 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 
 export default function zContext(pi: ExtensionAPI): void {
 	patch({ glyphs: configGlyphs() });
+
+	pi.registerCommand("context-bar", {
+		description: "Switch the ASCII glyph fallback used by the editor chrome",
+		handler: async (args, ctx) => {
+			const ascii = nextAsciiFallback(args, state.glyphs.ascii);
+			if (ascii === undefined) {
+				ctx.ui.notify("Usage: /context-bar ascii-fallback [on|off|toggle]", "warning");
+				return;
+			}
+			// Runtime only: the config file is read again at the next session start, so a toggle never rewrites
+			// a user file and never has to preserve keys this extension does not own.
+			patch({ glyphs: ascii ? ASCII_GLYPHS : NERD_GLYPHS });
+			if (ctx.mode === "tui" && !startupHeaderSuppressed(pi)) setWelcomeHeader(ctx);
+			requestRender();
+			ctx.ui.notify(`ASCII glyphs ${ascii ? "on" : "off"}`, "info");
+		},
+	});
 
 	pi.registerCommand("openai-codex-reset", {
 		description: "Redeem a banked OpenAI Codex (ChatGPT plan) usage-limit reset",

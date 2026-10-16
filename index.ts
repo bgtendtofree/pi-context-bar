@@ -422,6 +422,8 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 			};
 		},
 		getGlyphs: () => state.glyphs,
+		onUnrecognizedLayout: () =>
+			ctx.ui.notify("pi-context-bar: unrecognized Pi editor layout — using Pi's own editor", "warning"),
 		onTui: (tui) => {
 			patch({ tui });
 		},

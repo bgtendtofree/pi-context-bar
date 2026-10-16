@@ -292,10 +292,12 @@ const buildFramedEditor = (
 	setHealth: (next: HealthState) => void;
 	tokenCalls: () => number;
 	forceBorderMismatch: () => void;
+	layoutNotices: () => readonly string[];
 } => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
 	let fgCalls = 0;
 	let currentHealth = health;
+	const layoutNotices: string[] = [];
 	const ctx = {
 		mode: "tui",
 		ui: {
@@ -319,6 +321,7 @@ const buildFramedEditor = (
 		getThinkingLevel: () => thinkingLevel,
 		getHealth: () => currentHealth,
 		getGlyphs: () => glyphs,
+		onUnrecognizedLayout: () => layoutNotices.push("unrecognized"),
 		onTui: () => {},
 	});
 	const built = editor as unknown as {
@@ -334,6 +337,7 @@ const buildFramedEditor = (
 			currentHealth = next;
 		},
 		tokenCalls: () => fgCalls,
+		layoutNotices: () => layoutNotices,
 		// Force the frame to lose the border it captured this render pass, as if pi changed its render
 		// shape: the fallback must re-render pi's own layout at the full width.
 		forceBorderMismatch: () => {
@@ -492,6 +496,30 @@ test("re-renders pi's layout at full width when the frame loses its captured bor
 		);
 		assert.ok(!stripVTControlCharacters(rows.join("\n")).includes("┌"), `width=${width}`);
 	}
+});
+
+test("reports an unrecognized pi layout once, and never for a known narrow fallback", () => {
+	const health: HealthState = {
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 1.61, cacheHitRate: 98, cacheHitRateAvg: undefined },
+		quota: undefined,
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
+	const framed = buildFramedEditor(NERD_GLYPHS, { id: "gpt-test", reasoning: false }, health);
+	framed.setText("input");
+	// Too narrow to frame is a known, intended fallback: it must not read as a changed pi.
+	framed.render(8);
+	assert.deepEqual(framed.layoutNotices(), []);
+
+	// A frame that lost the border it captured is a pi change, and the frame retries every render.
+	framed.forceBorderMismatch();
+	framed.render(80);
+	framed.render(80);
+	framed.render(24);
+	assert.deepEqual(framed.layoutNotices(), ["unrecognized"]);
 });
 
 test("memoizes the bottom border while its inputs hold", (t) => {

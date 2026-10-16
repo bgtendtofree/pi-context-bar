@@ -8,7 +8,9 @@ Slash-command autocomplete stays above the framed editor instead of expanding in
 Scope is editor chrome, not conversation rendering: assistant messages, thinking content,
 tool calls/results, and compaction notices stay native Pi. The extension wraps the editor,
 replaces the welcome header/footer, and hides the redundant working row through Pi's UI APIs;
-it does not patch Pi core or replace conversation renderers.
+it does not patch Pi core or replace conversation renderers. If a Pi update changes the editor's
+render shape, the extension stops framing and keeps Pi's own editor, reporting it once per session
+rather than framing rows it cannot identify.
 
 ```
 ┌─ 󰮯 • • • ○ • • • 15.7% (200K)  󰓅 ~42.3t/s ───────────────────────────┐

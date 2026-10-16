@@ -41,6 +41,11 @@ export type FramedEditorOptions = Readonly<{
 	 * bottom-border memo key below needs the live set to notice the switch.
 	 */
 	getGlyphs: () => GlyphSet;
+	/**
+	 * Reported once per editor when pi's render shape is not the one the frame assumes, so a pi update
+	 * shows up as a message instead of chrome that quietly stopped appearing.
+	 */
+	onUnrecognizedLayout?: () => void;
 	onTui: (tui: TUI) => void;
 }>;
 
@@ -107,6 +112,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 		private editorRows = 0;
 		private bottomKey: readonly unknown[] | null = null;
 		private bottomResult: Readonly<{ leftLabel: string; metrics: string }> | null = null;
+		private layoutReported = false;
 
 		constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
 			super(tui, theme, keybindings, { paddingX: 0 });
@@ -147,6 +153,12 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			// editor six columns short of the terminal.
 			if (!split) {
 				this.editorRows = 0;
+				// Once per editor, not per render: the frame retries every frame and pi's shape does not
+				// change back mid-session, so a repeated notice would only be noise.
+				if (!this.layoutReported) {
+					this.layoutReported = true;
+					options.onUnrecognizedLayout?.();
+				}
 				return super.render(width);
 			}
 			const { editor: lines, autocomplete } = split;

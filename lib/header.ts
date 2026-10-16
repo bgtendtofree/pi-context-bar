@@ -17,6 +17,13 @@ export type HeaderMark = "block" | "text";
  */
 export const PI_MARK_LINES = ["▀▀█", "█▀ █"] as const;
 
+/**
+ * Half blocks misrender on Apple Terminal, so the wordmark takes over there, exactly as pi's own
+ * `supportsPiLogo()` decides. ASCII mode asks for the same fallback up front.
+ */
+export const headerMark = (ascii: boolean, appleTerminal: boolean): HeaderMark =>
+	ascii || appleTerminal ? "text" : "block";
+
 /** Mark column: the frame plus the editor's two-column gutter, where the `❯` prompt sits. */
 export const HEADER_INDENT = 3;
 

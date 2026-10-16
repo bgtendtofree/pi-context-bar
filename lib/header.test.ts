@@ -7,6 +7,7 @@ import {
 	type HeaderMark,
 	type HeaderStyles,
 	type Hint,
+	headerMark,
 	PI_MARK_LINES,
 	renderWelcome,
 } from "./header.ts";
@@ -143,9 +144,16 @@ describe("welcome header", () => {
 		}
 	});
 
-	test("accounts for indentation when fitting complete hints", () => {
+	test("account for indentation when fitting complete hints", () => {
 		const hints: readonly Hint[] = [{ key: "/", action: "x".repeat(37) }];
 		assert.equal(renderWelcome(version, hints, hints, false, "text", 40, identityStyles).length, 2);
 		assert.equal(renderWelcome(version, hints, hints, true, "text", 40, identityStyles).length, 2);
+	});
+
+	test("prefer the block mark unless ASCII mode or Apple Terminal asks for the wordmark", () => {
+		assert.equal(headerMark(false, false), "block");
+		assert.equal(headerMark(true, false), "text");
+		assert.equal(headerMark(false, true), "text");
+		assert.equal(headerMark(true, true), "text");
 	});
 });

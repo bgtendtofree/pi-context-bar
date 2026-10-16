@@ -2,6 +2,7 @@ import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { keyText, parseSessionEntries, VERSION } from "@earendil-works/pi-coding-agent";
+import { isAppleTerminalSession } from "@earendil-works/pi-tui";
 import type { ModelInfo } from "./lib/border.ts";
 import {
 	ASCII_GLYPHS,
@@ -23,7 +24,14 @@ import {
 	type SessionUsage,
 	SUBSCRIPTION_TURN_ENTRY,
 } from "./lib/context.ts";
-import { COMPACT_HINT_DEFS, EXPANDED_HINT_DEFS, type HeaderStyles, type Hint, renderWelcome } from "./lib/header.ts";
+import {
+	COMPACT_HINT_DEFS,
+	EXPANDED_HINT_DEFS,
+	type HeaderStyles,
+	type Hint,
+	headerMark,
+	renderWelcome,
+} from "./lib/header.ts";
 import {
 	fetchOpenAiUsage,
 	fetchResetCredits,
@@ -295,7 +303,7 @@ const resolveHints = (
 
 /** Quiet welcome header after session start; expandable via the same keybinding as pi's built-in header. */
 const setWelcomeHeader = (ctx: ExtensionContext): void => {
-	const mark = state.glyphs.ascii ? "text" : "block";
+	const mark = headerMark(state.glyphs.ascii, isAppleTerminalSession());
 	ctx.ui.setHeader(() => {
 		let expanded = false;
 		return {

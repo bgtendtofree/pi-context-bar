@@ -82,7 +82,7 @@ Top border carries context consumption (lane, `%` with the model's context-windo
 
 ## Startup
 
-A quiet welcome header appears immediately: pi's mark drawn as half blocks (`▀▀█` / `█▀ █`) in accent with the version dim beside it, then the resolved keybinding hints (`esc interrupt · ctrl+c exit · / commands · ! bash · …`) on the mark's second row. Rows align with the editor's prompt column, with keys in accent and descriptions dim. The mark is single-color silhouette art, the way Omarchy prints its own logo, so it inherits whatever theme is active instead of carrying brand colors. Keys are read from your actual keybindings, so remaps show correctly, and the expand keybinding toggles a full hint list. On terminals that misalign half blocks, in ASCII mode, or when the width cannot fit the mark, the header falls back to the plain `pi vX` wordmark. No model or cwd repeats — those already live in the editor border and your shell.
+A quiet welcome header appears immediately: pi's mark drawn as half blocks (`▀▀█` / `█▀ █`) in accent with the version dim beside it, then the resolved keybinding hints (`esc interrupt · ctrl+c exit · / commands · ! bash · …`) on the mark's second row. Rows align with the editor's prompt column, with keys in accent and descriptions dim. The mark is single-color silhouette art, the way Omarchy prints its own logo, so it inherits whatever theme is active instead of carrying brand colors. Keys are read from your actual keybindings, so remaps show correctly, and the expand keybinding toggles a full hint list. On terminals that misalign half blocks or cannot fit the mark, the header falls back to the plain `pi vX` wordmark; Apple Terminal triggers that fallback automatically, matching Pi's own logo check. In ASCII mode the wordmark is chosen up front. No model or cwd repeats — those already live in the editor border and your shell.
 
 `"quietStartup": true` in `~/.pi/agent/settings.json` hides this header too, leaving Pi's loaded-resources rows out and the startup output empty as the setting intends; `"header"` keeps the header and drops the resource details. Resource details remain available via `/status`.
 
@@ -91,6 +91,17 @@ A quiet welcome header appears immediately: pi's mark drawn as half blocks (`▀
 Pac-Man `󰮯`, Ghost `󰊠`, and the `md-*` chrome icons (reset `󰦛`, reset credits `󰔖`, database `󰆼`, speedometer `󰓅`) are Material Design glyphs present since Nerd Font **v3.0.0**. Configure your terminal profile to use a **Nerd Font** for the full chrome; installing the font without selecting it in the terminal is not enough. **JetBrainsMono Nerd Font Mono** is recommended because its icons stay single-cell and keep the lane aligned.
 
 Terminals without a Nerd Font (SSH into a remote box, a locked-down corporate profile) fall back to ASCII glyphs via one config file — see [Config](#config).
+
+## Other chrome extensions
+
+`pi-context-bar` claims Pi's editor slot plus the header and footer slots: the header, an empty footer, and the framed editor component. Pi keeps exactly one owner per slot and the **last extension to install wins**, so a second chrome extension silently replaces part of this one rather than merging with it:
+
+| Extension | Claims | Running it with `pi-context-bar` |
+|-----------|--------|----------------------------------|
+| [`pi-footer-minimal`](https://github.com/kaushikgopal/pi-kaush/tree/main/extensions/pi-footer-minimal) | footer | replaces the empty footer row; Pi's native stats return, and this extension's decisions about where health lives no longer hold |
+| [`pi-welcome-screen`](https://github.com/kaushikgopal/pi-kaush/tree/main/extensions/pi-welcome-screen) | header | replaces the quiet mark + hints header with its centered resource panel |
+
+Install order decides the winner, so pick one chrome extension per slot instead of relying on it.
 
 ## Install
 

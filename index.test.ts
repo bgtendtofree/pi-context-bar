@@ -17,7 +17,12 @@ import { VERSION } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import zContext from "./index.ts";
 import { ASCII_GLYPHS, GHOST_GLYPH, GHOST_TOKENS, NERD_GLYPHS } from "./lib/chrome.ts";
-import { type AssistantMessage, accumulateSessionUsage, SUBSCRIPTION_TURN_ENTRY } from "./lib/context.ts";
+import {
+	type AssistantMessage,
+	accumulateSessionUsage,
+	PARENT_MARKERS_CHECKED_ENTRY,
+	SUBSCRIPTION_TURN_ENTRY,
+} from "./lib/context.ts";
 
 const token = (accountId: string): string =>
 	`x.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: accountId } })).toString("base64")}.y`;
@@ -708,11 +713,63 @@ test("session_start recovers markers from a persisted parent file and skips non-
 		}) as unknown as ExtensionContext;
 	zContext(pi);
 	handlers.get("session_start")?.({ reason: "startup" }, ctxFor(parent));
-	assert.deepEqual(appended, [{ customType: SUBSCRIPTION_TURN_ENTRY, data: { messageEntryId: "sub" } }]);
+	assert.deepEqual(appended, [
+		{ customType: SUBSCRIPTION_TURN_ENTRY, data: { messageEntryId: "sub" } },
+		{ customType: PARENT_MARKERS_CHECKED_ENTRY, data: { parentSession: parent } },
+	]);
 	appended.length = 0;
 	handlers.get("session_start")?.({ reason: "startup" }, ctxFor(dir)); // Non-regular parent: no read, no hang.
 	handlers.get("session_start")?.({ reason: "startup" }, ctxFor(join(dir, "missing.jsonl")));
 	assert.deepEqual(appended, []);
+});
+
+test("a checked parent is skipped, and a sentinel copied from another fork does not skip it", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-fork-sentinel-"));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+	const parent = join(dir, "parent.jsonl");
+	await writeFile(
+		parent,
+		[
+			JSON.stringify({ type: "session", id: "p", timestamp: "", cwd: "" }),
+			JSON.stringify(billedResponse("sub")),
+			JSON.stringify(markerEntry("sub", "sub")),
+		].join("\n"),
+	);
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	const appended: unknown[] = [];
+	let entries: readonly SessionEntry[] = [];
+	const pi = {
+		registerCommand: () => {},
+		appendEntry: (customType: string, data: unknown) => appended.push({ customType, data }),
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	const checked = (parentSession: string): SessionEntry =>
+		({
+			type: "custom",
+			id: `checked-${parentSession}`,
+			parentId: null,
+			timestamp: "",
+			customType: PARENT_MARKERS_CHECKED_ENTRY,
+			data: { parentSession },
+		}) as SessionEntry;
+	const ctx = {
+		hasUI: false,
+		mode: "print",
+		sessionManager: { getEntries: () => entries, getHeader: () => ({ parentSession: parent }) },
+	} as unknown as ExtensionContext;
+	zContext(pi);
+
+	entries = [billedResponse("sub"), checked(parent)];
+	handlers.get("session_start")?.({ reason: "resume" }, ctx);
+	assert.deepEqual(appended, []);
+
+	// The same sentinel copied through another fork names the wrong parent: the read must run again.
+	entries = [billedResponse("sub"), checked(join(dir, "other.jsonl"))];
+	handlers.get("session_start")?.({ reason: "resume" }, ctx);
+	assert.deepEqual(appended, [
+		{ customType: SUBSCRIPTION_TURN_ENTRY, data: { messageEntryId: "sub" } },
+		{ customType: PARENT_MARKERS_CHECKED_ENTRY, data: { parentSession: parent } },
+	]);
 });
 
 test("runtime ascii-fallback toggle swaps editor glyphs without rewriting the config file", async (t) => {
@@ -1419,6 +1476,35 @@ test("quota is validated against the active endpoint before and after the reques
 	await setImmediate();
 	assert.match(render(), /5h 77%/);
 	handlers.get("session_shutdown")?.({}, ctx);
+});
+
+test("headless sessions do not poll quota for chrome they cannot show", async (t) => {
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	const pi = {
+		registerCommand: () => {},
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	let fetches = 0;
+	t.mock.method(globalThis, "fetch", async () => {
+		fetches++;
+		return new Response("{}");
+	});
+	const ctx = {
+		hasUI: false,
+		mode: "print",
+		model: {
+			provider: "openai-codex",
+			api: "openai-codex-responses",
+			id: "gpt",
+			baseUrl: "https://chatgpt.com/backend-api",
+		},
+		sessionManager: { getEntries: () => [], getLeafId: () => null },
+		modelRegistry: { getApiKeyForProvider: async () => token("a") },
+	} as unknown as ExtensionContext;
+	zContext(pi);
+	handlers.get("turn_end")?.({ message: { role: "assistant", stopReason: "stop" }, messageEntryId: "x" }, ctx);
+	await setImmediate();
+	assert.equal(fetches, 0);
 });
 
 test("does not bill a captured subscription response before its marker lands at turn_end", () => {

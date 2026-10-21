@@ -137,6 +137,10 @@ describe("parseResetCredits", () => {
 		assert.deepEqual(parseResetCredits({ credits: [{ id: "old", expires_at: "20251231" }] }, now), []);
 		// Invalid compact fields fall through to the numeric path rather than inventing a date.
 		assert.deepEqual(parseResetCredits({ credits: [{ id: "roll", expires_at: "20260231" }] }, now), [{ id: "roll" }]);
+		// Out-of-range times are invalid stamps, not rolled-over dates.
+		assert.deepEqual(parseResetCredits({ credits: [{ id: "time", expires_at: "20260101259900" }] }, now), [
+			{ id: "time" },
+		]);
 	});
 
 	test("unwraps the usage API's nested reset-credit container", () => {

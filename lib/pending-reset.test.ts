@@ -5,7 +5,13 @@ import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { withPendingReset } from "./pending-reset.ts";
+import { shouldSyncDirectory, withPendingReset } from "./pending-reset.ts";
+
+test("skips the directory fsync where the platform rejects it", () => {
+	assert.equal(shouldSyncDirectory("win32"), false);
+	assert.equal(shouldSyncDirectory("darwin"), true);
+	assert.equal(shouldSyncDirectory("linux"), true);
+});
 
 test("record access is exclusive, private, durable before POST, and fail-closed on corrupt data", async (t) => {
 	const dir = await mkdtemp(join(tmpdir(), "pi-reset-store-"));

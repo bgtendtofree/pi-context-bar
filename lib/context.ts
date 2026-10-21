@@ -23,6 +23,19 @@ export type AssistantUsage = AssistantMessage["usage"];
 /** Legacy billing marker stored after the response, referencing it by entry id. */
 export const SUBSCRIPTION_TURN_ENTRY = "pi-context-bar/subscription-turn";
 
+/** Sentinel: this fork's parent markers were already checked, so its parent file can be skipped. */
+export const PARENT_MARKERS_CHECKED_ENTRY = "pi-context-bar/parent-markers-checked";
+
+/** Whether a fork already checked the named parent, not just any parent copied through another fork. */
+export const hasParentMarkersCheck = (entries: readonly SessionEntry[], parentSession: string): boolean =>
+	entries.some(
+		(entry) =>
+			entry.type === "custom" &&
+			entry.customType === PARENT_MARKERS_CHECKED_ENTRY &&
+			isObject(entry.data) &&
+			entry.data.parentSession === parentSession,
+	);
+
 /** True when a marker carries a usable response id. */
 const subscriptionMarkerId = (entry: SessionEntry): string | undefined => {
 	if (entry.type !== "custom" || entry.customType !== SUBSCRIPTION_TURN_ENTRY || !isObject(entry.data))

@@ -5,8 +5,10 @@ import {
 	type AssistantUsage,
 	accumulateSessionUsage,
 	cacheHitRate,
+	hasParentMarkersCheck,
 	hasRecoverableBilling,
 	latestAssistantResponse,
+	PARENT_MARKERS_CHECKED_ENTRY,
 	recoverableSubscriptionMarkers,
 	SUBSCRIPTION_TURN_ENTRY,
 } from "./context.ts";
@@ -78,6 +80,16 @@ const subscriptionMarker = (messageEntryId: unknown, id = "billing"): Extract<Se
 	timestamp: "",
 	customType: SUBSCRIPTION_TURN_ENTRY,
 	data: { messageEntryId },
+});
+
+/** Sentinel written once per fork so later resumes can skip the parent session read. */
+const parentCheck = (parentSession: string, id = "checked"): Extract<SessionEntry, { type: "custom" }> => ({
+	type: "custom",
+	id,
+	parentId: null,
+	timestamp: "",
+	customType: PARENT_MARKERS_CHECKED_ENTRY,
+	data: { parentSession },
 });
 
 describe("session usage", () => {
@@ -162,6 +174,14 @@ describe("session usage", () => {
 		assert.equal(hasRecoverableBilling([assistantEntry("free", assistantUsage({}, 0), "openai")]), false);
 		assert.equal(hasRecoverableBilling([toolResultEntry("tools", assistantUsage({}, 0.2))]), false);
 		assert.equal(hasRecoverableBilling([assistantEntry("billed", assistantUsage({}, 0.4), "openai")]), true);
+	});
+
+	test("parent recovery sentinel only matches the parent it names", () => {
+		assert.equal(hasParentMarkersCheck([], "/parent"), false);
+		assert.equal(hasParentMarkersCheck([parentCheck("/parent")], "/parent"), true);
+		// A sentinel copied into a fork names the grandparent, not this fork's parent.
+		assert.equal(hasParentMarkersCheck([parentCheck("/parent")], "/other"), false);
+		assert.equal(hasParentMarkersCheck([{ ...parentCheck("/parent"), data: null }], "/parent"), false);
 	});
 
 	test("includes standalone usage without changing assistant cache metrics", () => {

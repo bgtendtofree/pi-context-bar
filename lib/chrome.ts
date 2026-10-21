@@ -6,7 +6,7 @@ import type { ContextSnapshot, SessionUsage } from "./context.ts";
 import { formatTokenSpeed, type TokenSpeedSnapshot } from "./speed.ts";
 
 export const PACMAN_GLYPH = "󰮯";
-export const PACMAN_CLOSED_GLYPH = "●";
+export const PACMAN_CLOSED_GLYPH = "󰝥";
 export const PACMAN_FRAMES = [PACMAN_GLYPH, PACMAN_CLOSED_GLYPH] as const;
 export const GHOST_GLYPH = "󰊠";
 export const PELLET_GLYPH = "•";
@@ -200,11 +200,13 @@ export const metricOptions = (
 		const avg = usage.cacheHitRateAvg;
 		const diverged = avg !== undefined && Math.abs(latest - avg) > CH_AVG_DIVERGENCE_POINTS;
 		const avgPart = diverged ? styles.fg("dim", `/${Math.round(avg)}`) : "";
-		const plain = `${styleCache(`${glyphs.ascii ? "CH" : ""}${Math.round(latest)}`, latest, styles)}${avgPart}%`;
+		// Color the same rounded number the label shows, so text and warning color cannot disagree.
+		const roundedLatest = Math.round(latest);
+		const plain = `${styleCache(`${glyphs.ascii ? "CH" : ""}${roundedLatest}`, roundedLatest, styles)}${avgPart}%`;
 		caches.push({
 			plain,
 			decorated: glyphs.cache
-				? `${styleCache(`${glyphs.cache} ${Math.round(latest)}`, latest, styles)}${avgPart}%`
+				? `${styleCache(`${glyphs.cache} ${roundedLatest}`, roundedLatest, styles)}${avgPart}%`
 				: plain,
 		});
 	}
@@ -366,8 +368,8 @@ export const renderLaneStrip = (
 			: styleUsage(`${percentValue.toFixed(1)}%`, percentValue, styles);
 	// Window size rides with the percent it is the denominator of; tight strips fall back to plain %.
 	const window = percentValue === undefined ? "" : formatWindowSize(snapshot.contextWindow);
-	const percentOptions =
-		snapshot.contextWindow > 0 ? [...(window ? [`${percent} ${styles.fg("dim", `(${window})`)}`] : []), percent] : [];
+	// An unknown window still keeps the honest `?%`; only the `(size)` form needs a known denominator.
+	const percentOptions = [...(window ? [`${percent} ${styles.fg("dim", `(${window})`)}`] : []), percent];
 	const rawSpeed = formatTokenSpeed(speed);
 	// The speedometer is decorative: try it, then plain `t/s`, then drop speed entirely.
 	const speedOptions = rawSpeed

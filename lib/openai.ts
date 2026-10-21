@@ -206,14 +206,12 @@ const parseCompactDateStamp = (raw: string): number | undefined => {
 	const match = COMPACT_DATE_STAMP.exec(raw);
 	if (!match) return undefined;
 	const [, year, month, day, hour, minute, second] = match;
-	const stamp = Date.UTC(
-		Number(year),
-		Number(month) - 1,
-		Number(day),
-		Number(hour ?? "0"),
-		Number(minute ?? "0"),
-		Number(second ?? "0"),
-	);
+	const hours = Number(hour ?? "0");
+	const minutes = Number(minute ?? "0");
+	const seconds = Number(second ?? "0");
+	// `Date.UTC` rolls out-of-range times into another day; reject them like an invalid month/day.
+	if (hours > 23 || minutes > 59 || seconds > 59) return undefined;
+	const stamp = Date.UTC(Number(year), Number(month) - 1, Number(day), hours, minutes, seconds);
 	const date = new Date(stamp);
 	// Reject out-of-range fields such as month 99, which `Date.UTC` would roll over.
 	if (date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(day)) return undefined;
@@ -224,9 +222,8 @@ const parseCompactDateStamp = (raw: string): number | undefined => {
  * A credit list is an array or an object wrapping one. Explicit fields win over the generic `data`
  * envelope, and a named container such as `rate_limit_reset_credits` is unwrapped once more.
  */
-const isArray = (value: unknown): value is unknown[] => Array.isArray(value);
 const creditArray = (value: unknown): unknown[] | undefined => {
-	if (isArray(value)) return value;
+	if (Array.isArray(value)) return value;
 	if (!isObject(value)) return undefined;
 	for (const candidate of [value.credits, value.reset_credits, value.rate_limit_reset_credits, value.data]) {
 		const nested = creditArray(candidate);

@@ -9,8 +9,8 @@ Scope is editor chrome, not conversation rendering: assistant messages, thinking
 tool calls/results, and compaction notices stay native Pi. The extension wraps the editor,
 replaces the welcome header/footer, and hides the redundant working row through Pi's UI APIs;
 it does not patch Pi core or replace conversation renderers. If a Pi update changes the editor's
-render shape, the extension stops framing and keeps Pi's own editor, reporting it once per session
-rather than framing rows it cannot identify.
+render shape, the extension stops framing, restores Pi's footer and working row, and keeps Pi's own
+editor, reporting it once per session rather than framing rows it cannot identify.
 
 ```
 ┌─ 󰮯 • • • ○ • • • 15.7% (200K)  󰓅 ~42.3t/s ───────────────────────────┐
@@ -90,7 +90,7 @@ A quiet welcome header appears immediately: pi's mark drawn as half blocks (`▀
 
 ## Font requirement
 
-Pac-Man `󰮯`, Ghost `󰊠`, and the `md-*` chrome icons (reset `󰦛`, reset credits `󰔖`, database `󰆼`, speedometer `󰓅`) are Material Design glyphs present since Nerd Font **v3.0.0**. Configure your terminal profile to use a **Nerd Font** for the full chrome; installing the font without selecting it in the terminal is not enough. **JetBrainsMono Nerd Font Mono** is recommended because its icons stay single-cell and keep the lane aligned.
+Pac-Man `󰮯` (open mouth), `󰝥` (`md-circle`, closed mouth), Ghost `󰊠`, and the `md-*` chrome icons (reset `󰦛`, reset credits `󰔖`, database `󰆼`, speedometer `󰓅`) are Material Design glyphs present since Nerd Font **v3.0.0**. Configure your terminal profile to use a **Nerd Font** for the full chrome; installing the font without selecting it in the terminal is not enough. **JetBrainsMono Nerd Font Mono** is recommended because its icons stay single-cell and keep the lane aligned.
 
 Terminals without a Nerd Font (SSH into a remote box, a locked-down corporate profile) fall back to ASCII glyphs via one config file — see [Config](#config).
 
@@ -144,7 +144,7 @@ npm run smoke:package  # npm production-install smoke
 npm run ci             # full CI pipeline
 ```
 
-Coverage targets all pure modules in `lib/` (≥90% lines/functions/branches). Extension wiring in `index.ts` and the Pi/TUI adapter in `ui/` are excluded from the gate.
+Coverage gates every runtime module: `lib/` and the Pi/TUI adapter in `ui/` at ≥90% lines/functions/branches, and `index.ts` separately at ≥80% lines/functions/branches.
 
 Smoke:
 

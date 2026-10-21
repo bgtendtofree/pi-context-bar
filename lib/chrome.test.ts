@@ -15,6 +15,7 @@ import {
 	GHOST_TOKENS,
 	metricOptions,
 	NERD_GLYPHS,
+	PACMAN_CLOSED_GLYPH,
 	PACMAN_FRAMES,
 	PACMAN_GLYPH,
 	PELLET_GLYPH,
@@ -136,6 +137,13 @@ describe("semantic metric styling", () => {
 		const ascii =
 			metricOptions(usage({ cost: 6.65, cacheHitRate: 99 }), markedStyles, ASCII_GLYPHS)[0]?.decorated ?? "";
 		assert.ok(ascii.includes("<dim>CH99</dim>%"));
+	});
+
+	test("rounds the cache rate once so the label and its color agree", () => {
+		const healthy = metricOptions(usage({ cacheHitRate: 79.6 }), markedStyles, ASCII_GLYPHS)[0]?.decorated ?? "";
+		assert.ok(healthy.includes("<dim>CH80</dim>%"));
+		const warning = metricOptions(usage({ cacheHitRate: 49.6 }), markedStyles, ASCII_GLYPHS)[0]?.decorated ?? "";
+		assert.ok(warning.includes("<warning>CH50</warning>%"));
 	});
 
 	test("accents only unhealthy cache", () => {
@@ -388,6 +396,12 @@ describe("lane strip", () => {
 		assert.ok(
 			stripVTControlCharacters(renderLaneStrip(snapshot({ usedTokens: null }), 12, identityStyles)).includes("?%"),
 		);
+		// No window at all (a virtual model without limits) keeps the same unknown indicator.
+		assert.ok(
+			stripVTControlCharacters(renderLaneStrip({ usedTokens: null, contextWindow: 0 }, 60, identityStyles)).includes(
+				"?%",
+			),
+		);
 	});
 
 	test("fills the width with lane, percent, and quiet speed", () => {
@@ -539,6 +553,8 @@ describe("CH session average", () => {
 
 describe("Nerd Font glyph grammar", () => {
 	test("matches the official glyphnames.json code points and stays single-cell", () => {
+		assert.equal(PACMAN_GLYPH, "\u{f0baf}");
+		assert.equal(PACMAN_CLOSED_GLYPH, "\u{f0765}");
 		assert.equal(NERD_GLYPHS.cache, "\u{f01bc}");
 		assert.equal(NERD_GLYPHS.speed, "\u{f04c5}");
 		assert.equal(NERD_GLYPHS.reset, "\u{f099b}");
@@ -547,7 +563,14 @@ describe("Nerd Font glyph grammar", () => {
 		assert.equal(NERD_GLYPHS.speed.codePointAt(0), 0xf04c5);
 		assert.equal(NERD_GLYPHS.reset.codePointAt(0), 0xf099b);
 		assert.equal(NERD_GLYPHS.credit.codePointAt(0), 0xf0516);
-		for (const glyph of [NERD_GLYPHS.cache, NERD_GLYPHS.speed, NERD_GLYPHS.reset, NERD_GLYPHS.credit])
+		for (const glyph of [
+			PACMAN_GLYPH,
+			PACMAN_CLOSED_GLYPH,
+			NERD_GLYPHS.cache,
+			NERD_GLYPHS.speed,
+			NERD_GLYPHS.reset,
+			NERD_GLYPHS.credit,
+		])
 			assert.equal(visibleWidth(glyph), 1);
 		assert.equal(ASCII_GLYPHS.cache, "");
 		assert.equal(ASCII_GLYPHS.speed, "");

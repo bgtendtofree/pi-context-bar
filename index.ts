@@ -18,8 +18,10 @@ import { configPath, nextAsciiFallback, readConfig } from "./lib/config.ts";
 import {
 	accumulateSessionUsage,
 	type ContextSnapshot,
+	hasParentMarkersCheck,
 	hasRecoverableBilling,
 	latestAssistantResponse,
+	PARENT_MARKERS_CHECKED_ENTRY,
 	recoverableSubscriptionMarkers,
 	type SessionUsage,
 	SUBSCRIPTION_TURN_ENTRY,
@@ -180,6 +182,8 @@ const warnQuotaEndpointOnce = (ctx: ExtensionContext): void => {
 
 /** Refresh OpenAI quota on activity, at most once per throttle; failures keep the last snapshot. */
 const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void> => {
+	// Quota is chrome; headless and RPC sessions must not spend an authenticated request on it.
+	if (ctx.mode !== "tui") return;
 	if (!isCodexModel(ctx)) {
 		quotaLookupId++;
 		dropQuota(undefined);
@@ -358,12 +362,17 @@ const recoverForkSubscriptionMarkers = (pi: ExtensionAPI, ctx: ExtensionContext)
 	const parent = ctx.sessionManager.getHeader?.()?.parentSession;
 	if (!parent) return;
 	const entries = ctx.sessionManager.getEntries();
+	// The sentinel names its parent, so a sentinel copied through another fork cannot skip this one.
+	if (hasParentMarkersCheck(entries, parent)) return;
 	// A marker only re-classifies a billed, non-plan response, so skip the parent read when none is present.
-	if (!hasRecoverableBilling(entries)) return;
-	const parentEntries = readParentSessionEntries(parent);
-	if (!parentEntries) return;
-	for (const messageEntryId of recoverableSubscriptionMarkers(entries, parentEntries))
-		pi.appendEntry(SUBSCRIPTION_TURN_ENTRY, { messageEntryId });
+	if (hasRecoverableBilling(entries)) {
+		const parentEntries = readParentSessionEntries(parent);
+		// Leave the sentinel unwritten on a failed read so the next start can retry it.
+		if (!parentEntries) return;
+		for (const messageEntryId of recoverableSubscriptionMarkers(entries, parentEntries))
+			pi.appendEntry(SUBSCRIPTION_TURN_ENTRY, { messageEntryId });
+	}
+	pi.appendEntry(PARENT_MARKERS_CHECKED_ENTRY, { parentSession: parent });
 };
 
 /** Glyph set from user config; re-applied per session because shutdown resets state to Nerd defaults. */
@@ -400,6 +409,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 		if (!startupHeaderSuppressed(pi)) setWelcomeHeader(ctx);
 	}
 	void refreshQuota(ctx);
+	ctx.ui.setFooter(() => ({ render: () => [], invalidate: () => {}, dispose: () => {} }));
 	registerFramedEditor(ctx, {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
@@ -422,14 +432,16 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 			};
 		},
 		getGlyphs: () => state.glyphs,
-		onUnrecognizedLayout: () =>
-			ctx.ui.notify("pi-context-bar: unrecognized Pi editor layout — using Pi's own editor", "warning"),
+		onUnrecognizedLayout: () => {
+			// The empty footer and hidden working row belong to the framed editor; restore Pi's chrome when it is not there.
+			ctx.ui.setFooter(undefined);
+			ctx.ui.setWorkingVisible(true);
+			ctx.ui.notify("pi-context-bar: unrecognized Pi editor layout — using Pi's own editor", "warning");
+		},
 		onTui: (tui) => {
 			patch({ tui });
 		},
 	});
-
-	ctx.ui.setFooter(() => ({ render: () => [], invalidate: () => {}, dispose: () => {} }));
 };
 
 export default function zContext(pi: ExtensionAPI): void {

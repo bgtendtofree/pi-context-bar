@@ -15,8 +15,12 @@ type PendingResetStore = Readonly<{
 	clear: () => Promise<void>;
 }>;
 
+/** Directory fsync is POSIX-only; Windows rejects it and the record file is already synced. */
+export const shouldSyncDirectory = (platform: string = process.platform): boolean => platform !== "win32";
+
 /** fsync the parent directory so a newly created record's filename survives power loss. */
 const syncDir = async (path: string): Promise<void> => {
+	if (!shouldSyncDirectory()) return;
 	const parent = await open(dirname(path), "r");
 	try {
 		await parent.sync();

@@ -64,7 +64,7 @@ export const cacheHitRate = (usage: AssistantUsage): number | undefined => {
  * (`createUsageTotals`/`addUsageToTotals`) and `core/cache-stats.ts` are absent from `index.d.ts`, and
  * `ReadonlyFooterDataProvider` exposes git branch and statuses only. `docs/extensions.md` therefore
  * points extensions at `ctx.getContextUsage()` plus token stats on `ctx.sessionManager.getEntries()`,
- * which is what this module does. Verified against pi 1.2.0: re-check the two files above on a pi bump.
+ * which is what this module does. Verified against pi 1.3.0: re-check the two files above on a pi bump.
  */
 
 /** Subscription plans bill by plan, not per token; their catalog rates are reference prices, not bills. */

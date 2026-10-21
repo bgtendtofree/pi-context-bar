@@ -158,7 +158,16 @@ pi --no-extensions -e ./index.ts --no-session --no-tools -p "Reply ok"
 - Tests use built-in `node:test` and Node coverage
 - Runtime source and tests use separate TypeScript configs
 - Loads as `.ts` via jiti (no build step)
-- Pi core packages stay `*` peers per Pi's package guidance; development and CI test exact Pi `1.2.0`. Older API compatibility is not verified.
+- Pi core packages stay `*` peers per Pi's package guidance; development and CI test exact Pi `1.3.0`. Older API compatibility is not verified.
+
+### Pi 1.3.0 compatibility
+
+- Editor, theme-token, context usage, model registry, and session entry APIs used here are unchanged; no runtime shim is needed. The `ctx.ui.custom({ overlay: true })` handle fix affects dialogs, and this extension opens none.
+- `openai-codex/gpt-6.1-sol` now reports its 500K context window from Pi's catalog. The lane and `CH%` read `ctx.getContextUsage()` per render, so no local window constant needs changing.
+- New `sessionShareDestination` setting, `supportsMidConvoEffort` model capability, and the exported `formatReadLineRange` helper are outside editor chrome. This extension uses none of them.
+- Kimi Code Chat Completions caching, mid-session thinking-level cache preservation, dropping another model's thinking on switch, and resumed-session tool restoration are handled inside Pi and need no chrome change.
+
+See the [Pi 1.3.0 changelog](https://github.com/earendil-works/pi/blob/v1.3.0/packages/coding-agent/CHANGELOG.md).
 
 ### Pi 1.2.0 compatibility
 

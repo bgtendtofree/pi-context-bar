@@ -290,6 +290,11 @@ const buildFramedEditor = (
 	render: (width: number) => readonly string[];
 	setText: (text: string) => void;
 	setHealth: (next: HealthState) => void;
+	setPaddingX: (padding: number) => void;
+	getPaddingX: () => number;
+	setFocused: (focused: boolean) => void;
+	handleMouse: (event: TuiMouseEvent) => unknown;
+	getCursor: () => { line: number; col: number };
 	tokenCalls: () => number;
 	forceBorderMismatch: () => void;
 	layoutNotices: () => readonly string[];
@@ -327,6 +332,11 @@ const buildFramedEditor = (
 	const built = editor as unknown as {
 		render: (width: number) => readonly string[];
 		setText: (text: string) => void;
+		setPaddingX: (padding: number) => void;
+		getPaddingX: () => number;
+		focused: boolean;
+		handleMouse: (event: TuiMouseEvent) => unknown;
+		getCursor: () => { line: number; col: number };
 		renderBottomBorder: (width: number, hiddenLineCount: number) => string;
 		bottomBorder: string;
 	};
@@ -336,6 +346,13 @@ const buildFramedEditor = (
 		setHealth: (next) => {
 			currentHealth = next;
 		},
+		setPaddingX: (padding) => built.setPaddingX(padding),
+		getPaddingX: () => built.getPaddingX(),
+		setFocused: (focused) => {
+			built.focused = focused;
+		},
+		handleMouse: (event) => built.handleMouse(event),
+		getCursor: () => built.getCursor(),
 		tokenCalls: () => fgCalls,
 		layoutNotices: () => layoutNotices,
 		// Force the frame to lose the border it captured this render pass, as if pi changed its render
@@ -462,6 +479,101 @@ test("falls back to pi's own layout when the frame cannot fit", () => {
 	assert.ok(stripVTControlCharacters(framed.render(9)[0] ?? "").includes("┌"));
 });
 
+test("keeps native padding at zero across pi's host and /settings setters", () => {
+	// Pi copies defaultEditor.getPaddingX() onto a custom editor after the factory returns
+	// (setCustomEditorComponent) and /settings calls that setter again while the editor is live. The
+	// frame draws its own four-column body indent, so native padding must stay 0: a copied padding
+	// shifts every typed column and, at the frame's minimum width, makes pi's layout recurse on a
+	// wide grapheme.
+	const health: HealthState = {
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 1.61, cacheHitRate: 98, cacheHitRateAvg: undefined },
+		quota: undefined,
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
+	const framed = buildFramedEditor(NERD_GLYPHS, { id: "gpt-test", reasoning: false }, health);
+	const tui = { requestRender: () => {}, terminal: { rows: 20 } } as unknown as TUI;
+	const stock = new CustomEditor(
+		tui,
+		{ borderColor: (text: string) => text } as EditorTheme,
+		{ matches: () => false } as unknown as KeybindingsManager,
+		{ paddingX: 0 },
+	);
+	const body = (width = 80): string => stripVTControlCharacters(framed.render(width)[1] ?? "");
+	const bodyColumn = FRAME_COLUMNS + BODY_INDENT;
+
+	// The host's padding copy must not move the frame's native padding, and typed text stays at the
+	// designed fifth column (frame + two spaces + prompt glyph + space).
+	assert.equal(framed.getPaddingX(), 0);
+	framed.setPaddingX(1);
+	assert.equal(framed.getPaddingX(), 0);
+	framed.setText("hello");
+	assert.equal(body().indexOf("hello"), bodyColumn);
+
+	// /settings calls the setter again later; same contract.
+	framed.setPaddingX(3);
+	assert.equal(framed.getPaddingX(), 0);
+	assert.equal(body().indexOf("hello"), bodyColumn);
+
+	// Wide graphemes at the frame's minimum width used to overflow pi's padded layout into a stack.
+	framed.setPaddingX(1);
+	for (const text of ["中", "😀", "中文😀"]) {
+		framed.setText(text);
+		assert.doesNotThrow(() => framed.render(9), text);
+		assert.ok(
+			framed.render(9).every((line) => visibleWidth(line) === 9),
+			text,
+		);
+	}
+
+	// The narrow fallback is pi's own layout, so it stays the stock padding-0 editor, not a padded one.
+	// Widths below 3 are ASCII-only: stock pi overflows on its own with a wide grapheme there, which is
+	// outside this frame's contract. Wide graphemes are compared from the width stock can render.
+	framed.setPaddingX(2);
+	const lastFallbackWidth = FRAME_COLUMNS * 2 + BODY_INDENT + 2;
+	for (const [text, firstWidth] of [
+		["hello", 1],
+		["中", 3],
+		["emoji 😀", 3],
+	] as const) {
+		framed.setText(text);
+		stock.setText(text);
+		for (let width = firstWidth; width <= lastFallbackWidth; width++) {
+			assert.deepEqual(framed.render(width), stock.render(width), `text=${text} width=${width}`);
+		}
+	}
+
+	// Mouse and cursor geometry keep the frame's coordinates after the setters ran.
+	framed.setPaddingX(1);
+	framed.setText("input");
+	framed.render(80);
+	const click = (x: number, y: number): void => {
+		framed.handleMouse({
+			type: "click",
+			button: "left",
+			x,
+			y,
+			screenX: x,
+			screenY: y,
+			width: 80,
+			height: 5,
+			shift: false,
+			alt: false,
+			ctrl: false,
+		});
+	};
+	click(bodyColumn + 3, 1);
+	assert.deepEqual(framed.getCursor(), { line: 0, col: 3 });
+	framed.setFocused(true);
+	framed.setText("中");
+	const cursorLine = framed.render(9).find((line) => line.includes(CURSOR_MARKER)) ?? "";
+	assert.equal(visibleWidth(cursorLine.slice(0, cursorLine.indexOf(CURSOR_MARKER))), bodyColumn + visibleWidth("中"));
+	framed.setFocused(false);
+});
+
 test("re-renders pi's layout at full width when the frame loses its captured border", () => {
 	// Regression: the fallback returned the body rendered six columns narrower (the frame's body
 	// indent) while handleMouse used full-width coordinates, so a pi render-shape change left a short
@@ -520,6 +632,68 @@ test("reports an unrecognized pi layout once, and never for a known narrow fallb
 	framed.render(80);
 	framed.render(24);
 	assert.deepEqual(framed.layoutNotices(), ["unrecognized"]);
+});
+
+test("invalidate() recolors the bottom border after pi swaps its stable theme proxy", (t) => {
+	t.mock.method(Date, "now", () => 1_700_000_000_000);
+	// Pi 1.3 hands extensions a stable theme Proxy: setTheme() swaps the backing palette while
+	// ctx.ui.theme keeps its identity, so the memo key cannot see the change. Without invalidate()
+	// the model/cache/cost colors stay stale until some other key input moves.
+	const darkAccent = TOKEN_HEX.accent ?? "#a0a0ff";
+	const darkDim = TOKEN_HEX.dim ?? "#666666";
+	const lightAccent = "#010203";
+	const lightDim = "#040506";
+	let palette: Readonly<Record<string, string>> = TOKEN_HEX;
+	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
+	const ctx = {
+		mode: "tui",
+		ui: {
+			theme: {
+				fg: (token: string, text: string) =>
+					styleText(text, { fg: parseColor(palette[token] ?? "#888888") }, "truecolor"),
+			},
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (factory) {
+					const tui = { requestRender: () => {}, terminal: { rows: 20 } } as unknown as TUI;
+					const theme = { borderColor: (text: string) => text } as EditorTheme;
+					editor = factory(tui, theme, { matches: () => false } as unknown as Parameters<typeof factory>[2]);
+				}
+			},
+		},
+	} as unknown as ExtensionContext;
+	const health: HealthState = {
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 0, cacheHitRate: 98, cacheHitRateAvg: undefined },
+		quota: undefined,
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
+	registerFramedEditor(ctx, {
+		getModel: () => ({ id: "gpt-test", reasoning: false }),
+		getThinkingLevel: () => "high",
+		getHealth: () => health,
+		getGlyphs: () => ASCII_GLYPHS,
+		onTui: () => {},
+	});
+	assert.ok(editor);
+	const framed = editor;
+	const accentText = (color: string): string => styleText("gpt-test", { fg: parseColor(color) }, "truecolor");
+	const cacheText = (color: string): string => styleText("CH98", { fg: parseColor(color) }, "truecolor");
+	const rendered = (): string => framed.render(80).join("\n");
+	// Guard the baseline: both memoized groups are styled with the dark palette.
+	assert.ok(rendered().includes(accentText(darkAccent)));
+	assert.ok(rendered().includes(cacheText(darkDim)));
+
+	// Same Proxy identity, new backing colors.
+	palette = { ...TOKEN_HEX, accent: lightAccent, dim: lightDim };
+	assert.ok(rendered().includes(accentText(darkAccent)), "memo holds before invalidate");
+	framed.invalidate();
+	const repainted = rendered();
+	assert.ok(repainted.includes(accentText(lightAccent)), "model recolored");
+	assert.ok(repainted.includes(cacheText(lightDim)), "cache recolored");
+	assert.ok(!repainted.includes(accentText(darkAccent)), "old accent dropped");
 });
 
 test("memoizes the bottom border while its inputs hold", (t) => {

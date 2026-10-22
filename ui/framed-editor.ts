@@ -120,6 +120,16 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			options.onTui(tui);
 		}
 
+		/**
+		 * Pi copies its default editor's padding onto this editor after the factory returns, and /settings
+		 * calls the setter again. The frame draws its own body indent, so native padding stays 0: a copied
+		 * padding shifts every typed column and, at the frame's minimum width, makes pi's layout recurse
+		 * on a wide grapheme.
+		 */
+		override setPaddingX(_padding: number): void {
+			super.setPaddingX(0);
+		}
+
 		override renderTopBorder(width: number, hiddenLineCount: number): string {
 			this.hiddenAbove = hiddenLineCount;
 			return super.renderTopBorder(width, hiddenLineCount);
@@ -133,6 +143,13 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 
 		override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 			return super.handleMouse(this.editorRows ? remapEditorMouse(event, this.popupRows, this.editorRows) : event);
+		}
+
+		/** Pi's theme Proxy is stable across setTheme, so the memo key cannot see a palette swap. */
+		override invalidate(): void {
+			super.invalidate();
+			this.bottomKey = null;
+			this.bottomResult = null;
 		}
 
 		override render(width: number): string[] {
@@ -205,7 +222,8 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			const thinkingLevel = options.getThinkingLevel();
 			// The bottom border is the most expensive chrome to style and it changes far less often than the
 			// lane. Memoize it on the values it is built from so a streamed token only re-renders the lane;
-			// object identity catches new usage/quota, the theme identity catches a theme switch.
+			// object identity catches new usage/quota, while a theme switch reaches this memo through
+			// invalidate() because pi's theme Proxy keeps its identity across setTheme.
 			const key: readonly unknown[] = [
 				width,
 				scrollReserve,

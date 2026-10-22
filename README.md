@@ -158,7 +158,17 @@ pi --no-extensions -e ./index.ts --no-session --no-tools -p "Reply ok"
 - Tests use built-in `node:test` and Node coverage
 - Runtime source and tests use separate TypeScript configs
 - Loads as `.ts` via jiti (no build step)
-- Pi core packages stay `*` peers per Pi's package guidance; development and CI test exact Pi `1.3.0`. Older API compatibility is not verified.
+- Pi core packages stay `*` peers per Pi's package guidance; development and CI test exact Pi `1.4.0`. Older API compatibility is not verified.
+
+### Pi 1.4.0 compatibility
+
+- Editor, theme-token, context usage, model registry, and session entry APIs used here remain compatible; no runtime shim is needed. The zero-padding override and theme-cache invalidation remain necessary.
+- Pi now stacks concurrent extension dialogs instead of replacing an earlier dialog and leaving its promise pending. Reset confirmations use the unchanged `ctx.ui.confirm()` API and benefit without local dialog handling.
+- Compaction and branch summaries now use the model's output limit, and split-turn summaries honor custom instructions. Native context readings and persisted summary usage still feed the existing lane and session-cost accounting; no local output cap or compaction logic is added.
+- Rex terminal support and terminal-exit cleanup are handled by Pi. Classifier image input, codemode worker queuing, provider attribution headers, and model catalog changes need no editor-chrome adaptation.
+- Pi's native editor still recurses on wide characters at widths of one or two columns. This extension keeps its existing native fallback there; the framed path remains protected from inherited padding.
+
+See the [Pi 1.4.0 changelog](https://github.com/earendil-works/pi/blob/v1.4.0/packages/coding-agent/CHANGELOG.md).
 
 ### Pi 1.3.0 compatibility
 

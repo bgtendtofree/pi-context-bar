@@ -144,7 +144,7 @@ npm run smoke:package  # npm production-install smoke
 npm run ci             # full CI pipeline
 ```
 
-Coverage gates every runtime module: `lib/` and the Pi/TUI adapter in `ui/` at ≥90% lines/functions/branches, and `index.ts` separately at ≥80% lines/functions/branches.
+Coverage gates every runtime module: `commands/`, `lib/`, and the Pi/TUI adapter in `ui/` at ≥90% lines/functions/branches, and `index.ts` separately at ≥80% lines/functions/branches.
 
 Smoke:
 

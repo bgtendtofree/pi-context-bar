@@ -9,7 +9,7 @@ const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const PI_VERSION = manifest.devDependencies["@earendil-works/pi-coding-agent"];
 // Guard: every runtime source file must ship in the tarball; a missing file breaks the installed extension silently.
 const shipped = new Set(manifest.files);
-const missing = ["lib", "ui"].flatMap((dir) =>
+const missing = ["commands", "lib", "ui"].flatMap((dir) =>
 	readdirSync(join(root, dir))
 		.filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts") && !shipped.has(`${dir}/${file}`))
 		.map((file) => `${dir}/${file}`),

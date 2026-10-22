@@ -4,6 +4,6 @@
 		"noEmit": true,
 		"tsBuildInfoFile": ".tsbuild/test.tsbuildinfo"
 	},
-	"include": ["index.test.ts", "lib/**/*.test.ts", "ui/**/*.test.ts"],
+	"include": ["index.test.ts", "commands/**/*.test.ts", "lib/**/*.test.ts", "ui/**/*.test.ts"],
 	"references": [{ "path": "./tsconfig.json" }]
 }

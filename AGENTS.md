@@ -38,9 +38,10 @@ Square framed input shell plus one quiet health row. No multi-line footer. Envir
 - `lib/header.ts` — quiet welcome header
 - `lib/prompt.ts` — prompt-state transition and glyph
 - `lib/border.ts` — pure model label fitting and frame rendering
+- `commands/openai-codex-reset.ts` — reset command flow and its pending/retry safety
 - `ui/framed-editor.ts` — Pi/TUI framed editor adapter
 - `index.ts` — extension state, I/O, lifecycle wiring only
-- `lib/*.test.ts` — mirrored Node.js `node:test` suites
+- `lib/*.test.ts`, `commands/*.test.ts` — mirrored Node.js `node:test` suites
 
 ## Stack
 

@@ -1,14 +1,13 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
-import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { keyText, parseSessionEntries, VERSION } from "@earendil-works/pi-coding-agent";
 import { isAppleTerminalSession } from "@earendil-works/pi-tui";
+import { runOpenAiCodexReset } from "./commands/openai-codex-reset.ts";
 import type { ModelInfo } from "./lib/border.ts";
 import {
 	ASCII_GLYPHS,
 	activityAfterContext,
 	activityForAssistantEvent,
-	formatDuration,
 	type GlyphSet,
 	type LaneActivity,
 	NERD_GLYPHS,
@@ -36,16 +35,11 @@ import {
 } from "./lib/header.ts";
 import {
 	fetchOpenAiUsage,
-	fetchResetCredits,
 	officialCodexBaseUrl,
 	openAiAccountId,
-	type PendingReset,
 	QUOTA_ENDPOINT_MESSAGE,
-	type ResetRedemption,
-	redeemResetCredit,
 	shouldRefreshQuota,
 } from "./lib/openai.ts";
-import { withPendingReset } from "./lib/pending-reset.ts";
 import { INITIAL_PROMPT_STATE, type PromptState, promptStateAfterTurn, promptStateFromEntries } from "./lib/prompt.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
 import { registerFramedEditor } from "./ui/framed-editor.ts";
@@ -115,8 +109,6 @@ let state = freshState();
 let quotaLookupId = 0;
 /** In-memory forks keep no parent file, so the endpoint's marker is carried in memory across the fork. */
 let pendingForkSubscriptionIds: readonly string[] | undefined;
-
-const pendingResetPath = (): string => join(dirname(configPath()), "pi-context-bar-reset-pending.json");
 
 const patch = (next: Partial<ChromeState>): void => {
 	state = { ...state, ...next };
@@ -378,15 +370,6 @@ const recoverForkSubscriptionMarkers = (pi: ExtensionAPI, ctx: ExtensionContext)
 /** Glyph set from user config; re-applied per session because shutdown resets state to Nerd defaults. */
 const configGlyphs = (): GlyphSet => (readConfig(configPath()).asciiFallback ? ASCII_GLYPHS : NERD_GLYPHS);
 
-const resetOutcomeNotice = (outcome: ResetRedemption): Readonly<{ message: string; level: "info" | "warning" }> => {
-	if (outcome === "reset") return { message: "OpenAI reset applied", level: "info" };
-	if (outcome === "already_redeemed") return { message: "OpenAI reset was already redeemed", level: "info" };
-	return { message: "OpenAI reset outcome unknown; rerun command to retry same request", level: "warning" };
-};
-
-/** Only the two exact completed codes permit automatic pending cleanup; every HTTP error keeps the record. */
-const resetCompleted = (outcome: ResetRedemption): boolean => outcome === "reset" || outcome === "already_redeemed";
-
 /** Pi hides its own startup header on `quietStartup: true`; the replacement header obeys the same setting. */
 const startupHeaderSuppressed = (pi: ExtensionAPI): boolean => {
 	try {
@@ -466,135 +449,11 @@ export default function zContext(pi: ExtensionAPI): void {
 
 	pi.registerCommand("openai-codex-reset", {
 		description: "Redeem a banked OpenAI Codex (ChatGPT plan) usage-limit reset",
-		handler: async (args, ctx) => {
-			if (args.trim() === "forget-pending") {
-				try {
-					await withPendingReset(pendingResetPath(), async (store) => {
-						const confirmed = await ctx.ui.confirm(
-							"Forget pending reset request?",
-							"Only do this after checking usage. If the previous request succeeded, a new reset could spend another credit.",
-						);
-						if (!confirmed) return;
-						await store.clear();
-						ctx.ui.notify("Pending reset request forgotten", "warning");
-					});
-				} catch (error) {
-					ctx.ui.notify(
-						`Could not clear pending reset: ${error instanceof Error ? error.message : String(error)}`,
-						"error",
-					);
-				}
-				return;
-			}
-			if (args.trim()) {
-				ctx.ui.notify("Usage: /openai-codex-reset [forget-pending]", "warning");
-				return;
-			}
-			if (!isCodexModel(ctx)) {
-				ctx.ui.notify("Active model is not a physical openai-codex model", "warning");
-				return;
-			}
-			let postStarted = false;
-			try {
-				await withPendingReset(pendingResetPath(), async (store) => {
-					const key = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
-					if (!key) {
-						ctx.ui.notify("No OpenAI Codex credentials", "warning");
-						return;
-					}
-					const accountId = openAiAccountId(key);
-					if (!accountId) throw new Error("OpenAI token has no chatgpt_account_id");
-					const pending = await store.read();
-					if (pending) {
-						if (pending.accountId !== accountId) {
-							ctx.ui.notify(
-								"A reset is pending for another account; switch accounts before retrying or forget it after checking usage",
-								"warning",
-							);
-							return;
-						}
-						const confirmed = await ctx.ui.confirm(
-							"Retry pending OpenAI reset?",
-							"Previous result was uncertain. Retry same reset and request ID; no new credit will be selected.",
-						);
-						if (!confirmed) return;
-						const currentKey = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
-						if (!isCodexModel(ctx) || !currentKey || openAiAccountId(currentKey) !== accountId) {
-							ctx.ui.notify("OpenAI Codex account changed; retry cancelled", "warning");
-							return;
-						}
-						// Re-check durability before retrying; a failed earlier sync must not silently allow POST.
-						await store.sync();
-						postStarted = true;
-						const outcome = await redeemResetCredit(
-							currentKey,
-							pending.creditId,
-							pending.requestId,
-							ctx.model?.baseUrl,
-						);
-						if (resetCompleted(outcome)) await store.clear();
-						const notice = resetOutcomeNotice(outcome);
-						ctx.ui.notify(notice.message, notice.level);
-						await refreshQuota(ctx, true);
-						return;
-					}
-					const baseUrl = ctx.model?.baseUrl;
-					const credits = await fetchResetCredits(key, baseUrl);
-					const credit = credits[0];
-					if (!credit) {
-						ctx.ui.notify("No banked OpenAI resets available", "info");
-						return;
-					}
-					const now = Date.now();
-					const creditLines = credits
-						.map((value, index) => {
-							const when =
-								value.expiresAt === undefined
-									? "no expiry"
-									: `expires in ${formatDuration(value.expiresAt - now)} (${new Date(value.expiresAt).toLocaleString()})`;
-							return `  ${index + 1}. ${when}${index === 0 ? "  ← selected" : ""}`;
-						})
-						.join("\n");
-					const confirmed = await ctx.ui.confirm(
-						"Redeem OpenAI reset?",
-						`${credits.length} banked reset${credits.length === 1 ? "" : "s"}, soonest-expiring first:\n${creditLines}\n\nRedeem the selected reset? This resets your current 5h/weekly window.`,
-					);
-					if (!confirmed) return;
-					const currentKey = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
-					if (!isCodexModel(ctx) || !currentKey || openAiAccountId(currentKey) !== accountId) {
-						ctx.ui.notify("OpenAI Codex account changed; reset cancelled", "warning");
-						return;
-					}
-					const operation: PendingReset = { accountId, creditId: credit.id, requestId: crypto.randomUUID() };
-					await store.save(operation);
-					if (credit.expiresAt !== undefined && credit.expiresAt <= Date.now()) {
-						// No POST started: this new record is safe to discard.
-						await store.clear();
-						ctx.ui.notify("Selected OpenAI reset expired; rerun command to refresh credits", "warning");
-						return;
-					}
-					postStarted = true;
-					const outcome = await redeemResetCredit(
-						currentKey,
-						operation.creditId,
-						operation.requestId,
-						ctx.model?.baseUrl,
-					);
-					if (resetCompleted(outcome)) await store.clear();
-					const notice = resetOutcomeNotice(outcome);
-					ctx.ui.notify(notice.message, notice.level);
-					await refreshQuota(ctx, true);
-				});
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(
-					postStarted
-						? `OpenAI reset outcome uncertain; request saved. Rerun command to retry same request. ${message}`
-						: `OpenAI reset failed: ${message}`,
-					"error",
-				);
-			}
-		},
+		handler: (args, ctx) =>
+			runOpenAiCodexReset(args, ctx, {
+				isCodexModel,
+				refreshQuota: (active) => refreshQuota(active, true),
+			}),
 	});
 
 	pi.on("session_before_fork", (event, ctx) => {

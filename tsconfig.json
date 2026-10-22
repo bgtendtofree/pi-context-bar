@@ -7,6 +7,6 @@
 		"outDir": ".tsbuild/src",
 		"tsBuildInfoFile": ".tsbuild/src.tsbuildinfo"
 	},
-	"include": ["index.ts", "lib/**/*.ts", "ui/**/*.ts"],
+	"include": ["index.ts", "commands/**/*.ts", "lib/**/*.ts", "ui/**/*.ts"],
 	"exclude": ["coverage", "**/*.test.ts"]
 }

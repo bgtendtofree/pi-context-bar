@@ -16,6 +16,7 @@
 	],
 	"files": [
 		"index.ts",
+		"commands/openai-codex-reset.ts",
 		"lib/border.ts",
 		"lib/chrome.ts",
 		"lib/config.ts",
@@ -39,7 +40,7 @@
 		"typecheck": "tsc -b tsconfig.test.json",
 		"quality": "biome ci .",
 		"test": "node --test",
-		"test:coverage": "rm -rf coverage && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='lib/*.ts' --test-coverage-include='ui/*.ts' --test-coverage-exclude='**/*.test.ts' --test-coverage-lines=90 --test-coverage-functions=90 --test-coverage-branches=90 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info",
+		"test:coverage": "rm -rf coverage && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='commands/*.ts' --test-coverage-include='lib/*.ts' --test-coverage-include='ui/*.ts' --test-coverage-exclude='**/*.test.ts' --test-coverage-lines=90 --test-coverage-functions=90 --test-coverage-branches=90 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info",
 		"test:coverage:index": "node --test --experimental-test-coverage --test-coverage-include='index.ts' --test-coverage-exclude='**/*.test.ts' --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=80 --test-reporter=spec",
 		"smoke:package": "node scripts/smoke-package.mjs",
 		"validate": "npm run quality && npm run typecheck && npm test",

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -34,8 +34,8 @@ const lastCustom = (entries: readonly SessionEntry[]): CustomEntry => {
 	return last;
 };
 
-test("reset transactions block concurrent retries and forget, preserve IDs on unfamiliar codes, and recheck account/expiry", async (t) => {
-	const dir = await mkdtemp(join(tmpdir(), "pi-reset-command-"));
+test("registered reset command refreshes quota after a completed redeem", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-reset-entry-"));
 	const previousDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = dir;
 	t.after(async () => {
@@ -43,150 +43,32 @@ test("reset transactions block concurrent retries and forget, preserve IDs on un
 		else process.env.PI_CODING_AGENT_DIR = previousDir;
 		await rm(dir, { recursive: true, force: true });
 	});
-	const path = join(dir, "pi-context-bar-reset-pending.json");
 	let command: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"] | undefined;
 	zContext({
-		registerCommand: (_name: string, value: Parameters<ExtensionAPI["registerCommand"]>[1]) => {
-			command = value.handler;
+		registerCommand: (name: string, value: Parameters<ExtensionAPI["registerCommand"]>[1]) => {
+			if (name === "openai-codex-reset") command = value.handler;
 		},
 		on: () => {},
 	} as unknown as ExtensionAPI);
 	assert.ok(command);
-	const reset = command;
 	const notices: string[] = [];
-	let key = token("a");
-	let confirm: () => Promise<boolean> = async () => true;
-	const ctx = {
-		model: { provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api" },
-		modelRegistry: { getApiKeyForProvider: async () => key },
-		ui: { confirm: () => confirm(), notify: (message: string) => notices.push(message) },
-	} as unknown as ExtensionCommandContext;
-	const old = { accountId: "a", creditId: "old", requestId: "stable-old" };
-	await writeFile(path, JSON.stringify(old));
-	const posted = Promise.withResolvers<void>();
-	const response = Promise.withResolvers<Response>();
-	const bodies: unknown[] = [];
-	let outcome = "processing";
-	let consumeStatus = 200;
-	let credits: unknown = [{ id: "new" }];
-	t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
-		if (url.endsWith("/consume")) {
-			bodies.push(JSON.parse(String(init?.body)));
-			if (bodies.length === 1) {
-				posted.resolve();
-				return response.promise;
-			}
-			if (consumeStatus !== 200) return new Response(null, { status: consumeStatus });
-			return new Response(JSON.stringify({ code: outcome }));
-		}
-		return new Response(JSON.stringify(url.endsWith("/wham/usage") ? {} : credits));
-	});
-	const a = reset("", ctx);
-	await posted.promise;
-	await reset("", ctx); // B cannot read old pending or submit a delayed duplicate.
-	await reset("forget-pending", ctx);
-	assert.equal(bodies.length, 1);
-	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), old);
-	assert.equal(notices.filter((notice) => notice.includes("locked")).length, 2);
-	response.resolve(new Response(JSON.stringify({ code: "reset" })));
-	await a;
-	await assert.rejects(stat(path), { code: "ENOENT" });
-
-	const dialog = Promise.withResolvers<void>();
-	const confirmed = Promise.withResolvers<boolean>();
-	confirm = async () => {
-		dialog.resolve();
-		return confirmed.promise;
-	};
-	const c = reset("", ctx);
-	await dialog.promise;
-	await reset("forget-pending", ctx); // Dialog itself is locked, not only POST.
-	await reset("", ctx);
-	assert.equal(bodies.length, 1);
-	confirmed.resolve(true);
-	await c;
-	assert.equal(notices.at(-1), "OpenAI reset outcome unknown; rerun command to retry same request");
-	const saved = JSON.parse(await readFile(path, "utf8"));
-	assert.equal(saved.creditId, "new");
-	assert.notEqual(saved.requestId, old.requestId);
-	assert.deepEqual(bodies[1], { credit_id: saved.creditId, redeem_request_id: saved.requestId });
-	confirm = async () => true;
-	await reset("", ctx); // Unfamiliar code retries same IDs, never selects another credit.
-	assert.equal(notices.at(-1), "OpenAI reset outcome unknown; rerun command to retry same request");
-	assert.deepEqual(bodies[2], bodies[1]);
-	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), saved);
-
-	// A 4xx (e.g. 409 processing) is a non-2xx HTTP error whose body is never read; it may already have
-	// applied, so the saved IDs must survive and the notice must not claim no credit was spent.
-	consumeStatus = 409;
-	await reset("", ctx);
-	assert.match(notices.at(-1) ?? "", /outcome uncertain/);
-	assert.ok(!notices.some((notice) => notice.includes("no credit was spent")));
-	assert.deepEqual(bodies[3], bodies[1]);
-	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), saved);
-	consumeStatus = 200;
-
-	outcome = "already_redeemed";
-	await reset("", ctx);
-	assert.deepEqual(bodies[4], bodies[1]);
-	await assert.rejects(stat(path), { code: "ENOENT" });
-
-	await writeFile(path, JSON.stringify(old));
-	key = token("other");
-	await reset("", ctx);
-	assert.match(notices.at(-1) ?? "", /another account/);
-	assert.equal(bodies.length, 5);
-	key = token("a");
-	confirm = async () => {
-		key = token("other");
-		return true;
-	};
-	await reset("", ctx);
-	assert.match(notices.at(-1) ?? "", /account changed/);
-	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), old);
-	key = token("a");
-	confirm = async () => false;
-	await reset("forget-pending", ctx);
-	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), old);
-	const forgetDialog = Promise.withResolvers<void>();
-	const forgetConfirmed = Promise.withResolvers<boolean>();
-	confirm = async () => {
-		forgetDialog.resolve();
-		return forgetConfirmed.promise;
-	};
-	const forgetting = reset("forget-pending", ctx);
-	await forgetDialog.promise;
-	await reset("", ctx);
-	assert.match(notices.at(-1) ?? "", /locked/);
-	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), old);
-	forgetConfirmed.resolve(true);
-	await forgetting;
-
-	const now = Date.parse("2026-06-01T00:00:00Z");
-	let clock = now;
-	t.mock.method(Date, "now", () => clock);
-	credits = [{ id: "expiring", expires_at: new Date(now + 30_000).toISOString() }];
-	confirm = async () => {
-		clock = now + 30_000;
-		return true;
-	};
-	await reset("", ctx);
-	assert.match(notices.at(-1) ?? "", /expired/);
-	assert.equal(bodies.length, 5); // Confirmation crossed expiry: no POST.
-	await assert.rejects(stat(path), { code: "ENOENT" });
-
-	credits = [{ id: "uncertain" }];
-	confirm = async () => true;
+	const urls: string[] = [];
 	t.mock.method(globalThis, "fetch", async (url: string) => {
-		if (url.endsWith("/consume")) throw new Error("mock network failure");
-		return new Response(JSON.stringify(credits));
+		urls.push(url);
+		if (url.endsWith("/rate-limit-reset-credits/consume")) return new Response(JSON.stringify({ code: "reset" }));
+		if (url.endsWith("/rate-limit-reset-credits")) return new Response(JSON.stringify([{ id: "credit" }]));
+		if (url.endsWith("/wham/usage")) return new Response(JSON.stringify({}));
+		throw new Error(`unexpected fetch ${url}`);
 	});
-	await reset("", ctx);
-	assert.match(notices.at(-1) ?? "", /outcome uncertain/);
-	const uncertain = JSON.parse(await readFile(path, "utf8"));
-	assert.equal(uncertain.creditId, "uncertain");
-	await reset("", ctx);
-	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), uncertain);
+	const ctx = {
+		mode: "tui",
+		model: { provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api" },
+		modelRegistry: { getApiKeyForProvider: async () => token("a") },
+		ui: { confirm: async () => true, notify: (message: string) => notices.push(message) },
+	} as unknown as ExtensionCommandContext;
+	await command("", ctx);
+	assert.equal(notices.at(-1), "OpenAI reset applied");
+	assert.ok(urls.some((url) => url.endsWith("/wham/usage")));
 });
 
 test("quota belongs to active account and model switches update context immediately", async (t) => {
@@ -473,47 +355,6 @@ test("subscription identity is captured per request and persisted by assistant e
 	assert.deepEqual(lastCustom(records).data, { messageEntryId: "subscription" });
 	assert.equal(accumulateSessionUsage(JSON.parse(JSON.stringify(entries)) as SessionEntry[]).cost, 0.5);
 	handlers.get("session_shutdown")?.({}, ctx);
-});
-
-test("a directory-sync failure blocks the retry POST and keeps the pending record", {
-	skip: process.platform === "win32" || process.getuid?.() === 0,
-}, async (t) => {
-	const dir = await mkdtemp(join(tmpdir(), "pi-reset-sync-"));
-	const previousDir = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = dir;
-	t.after(async () => {
-		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousDir;
-		await chmod(dir, 0o700);
-		await rm(dir, { recursive: true, force: true });
-	});
-	const path = join(dir, "pi-context-bar-reset-pending.json");
-	const pending = { accountId: "a", creditId: "c", requestId: "r" };
-	await writeFile(path, JSON.stringify(pending));
-	let command: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"] | undefined;
-	zContext({
-		registerCommand: (_name: string, value: Parameters<ExtensionAPI["registerCommand"]>[1]) => {
-			command = value.handler;
-		},
-		on: () => {},
-	} as unknown as ExtensionAPI);
-	let consumes = 0;
-	t.mock.method(globalThis, "fetch", async (url: string) => {
-		if (url.endsWith("/consume")) consumes++;
-		return new Response(JSON.stringify({ code: "reset" }));
-	});
-	const notices: string[] = [];
-	const ctx = {
-		model: { provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api" },
-		modelRegistry: { getApiKeyForProvider: async () => token("a") },
-		ui: { confirm: async () => true, notify: (message: string) => notices.push(message) },
-	} as unknown as ExtensionCommandContext;
-	// Execute without read on the directory: file access still works, but open(dir, "r").sync must fail.
-	await chmod(dir, 0o333);
-	await command?.("", ctx);
-	assert.equal(consumes, 0);
-	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), pending);
-	assert.match(notices.at(-1) ?? "", /failed/);
 });
 
 const billedResponse = (id: string): SessionEntry =>

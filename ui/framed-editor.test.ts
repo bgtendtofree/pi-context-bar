@@ -13,7 +13,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { ModelInfo } from "../lib/border.ts";
-import { ASCII_GLYPHS, NERD_GLYPHS, type QuotaUsage } from "../lib/chrome.ts";
+import { ASCII_GLYPHS, NERD_GLYPHS, type QuotaUsage, renderLaneStrip } from "../lib/chrome.ts";
 import type { PromptState } from "../lib/prompt.ts";
 import type { TokenSpeedSnapshot } from "../lib/speed.ts";
 import {
@@ -97,7 +97,7 @@ test("remaps popup clicks and body clicks from the frame/indent constants", () =
 	assert.deepEqual(remapEditorMouse({ ...event, y: 3 }, 2, 5), { ...event, x: bodyX, y: 1, width });
 });
 
-test("editor uses horizontal borders, open sides, no fills, and the existing body indent", () => {
+test("editor uses a full-width lane, bottom rule, open sides, and the existing body indent", () => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
 	let colorMode: TerminalColorMode = "256color";
 	let speed: TokenSpeedSnapshot | null = null;
@@ -146,16 +146,19 @@ test("editor uses horizontal borders, open sides, no fills, and the existing bod
 	assert.equal(rendered.length, 3);
 	assert.ok(!rendered.join("").includes("\x1b[48"), "chrome must not emit background escapes");
 	assert.doesNotMatch(plain.join(""), /[┌┐└┘│╭╮╰╯]/);
-	// Horizontal rules use borderMuted; the side gutters stay blank.
-	assert.ok(plain[0]?.startsWith("── "));
-	assert.ok(plain[0]?.endsWith("─"));
+	// The lane owns the full top row, without rule caps or unused border columns.
+	assert.equal(
+		plain[0],
+		renderLaneStrip({ usedTokens: 20_000, contextWindow: 100_000 }, 80, { fg: (_token, text) => text }),
+	);
+	assert.doesNotMatch(plain[0] ?? "", /─/);
+	// The bottom rule uses borderMuted; the side gutters stay blank.
 	assert.ok(plain[1]?.startsWith(" "));
 	assert.ok(plain[1]?.endsWith(" "));
 	assert.ok(plain[2]?.startsWith("── "));
 	assert.ok(plain[2]?.endsWith("─"));
 	assert.equal(seenTokens.get("─")?.at(-1), "borderMuted");
-	// Lane, prompt glyph, and model label keep column 3.
-	assert.equal(plain[0]?.slice(0, 3), "── ");
+	// Prompt glyph and model label keep column 3.
 	assert.equal(plain[1]?.slice(0, 3), "   ");
 	assert.equal(plain[2]?.slice(0, 3), "── ");
 	assert.equal(plain[1]?.indexOf("❯"), 3);
@@ -167,9 +170,9 @@ test("editor uses horizontal borders, open sides, no fills, and the existing bod
 	assert.equal(seenTokens.get("a-very-long-model-name")?.at(-1), "accent");
 	assert.equal(seenTokens.get(" · medium")?.at(-1), "dim");
 
-	// Bash mode recolors both horizontal borders.
+	// Bash mode recolors the bottom rule without adding top rule caps.
 	editor.setText("!ls");
-	editor.render(80);
+	assert.doesNotMatch(stripVTControlCharacters(editor.render(80)[0] ?? ""), /─/);
 	assert.equal(seenTokens.get("─")?.at(-1), "bashMode");
 	editor.setText("");
 
@@ -253,6 +256,8 @@ test("editor uses horizontal borders, open sides, no fills, and the existing bod
 	editor.setText(Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n"));
 	const scrolledDown = editor.render(80).map(stripVTControlCharacters);
 	assert.match(scrolledDown[0] ?? "", /↑\d+/);
+	assert.doesNotMatch(scrolledDown[0] ?? "", /─/);
+	assert.ok(scrolledDown.every((line) => visibleWidth(line) === 80));
 	for (let i = 0; i < 20; i++) editor.handleInput("\x1b[A");
 	const scrolledUp = editor.render(80).map(stripVTControlCharacters);
 	assert.match(scrolledUp.at(-1) ?? "", /↓\d+/);
@@ -276,6 +281,7 @@ test("editor uses horizontal borders, open sides, no fills, and the existing bod
 				);
 				assert.doesNotMatch(rows.map(stripVTControlCharacters).join(""), /[┌┐└┘│╭╮╰╯]/);
 				if (width >= 9) {
+					assert.doesNotMatch(stripVTControlCharacters(rows[0] ?? ""), /─/);
 					for (const row of rows.slice(1, -1)) {
 						const plainRow = stripVTControlCharacters(row);
 						assert.ok(plainRow.startsWith(" ") && plainRow.endsWith(" "), `open sides width=${width}`);
@@ -774,6 +780,9 @@ test("decorative icons never push useful bottom-border info out", () => {
 		const nerdBottom = bottom(NERD_GLYPHS, width);
 		const asciiTop = top(ASCII_GLYPHS, width);
 		const asciiBottom = bottom(ASCII_GLYPHS, width);
+		assert.doesNotMatch(nerdTop + asciiTop, /─/);
+		assert.equal(visibleWidth(nerdTop), width);
+		assert.equal(visibleWidth(asciiTop), width);
 		if (asciiBottom.includes("claude-opus")) assert.ok(nerdBottom.includes("claude-opus"), `model width=${width}`);
 		if (asciiBottom.includes("5h 75%")) assert.ok(nerdBottom.includes("5h 75%"), `quota width=${width}`);
 		if (asciiBottom.includes("7d 43%")) assert.ok(nerdBottom.includes("7d 43%"), `quota width=${width}`);

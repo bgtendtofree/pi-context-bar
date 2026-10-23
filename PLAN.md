@@ -9,7 +9,7 @@ is shipped, what needs an owner decision, and what remains.
 - Assistant messages, thinking content, tool calls/results, and compaction notices keep Pi's
   native conversation rendering. This project does not replace their renderers or alter content.
 - This project does customize Pi UI through extension APIs: it wraps `CustomEditor`, adds the
-  top/bottom rules and prompt, moves autocomplete above the editor, replaces the welcome header,
+  full-width top lane, bottom rule, and prompt, moves autocomplete above the editor, replaces the welcome header,
   empties the footer, and hides the redundant working row while active.
 - Session events supply context, cost, throughput, and lane phase. Reading these events does
   not make this extension responsible for rendering their conversation content.
@@ -18,11 +18,12 @@ is shipped, what needs an owner decision, and what remains.
 
 ## Baseline (shipped)
 
-- Open sides with top/bottom `─` rules only; no corners or background fills. Input, mouse, IME,
-  header, and metric columns retain their existing gutters and alignment; no extra rows.
+- Open sides with a full-width top lane (no `─` caps or filler) and a bottom `─` rule;
+  no corners or background fills. Input, mouse, IME, header, and bottom metric columns
+  retain their existing gutters and alignment; no extra rows. Scroll counts remain visible.
 - Theme tokens only, never hex. Roles: `text` Pac-Man and typed input, `accent` model id and
   ready prompt and tools and thinking ghost, `muted` working ghost and power pellets, `dim` pellets and
-  thinking level and metrics, `borderMuted` frame, `bashMode` frame while input starts with `!`,
+  thinking level and metrics, `borderMuted` bottom rule, `bashMode` bottom rule while input starts with `!`,
   `warning`/`error` for thresholds and failure, `success` for a completed response. A source test
   in `lib/chrome.test.ts` fails the build on any hex color or raw ANSI escape in chrome sources.
 - Prompt state: `❯` accent, `✗` error when the last completed turn stopped with `error`
@@ -57,7 +58,7 @@ is shipped, what needs an owner decision, and what remains.
 
 ## Ground rules for anything added here
 
-- Health chrome stays on the editor's top and bottom rules; no extra rows.
+- Health chrome stays on the editor's top and bottom rows; no extra rows.
 - Quiet by default: icons inherit their information's existing theme role. Warning/error
   remain reserved for existing thresholds and failure. Never a background fill.
 - Every glyph is verified against the official Nerd Font table (`glyphnames.json`) and renders

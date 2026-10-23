@@ -1,8 +1,8 @@
 # pi-context-bar
 
-Open-sided editor with Pac-Man context chrome fused into its top and bottom rules for [pi](https://pi.dev).
+Open-sided editor with a full-width Pac-Man top row and a bottom information rule for [pi](https://pi.dev).
 
-Model, cache hit, and cost live in the editor frame — zero extra chrome rows. The Pac-Man lane auto-fits the window width across the top border.
+Model, cache hit, and cost live in the editor frame — zero extra chrome rows. The Pac-Man strip owns the full top row, without short rule caps at either end.
 Slash-command autocomplete stays above the framed editor instead of expanding inside it.
 
 Scope is editor chrome, not conversation rendering: assistant messages, thinking content,
@@ -13,7 +13,7 @@ render shape, the extension stops framing, restores Pi's footer and working row,
 editor, reporting it once per session rather than framing rows it cannot identify.
 
 ```
-── 󰮯 • • • ○ • • • 15.7% (200K)  󰓅 ~42.3t/s ────────────────────────────
+      󰮯 • • • • • • ○ • • ○ • • • • • • 15.7% (200K) 󰓅 ~42.3t/s
    ❯ hello
 ── gpt-5.6-sol · medium ───────────────────────────── 󰆼 98%  $1.61 ─────
 ```
@@ -21,7 +21,7 @@ editor, reporting it once per session rather than framing rows it cannot identif
 Without a Nerd Font, the same frame uses `C` / `O`, plain pellets, `CH`, and `t/s`:
 
 ```
-──    C . . . . . o . . . o . .   15.7% (200K) ~42.3t/s ───
+     C . . . . . . o . . . o . . 15.7% (200K) ~42.3t/s
    > hello
 ── gpt-5.6-sol · medium ────────────────── CH98%  $1.61 ───
 ```
@@ -54,7 +54,7 @@ metrics and richer context breakdowns; the distinction here is the compact layou
 | Pac-Man lane | empty consumed space → phase ghost while running → text Pac-Man → dim remaining pellets |
 | Right-aligned metrics | native `%` · optional token speed `t/s` |
 
-Healthy metrics stay dim; accent marks the model and ready prompt, and warning/error colors mark thresholds and failure only. Only top and bottom `─` rules remain, matching Pi's open-sided editor: no side borders, corners, background fills, or extra rows. Input indentation and metric positions stay unchanged.
+Healthy metrics stay dim; accent marks the model and ready prompt, and warning/error colors mark thresholds and failure only. The Pac-Man strip spans the top row without `─` caps or filler; only the bottom keeps a horizontal rule. No side borders, corners, background fills, or extra rows. Input indentation and bottom metric positions stay unchanged; scroll counts remain visible.
 
 ## Icons
 
@@ -115,7 +115,7 @@ Only the exact known completed consume codes `reset` and `already_redeemed` allo
 
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps.
 
-Top border carries context consumption (lane, `%` with the model's context-window size, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, so the frame never gaps.
+Top row carries context consumption (lane, `%` with the model's context-window size, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, using the columns previously reserved for short rule caps.
 
 `CH` shows the latest turn's cache hit rate (pi's built-in footer semantics). When the session's token-weighted average diverges from it by more than 5 points, the average joins the label as `CH98/94%` (latest/average), so a quietly drifting hit rate cannot mislead; the average is dim and the latest turn keeps the warning/error coloring.
 

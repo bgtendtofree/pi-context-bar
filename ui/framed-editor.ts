@@ -200,18 +200,18 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			};
 
 			const body = lines.slice(1, -1);
+			const lanePrefix = scrollUp ? ` ${scrollUp}` : "";
 			const result = [
-				renderLabeledBorder(width, "─", "─", scrollUp, "", frame, (middleWidth) =>
+				lanePrefix +
 					renderLaneStrip(
 						health.snapshot,
-						middleWidth,
+						width - visibleWidth(lanePrefix),
 						styles,
 						health.frame,
 						health.activity,
 						health.speed,
 						options.getGlyphs(),
 					),
-				),
 			];
 
 			for (const [index, line] of body.entries()) {

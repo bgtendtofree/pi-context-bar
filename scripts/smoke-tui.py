@@ -72,6 +72,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
 
 
 def run(mode, ascii_mode, port, recording=None):
+    pacman = "C" if ascii_mode else "󰮯"
     with tempfile.TemporaryDirectory(prefix="pi-context-bar-tui-") as directory:
         agent = Path(directory)
         (agent / "settings.json").write_text(json.dumps({"quietStartup": True, "theme": "dark"}))
@@ -118,7 +119,7 @@ def run(mode, ascii_mode, port, recording=None):
             os.kill(pid, signal.SIGWINCH)
             if wait:
                 wait_for(lambda: any(len(line) == width for line in re.findall(
-                    r"──[^─\r\n]*─+", ANSI.sub("", transcript[offset:].decode(errors="replace")))),
+                    rf"── [^\r\n]{{{width - 6}}}───", ANSI.sub("", transcript[offset:].decode(errors="replace")))),
                     f"resize to {width} columns")
 
         def wait_for(check, label, timeout=15):
@@ -153,24 +154,25 @@ def run(mode, ascii_mode, port, recording=None):
                      for width, line in re.findall(r"^\[\d+\] \(w=(\d+)\) (.*)$", debug.read_text(), re.M)]
             assert pairs and all(width <= columns for width, _ in pairs), pairs
             lines = [line for _, line in pairs]
-            top = next(i for i, line in enumerate(lines) if line.startswith("──"))
+            top = next(i for i, line in enumerate(lines) if pacman in line and "─" not in line)
             bottom = next(i for i in range(top + 1, len(lines)) if lines[i].startswith("──"))
             assert all(width == columns for width, _ in pairs[top:bottom + 1])
             assert all(line.startswith(" ") and line.endswith(" ") for line in lines[top + 1:bottom])
             assert not re.search(r"[┌┐└┘│╭╮╰╯]", "\n".join(lines[top:bottom + 1])), "unexpected side or corner"
-            assert lines[top].endswith("─") and lines[bottom].endswith("─")
+            assert "─" not in lines[top], "unexpected lane rule caps"
+            assert lines[bottom].endswith("─")
             assert not any(line.strip() for line in lines[bottom + 1:]), "unexpected footer rows"
             return lines, top, bottom
 
         try:
             resize(100, wait=False)
             wait_for(lambda: all(marker in ANSI.sub("", transcript.decode(errors="replace"))
-                                 for marker in ("offline-model", f"── {'C' if ascii_mode else '󰮯'}")),
+                                 for marker in ("offline-model", f" {pacman} ")),
                      "editor chrome")
             send(PROMPT)
             lines, top, bottom = capture()
             assert PROMPT in "\n".join(lines[top:bottom + 1])
-            assert ("C" if ascii_mode else "󰮯") in lines[top], lines[top]
+            assert pacman in lines[top], lines[top]
             send("\r")
             wait_for(lambda: all(marker in ANSI.sub("", transcript.decode(errors="replace"))
                                  for marker in ("t/s", "75%", "90%")),

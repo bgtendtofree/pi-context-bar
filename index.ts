@@ -62,6 +62,8 @@ type ChromeState = Readonly<{
 	provisionalBaseIds: ReadonlySet<string> | undefined;
 	routed: NonNullable<ModelInfo>["routed"];
 	subscriptionTurn: boolean;
+	/** Request-time billing identity captured before HTTP; the response matches it by model. */
+	billingRequest: Readonly<{ model: string; subscription: boolean }> | undefined;
 	chompTokens: number;
 	rewind: Readonly<{ usedTokens: number; frame: number }> | undefined;
 	rewindTimer: ReturnType<typeof setInterval> | undefined;
@@ -95,6 +97,7 @@ const freshState = (): ChromeState => ({
 	provisionalBaseIds: undefined,
 	routed: undefined,
 	subscriptionTurn: false,
+	billingRequest: undefined,
 	chompTokens: 0,
 	rewind: undefined,
 	rewindTimer: undefined,
@@ -172,6 +175,31 @@ const refreshSessionUsage = (ctx: ExtensionContext): void => {
 /** New OpenAI OAuth and virtual selections cannot redeem legacy ChatGPT resets. */
 const isCodexModel = (ctx: ExtensionContext): boolean =>
 	ctx.model?.provider === "openai-codex" && ctx.model.api !== "pi-virtual";
+
+/** OpenAI Responses payloads name the routed physical model; other payloads may omit it. */
+const payloadModelId = (payload: unknown): string | undefined =>
+	typeof payload === "object" && payload !== null && "model" in payload && typeof payload.model === "string"
+		? payload.model
+		: undefined;
+
+/** Capture the request's selected auth before HTTP; a later /login or model switch must not rewrite it. */
+const captureRequestBilling = (payload: unknown, ctx: ExtensionContext): void => {
+	// The payload names the physical model actually sent, even if the selection changed while auth/HTTP was pending.
+	const modelId = payloadModelId(payload) ?? ctx.model?.id;
+	const model = modelId ? ctx.modelRegistry.find("openai", modelId) : undefined;
+	if (model?.provider !== "openai") {
+		patch({ billingRequest: undefined });
+		return;
+	}
+	patch({
+		billingRequest: {
+			model: model.id,
+			subscription:
+				ctx.modelRegistry.isUsingOAuth(model) &&
+				ctx.modelRegistry.getProvider(model.provider)?.auth.oauth?.isSubscription === true,
+		},
+	});
+};
 
 /** Drop the shown quota and its retry anchor; used whenever the account or endpoint can no longer host it. */
 const dropQuota = (accountId: string | undefined): void => {
@@ -322,6 +350,7 @@ const resetTurnSpeed = (): void => {
 		speedTurnActiveMs: 0,
 		chompTokens: 0,
 		subscriptionTurn: false,
+		billingRequest: undefined,
 		provisionalBaseIds: undefined,
 	});
 };
@@ -569,16 +598,7 @@ export default function zContext(pi: ExtensionAPI): void {
 			return;
 		}
 		// The new branch is the ancestor chain of the endpoint; markers on it survive, trailing ones do not.
-		const byId = new Map(entries.map((entry) => [entry.id, entry]));
-		const branch: SessionEntry[] = [];
-		let currentId: string | null = target;
-		while (currentId) {
-			const entry = byId.get(currentId);
-			if (!entry) break;
-			branch.unshift(entry);
-			currentId = entry.parentId;
-		}
-		pendingForkSubscriptionIds = recoverableSubscriptionMarkers(branch, entries);
+		pendingForkSubscriptionIds = recoverableSubscriptionMarkers(ctx.sessionManager.getBranch(target), entries);
 	});
 
 	pi.on("session_start", (event, ctx) => {
@@ -595,7 +615,8 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 
-	pi.on("before_provider_request", (_event, ctx) => {
+	pi.on("before_provider_request", (event, ctx) => {
+		captureRequestBilling(event.payload, ctx);
 		if (ctx.mode !== "tui") return;
 		// A proxy may rotate credentials between requests; never merge windows from different responses.
 		if (passiveQuota()) dropQuota(undefined);
@@ -634,14 +655,9 @@ export default function zContext(pi: ExtensionAPI): void {
 
 	pi.on("message_start", (event, ctx) => {
 		if (event.message.role !== "assistant") return;
-		const model =
-			event.message.provider === "openai"
-				? ctx.modelRegistry.find(event.message.provider, event.message.model)
-				: undefined;
+		const billing = state.billingRequest;
 		const subscriptionTurn = Boolean(
-			model &&
-				ctx.modelRegistry.isUsingOAuth(model) &&
-				ctx.modelRegistry.getProvider(model.provider)?.auth.oauth?.isSubscription,
+			event.message.provider === "openai" && billing?.subscription && billing.model === event.message.model,
 		);
 		patch({
 			speedStreamTokens: 0,
@@ -703,6 +719,7 @@ export default function zContext(pi: ExtensionAPI): void {
 			tokenSpeed: completedTokenSpeed(state.speedTurnOutputTokens, state.speedTurnActiveMs) ?? state.tokenSpeed,
 			quotaRequestKey: undefined,
 			subscriptionTurn: false,
+			billingRequest: undefined,
 			provisionalBaseIds: undefined,
 		});
 		refreshSnapshot(ctx);

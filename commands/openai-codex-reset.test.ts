@@ -247,3 +247,61 @@ test("a directory-sync failure blocks the retry POST and keeps the pending recor
 	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), pending);
 	assert.match(notices.at(-1) ?? "", /failed/);
 });
+
+test("cleanup after a confirmed reset is reported as applied, not as an uncertain saved request", {
+	skip: process.platform === "win32" || process.getuid?.() === 0,
+}, async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-reset-cleanup-"));
+	const previousDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = dir;
+	t.after(async () => {
+		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousDir;
+		await chmod(dir, 0o700);
+		await rm(dir, { recursive: true, force: true });
+	});
+	const path = join(dir, "pi-context-bar-reset-pending.json");
+	let code = "reset";
+	let breakCleanup = false;
+	let consumes = 0;
+	t.mock.method(globalThis, "fetch", async (url: string) => {
+		if (url.endsWith("/consume")) {
+			consumes++;
+			// Save already fsynced while writable; now only deletion succeeds and the directory fsync fails.
+			if (breakCleanup) await chmod(dir, 0o333);
+			return new Response(JSON.stringify({ code }));
+		}
+		return new Response(JSON.stringify(url.endsWith("/rate-limit-reset-credits") ? [{ id: "new" }] : {}));
+	});
+	const reset = (args: string, ctx: ExtensionCommandContext): Promise<void> =>
+		runOpenAiCodexReset(args, ctx, { isCodexModel, refreshQuota: async () => {} });
+	const notices: string[] = [];
+	const ctx = {
+		model: { provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api" },
+		modelRegistry: { getApiKeyForProvider: async () => token("a") },
+		ui: { confirm: async () => true, notify: (message: string) => notices.push(message) },
+	} as unknown as ExtensionCommandContext;
+	const assertConfirmed = (): void => {
+		const notice = notices.at(-1) ?? "";
+		assert.match(notice, /applied|already redeemed/);
+		assert.match(notice, /cleanup failed/);
+		assert.doesNotMatch(notice, /uncertain|request saved/);
+	};
+
+	breakCleanup = true;
+	await reset("", ctx);
+	await chmod(dir, 0o700);
+	assertConfirmed();
+	assert.match(notices.at(-1) ?? "", /another reset could be spent/);
+	await assert.rejects(stat(path), { code: "ENOENT" });
+
+	// The retry branch has the same confirmed-result cleanup failure, with its other known completed code.
+	await writeFile(path, JSON.stringify({ accountId: "a", creditId: "old", requestId: "old-id" }));
+	code = "already_redeemed";
+	await reset("", ctx);
+	await chmod(dir, 0o700);
+	assertConfirmed();
+	assert.match(notices.at(-1) ?? "", /already redeemed/);
+	await assert.rejects(stat(path), { code: "ENOENT" });
+	assert.equal(consumes, 2);
+});

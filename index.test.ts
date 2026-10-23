@@ -369,6 +369,9 @@ test("passive quota is request-scoped, replaces windows, expires, and supersedes
 		getContextUsage: () => ({ tokens: 1000, contextWindow: 100_000 }),
 		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
 		modelRegistry: {
+			find: () => model,
+			isUsingOAuth: () => false,
+			getProvider: () => undefined,
 			getApiKeyForProvider: async () => {
 				credentialReads++;
 				return token("a");
@@ -537,9 +540,11 @@ test("subscription identity is captured per request and persisted by assistant e
 	const ctx = {
 		hasUI: false,
 		mode: "print",
-		model,
+		get model() {
+			return model;
+		},
 		modelRegistry: {
-			find: () => (known ? model : undefined),
+			find: (provider: string, id: string) => (known ? { ...model, provider, id } : undefined),
 			isUsingOAuth: () => oauth,
 			getProvider: () => ({ auth: { oauth: { isSubscription: subscriptionProvider } } }),
 		},
@@ -547,46 +552,112 @@ test("subscription identity is captured per request and persisted by assistant e
 		ui: { setFooter: () => {} },
 	} as unknown as ExtensionContext;
 	zContext(pi);
-	for (const [id, usesOAuth, hasModel, plan, provider] of [
-		["api-before", false, true, true, "openai"],
-		["subscription", true, true, true, "openai"],
-		["api-after", false, true, true, "openai"],
-		["unknown-model", true, false, true, "openai"],
-		["oauth-not-plan", true, true, false, "openai"],
-		["other-subscription", true, true, true, "anthropic"],
+	const assistant = (provider: string, id: string): AssistantMessage => ({
+		role: "assistant",
+		content: [],
+		api: provider === "anthropic" ? "anthropic-messages" : "openai-responses",
+		provider,
+		model: id,
+		stopReason: "stop",
+		timestamp: 0,
+		usage: {
+			input: 10,
+			output: 0,
+			cacheRead: 90,
+			cacheWrite: 0,
+			totalTokens: 100,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.1 },
+		},
+	});
+	const expectedSubscriptions: string[] = [];
+	for (const [id, usesOAuth, hasModel, plan, provider, selected, responseModel, selectedAfter] of [
+		["api-before", false, true, true, "openai", undefined, "gpt-test", undefined],
+		["subscription", true, true, true, "openai", undefined, "gpt-test", undefined],
+		["api-after", false, true, true, "openai", undefined, "gpt-test", undefined],
+		["unknown-model", true, false, true, "openai", undefined, "gpt-test", undefined],
+		["oauth-not-plan", true, true, false, "openai", undefined, "gpt-test", undefined],
+		["other-subscription", true, true, true, "anthropic", undefined, "gpt-test", undefined],
+		[
+			"routed-subscription",
+			true,
+			true,
+			true,
+			"openai",
+			{ provider: "auto", api: "pi-virtual", id: "auto" },
+			"gpt-routed",
+			undefined,
+		],
+		[
+			"selected-b-before-request",
+			true,
+			true,
+			true,
+			"openai",
+			{ provider: "openai", api: "openai-responses", id: "gpt-b" },
+			"gpt-a",
+			undefined,
+		],
+		[
+			"selected-anthropic-before-request",
+			true,
+			true,
+			true,
+			"openai",
+			{ provider: "anthropic", api: "anthropic-messages", id: "claude" },
+			"gpt-a",
+			undefined,
+		],
+		[
+			"selected-b-after-request",
+			true,
+			true,
+			true,
+			"openai",
+			undefined,
+			"gpt-a",
+			{ provider: "openai", api: "openai-responses", id: "gpt-b" },
+		],
+		[
+			"selected-anthropic-after-request",
+			true,
+			true,
+			true,
+			"openai",
+			undefined,
+			"gpt-a",
+			{ provider: "anthropic", api: "anthropic-messages", id: "claude" },
+		],
 	] as const) {
-		model.provider = provider;
+		model.provider = selected?.provider ?? provider;
+		model.api = selected?.api ?? "openai-responses";
+		model.id = selected?.id ?? responseModel;
 		oauth = usesOAuth;
 		known = hasModel;
 		subscriptionProvider = plan;
-		const message: AssistantMessage = {
-			role: "assistant",
-			content: [],
-			api: model.api,
-			provider: model.provider,
-			model: model.id,
-			stopReason: "stop",
-			timestamp: 0,
-			usage: {
-				input: 10,
-				output: 0,
-				cacheRead: 90,
-				cacheWrite: 0,
-				totalTokens: 100,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.1 },
-			},
-		};
+		const message = assistant(provider, responseModel);
 		handlers.get("turn_start")?.({}, ctx);
+		handlers.get("before_provider_request")?.({ payload: { model: responseModel } }, ctx);
+		if (selectedAfter) {
+			model.provider = selectedAfter.provider;
+			model.api = selectedAfter.api;
+			model.id = selectedAfter.id;
+		}
+		oauth = !usesOAuth; // Switch logins before the first response event; the request identity must survive.
 		handlers.get("message_start")?.({ message: { role: "user" } }, ctx);
 		handlers.get("message_start")?.({ message }, ctx);
 		oauth = false; // A later login change must not rewrite this request's billing identity.
 		handlers.get("message_end")?.({ message }, ctx);
 		entries.push({ type: "message", id, parentId: entries.at(-1)?.id ?? null, timestamp: "", message });
 		handlers.get("turn_end")?.({ message, messageEntryId: id }, ctx);
+		if (usesOAuth && hasModel && plan && provider === "openai") expectedSubscriptions.push(id);
 	}
-	const records = entries.filter((entry) => entry.type === "custom" && entry.customType === SUBSCRIPTION_TURN_ENTRY);
-	assert.equal(records.length, 1);
-	assert.deepEqual(lastCustom(records).data, { messageEntryId: "subscription" });
+	const records = entries
+		.filter((entry) => entry.type === "custom" && entry.customType === SUBSCRIPTION_TURN_ENTRY)
+		.map((entry) => lastCustom([entry]).data);
+	assert.deepEqual(
+		records,
+		expectedSubscriptions.map((messageEntryId) => ({ messageEntryId })),
+	);
 	assert.equal(accumulateSessionUsage(JSON.parse(JSON.stringify(entries)) as SessionEntry[]).cost, 0.5);
 	handlers.get("session_shutdown")?.({}, ctx);
 });
@@ -625,6 +696,19 @@ const markerEntry = (messageEntryId: string, parentId: string | null): SessionEn
 	data: { messageEntryId },
 });
 
+/** Same ancestor branch Pi returns from ReadonlySessionManager.getBranch(). */
+const branchTo = (entries: readonly SessionEntry[], target: string): SessionEntry[] => {
+	const byId = new Map(entries.map((entry) => [entry.id, entry]));
+	const branch: SessionEntry[] = [];
+	for (let current: string | null = target; current; ) {
+		const entry = byId.get(current);
+		if (!entry) break;
+		branch.unshift(entry);
+		current = entry.parentId;
+	}
+	return branch;
+};
+
 /** Standalone provider usage (e.g. cache warming) that Pi appends without a turn or agent event. */
 const usageEntry = (id: string, total: number): SessionEntry =>
 	({
@@ -648,6 +732,7 @@ const usageEntry = (id: string, total: number): SessionEntry =>
 test("in-memory fork carries the endpoint's explicit billing marker with no parent file", () => {
 	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
 	let entries: SessionEntry[] = [];
+	let forkTarget: string | undefined;
 	const pi = {
 		registerCommand: () => {},
 		appendEntry: (customType: string, data: unknown) => {
@@ -669,6 +754,10 @@ test("in-memory fork carries the endpoint's explicit billing marker with no pare
 			getEntries: () => entries,
 			getLeafId: () => entries.at(-1)?.id ?? null,
 			getEntry: (id: string) => entries.find((entry) => entry.id === id),
+			getBranch: (target?: string) => {
+				forkTarget = target;
+				return target ? branchTo(entries, target) : entries;
+			},
 			getHeader: () => null,
 		},
 		ui: { setFooter: () => {} },
@@ -676,6 +765,7 @@ test("in-memory fork carries the endpoint's explicit billing marker with no pare
 	zContext(pi);
 	entries = [billedResponse("sub"), markerEntry("sub", "sub")];
 	handlers.get("session_before_fork")?.({ entryId: "sub", position: "at" }, ctx);
+	assert.equal(forkTarget, "sub");
 	// Pi tears the old session down before the fork's session_start, so the carried ids must survive this.
 	handlers.get("session_shutdown")?.({ reason: "fork" }, ctx);
 	entries = [billedResponse("sub")]; // In-memory fork keeps the response, drops the child marker, sets no parent file.
@@ -708,6 +798,7 @@ test("in-memory fork carries markers for earlier responses retained on the targe
 			getEntries: () => entries,
 			getLeafId: () => entries.at(-1)?.id ?? null,
 			getEntry: (id: string) => entries.find((entry) => entry.id === id),
+			getBranch: (target?: string) => (target ? branchTo(entries, target) : entries),
 			getHeader: () => null,
 		},
 		ui: { setFooter: () => {} },
@@ -747,6 +838,7 @@ test("a non-fork shutdown drops carried fork markers instead of leaking them", (
 			getEntries: () => entries,
 			getLeafId: () => entries.at(-1)?.id ?? null,
 			getEntry: (id: string) => entries.find((entry) => entry.id === id),
+			getBranch: (target?: string) => (target ? branchTo(entries, target) : entries),
 			getHeader: () => null,
 		},
 		ui: { setFooter: () => {} },
@@ -1656,6 +1748,7 @@ test("does not bill a captured subscription response before its marker lands at 
 		},
 	};
 	handlers.get("turn_start")?.({}, ctx);
+	handlers.get("before_provider_request")?.({ payload: { model: "gpt" } }, ctx);
 	handlers.get("message_start")?.({ message: { role: "user" } }, ctx);
 	handlers.get("message_start")?.({ message }, ctx);
 	handlers.get("message_end")?.({ message }, ctx);

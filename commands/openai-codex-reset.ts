@@ -55,8 +55,32 @@ export const runOpenAiCodexReset = async (
 		return;
 	}
 	let postStarted = false;
+	let confirmedOutcome: ResetRedemption | undefined;
 	try {
 		await withPendingReset(pendingResetPath(), async (store) => {
+			const completeReset = async (outcome: ResetRedemption): Promise<void> => {
+				const notice = resetOutcomeNotice(outcome);
+				if (!resetCompleted(outcome)) {
+					ctx.ui.notify(notice.message, notice.level);
+					await deps.refreshQuota(ctx);
+					return;
+				}
+				// The POST is final even if the record cannot be cleaned up; never call this uncertain/saved.
+				confirmedOutcome = outcome;
+				let cleanupError: string | undefined;
+				try {
+					await store.clear();
+				} catch (error) {
+					cleanupError = error instanceof Error ? error.message : String(error);
+				}
+				ctx.ui.notify(
+					cleanupError
+						? `${notice.message}; pending cleanup failed: ${cleanupError}. Check usage before rerunning; the saved request may be gone, so another reset could be spent.`
+						: notice.message,
+					cleanupError ? "warning" : notice.level,
+				);
+				await deps.refreshQuota(ctx);
+			};
 			const key = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
 			if (!key) {
 				ctx.ui.notify("No OpenAI Codex credentials", "warning");
@@ -87,10 +111,7 @@ export const runOpenAiCodexReset = async (
 				await store.sync();
 				postStarted = true;
 				const outcome = await redeemResetCredit(currentKey, pending.creditId, pending.requestId, ctx.model?.baseUrl);
-				if (resetCompleted(outcome)) await store.clear();
-				const notice = resetOutcomeNotice(outcome);
-				ctx.ui.notify(notice.message, notice.level);
-				await deps.refreshQuota(ctx);
+				await completeReset(outcome);
 				return;
 			}
 			const baseUrl = ctx.model?.baseUrl;
@@ -130,17 +151,16 @@ export const runOpenAiCodexReset = async (
 			}
 			postStarted = true;
 			const outcome = await redeemResetCredit(currentKey, operation.creditId, operation.requestId, ctx.model?.baseUrl);
-			if (resetCompleted(outcome)) await store.clear();
-			const notice = resetOutcomeNotice(outcome);
-			ctx.ui.notify(notice.message, notice.level);
-			await deps.refreshQuota(ctx);
+			await completeReset(outcome);
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		ctx.ui.notify(
-			postStarted
-				? `OpenAI reset outcome uncertain; request saved. Rerun command to retry same request. ${message}`
-				: `OpenAI reset failed: ${message}`,
+			confirmedOutcome
+				? `${resetOutcomeNotice(confirmedOutcome).message}, but follow-up failed: ${message}. Check usage before rerunning; the saved request may be gone.`
+				: postStarted
+					? `OpenAI reset outcome uncertain; request saved. Rerun command to retry same request. ${message}`
+					: `OpenAI reset failed: ${message}`,
 			"error",
 		);
 	}

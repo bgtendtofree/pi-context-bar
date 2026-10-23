@@ -280,6 +280,240 @@ test("quota belongs to active account and model switches update context immediat
 	handlers.get("session_shutdown")?.({}, ctx);
 });
 
+test("status inspection keeps footer empty, reads live statuses, and retires disposed owners", async () => {
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	const commands = new Map<string, Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>();
+	const notices: string[] = [];
+	const statuses = new Map([["review", "waiting"]]);
+	const tui = { requestRender: () => {} } as unknown as TUI;
+	type Footer = ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setFooter"]>[0]>>;
+	let footer: Footer | undefined;
+	const ctx = {
+		mode: "tui",
+		hasUI: true,
+		model: undefined,
+		getContextUsage: () => undefined,
+		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+		ui: {
+			theme: {},
+			notify: (text: string) => notices.push(text),
+			setWorkingVisible: () => {},
+			setHeader: () => {},
+			setEditorComponent: () => {},
+			setFooter: (factory: Parameters<ExtensionContext["ui"]["setFooter"]>[0]) => {
+				footer?.dispose?.();
+				footer = factory?.(tui, ctx.ui.theme, {
+					getExtensionStatuses: () => statuses,
+				} as unknown as Parameters<NonNullable<typeof factory>>[2]);
+			},
+		},
+	} as unknown as ExtensionContext;
+	zContext({
+		registerCommand: (name: string, command: Parameters<ExtensionAPI["registerCommand"]>[1]) =>
+			commands.set(name, command.handler),
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI);
+	handlers.get("session_start")?.({}, ctx);
+	const inspect = async () => {
+		await commands.get("context-bar")?.("status", ctx as ExtensionCommandContext);
+		return notices.at(-1) ?? "";
+	};
+	assert.deepEqual(footer?.render(80), []);
+	assert.match(await inspect(), /review: waiting/);
+	statuses.set("review", "passed");
+	assert.match(await inspect(), /review: passed/);
+	const retired = footer;
+	handlers.get("session_start")?.({}, ctx);
+	retired?.dispose?.();
+	assert.match(await inspect(), /review: passed/);
+	footer?.dispose?.();
+	assert.match(await inspect(), /no longer owns the footer/);
+	handlers.get("session_shutdown")?.({}, ctx);
+	assert.match(await inspect(), /no longer owns the footer/);
+});
+
+test("passive quota is request-scoped, replaces windows, expires, and supersedes delayed official queries", async (t) => {
+	let clock = 1_800_000_000_000;
+	t.mock.method(Date, "now", () => clock);
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	const commands = new Map<string, Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>();
+	const notices: string[] = [];
+	let mode = "tui";
+	let model = {
+		provider: "openai-codex",
+		api: "openai-codex-responses",
+		id: "proxy-model",
+		baseUrl: "https://proxy.test",
+	};
+	let credentialReads = 0;
+	let fetches = 0;
+	let resolveQuery: ((value: Response) => void) | undefined;
+	t.mock.method(globalThis, "fetch", async () => {
+		fetches++;
+		if (fetches === 1)
+			return new Promise<Response>((resolve) => {
+				resolveQuery = resolve;
+			});
+		return new Response(JSON.stringify({ primary_window: { used_percent: 12, limit_window_seconds: 18000 } }));
+	});
+	let render = () => "";
+	const tui = { requestRender: () => {}, terminal: { rows: 40 } } as unknown as TUI;
+	const ctx = {
+		get mode() {
+			return mode;
+		},
+		hasUI: true,
+		get model() {
+			return model;
+		},
+		getContextUsage: () => ({ tokens: 1000, contextWindow: 100_000 }),
+		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+		modelRegistry: {
+			getApiKeyForProvider: async () => {
+				credentialReads++;
+				return token("a");
+			},
+		},
+		ui: {
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+				style: (text: string) => text,
+			},
+			notify: (text: string) => notices.push(text),
+			setWorkingVisible: () => {},
+			setHeader: () => {},
+			setFooter: () => {},
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (!factory) return;
+				const editor = factory(
+					tui,
+					{ borderColor: (text: string) => text } as EditorTheme,
+					{} as Parameters<NonNullable<typeof factory>>[2],
+				);
+				render = () => stripVTControlCharacters(editor.render(120).join("\n"));
+			},
+		},
+	} as unknown as ExtensionContext;
+	zContext({
+		registerCommand: (name: string, command: Parameters<ExtensionAPI["registerCommand"]>[1]) =>
+			commands.set(name, command.handler),
+		getThinkingLevel: () => "off",
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI);
+	const emit = (name: string, event: unknown = {}) => handlers.get(name)?.(event, ctx);
+	const inspect = async () => {
+		await commands.get("context-bar")?.("status", ctx as ExtensionCommandContext);
+		return notices.at(-1) ?? "";
+	};
+	const headers = {
+		"x-codex-primary-used-percent": "75",
+		"x-codex-primary-reset-at": `${clock / 1000 + 60}`,
+		"x-codex-primary-window-minutes": "300",
+	};
+	const response = { status: 200, headers };
+	const stream = {
+		provider: model.provider,
+		api: model.api,
+		model: model.id,
+		data: {
+			type: "codex.rate_limits",
+			rate_limits: { secondary: { used_percent: 20, reset_at: clock / 1000 + 60, window_minutes: 10080 } },
+		},
+	};
+	const end = () => emit("turn_end", { message: { role: "assistant", stopReason: "stop" } });
+	emit("session_start");
+	await setImmediate();
+	emit("after_provider_response", response);
+	assert.doesNotMatch(render(), /5h 75%/);
+	emit("before_provider_request");
+	emit("after_provider_response", { ...response, status: 403 });
+	emit("after_provider_response", { status: 200, headers: {} });
+	assert.doesNotMatch(render(), /5h 75%/);
+	emit("after_provider_response", response);
+	assert.match(render(), /5h 75%/);
+	assert.match(await inspect(), /Quota source: response headers/);
+	for (const mismatch of [{ provider: "other" }, { api: "other" }, { model: "other" }]) {
+		emit("provider_stream_event", { ...stream, ...mismatch });
+		assert.match(render(), /5h 75%/);
+	}
+	emit("provider_stream_event", { ...stream, data: { type: "response.created" } });
+	assert.match(render(), /5h 75%/);
+	emit("provider_stream_event", stream);
+	assert.match(render(), /7d 20%/);
+	assert.doesNotMatch(render(), /5h 75%/);
+	assert.match(await inspect(), /Quota source: stream event/);
+	end();
+	await setImmediate();
+	assert.equal(fetches, 0);
+	assert.equal(credentialReads, 0);
+	emit("after_provider_response", response);
+	assert.doesNotMatch(render(), /5h 75%/);
+	clock += 60_000;
+	assert.doesNotMatch(render(), /7d 20%/);
+	assert.match(await inspect(), /expired response quota/);
+
+	emit("before_provider_request");
+	emit("provider_stream_event", { ...stream, data: { type: "codex.rate_limits" } });
+	assert.match(await inspect(), /response reported no usable/);
+	model = { ...model, baseUrl: "https://other-proxy.test" };
+	emit("after_provider_response", response);
+	assert.doesNotMatch(render(), /5h 75%/);
+	emit("model_select");
+	assert.match(await inspect(), /no official queries for custom endpoints/);
+
+	// New OpenAI and custom Responses providers can report quota without legacy credential lookups.
+	model = { ...model, provider: "openai", api: "openai-responses" };
+	emit("model_select");
+	emit("before_provider_request");
+	headers["x-codex-primary-reset-at"] = `${clock / 1000 + 60}`;
+	emit("after_provider_response", response);
+	assert.match(render(), /5h 75%/);
+	end();
+	assert.equal(credentialReads, 0);
+	model = { ...model, baseUrl: "https://changed-without-selection.test" };
+	assert.doesNotMatch(render(), /5h 75%/);
+	assert.match(await inspect(), /model or endpoint changed/);
+	emit("before_provider_request");
+	assert.doesNotMatch(render(), /5h 75%/);
+	emit("after_provider_response", response);
+	emit("model_select");
+	assert.doesNotMatch(render(), /5h 75%/);
+
+	// Metadata landing during an official fallback must win over its delayed HTTP reply.
+	model = {
+		...model,
+		provider: "openai-codex",
+		api: "openai-codex-responses",
+		baseUrl: "https://chatgpt.com/backend-api",
+	};
+	emit("model_select");
+	await setImmediate();
+	assert.equal(fetches, 1);
+	emit("before_provider_request");
+	emit("after_provider_response", response);
+	resolveQuery?.(new Response(JSON.stringify({ primary_window: { used_percent: 99 } })));
+	await setImmediate();
+	assert.match(render(), /5h 75%/);
+	assert.doesNotMatch(render(), /99%/);
+	end();
+	assert.equal(fetches, 1);
+	emit("before_provider_request");
+	end();
+	await setImmediate();
+	assert.equal(fetches, 2);
+	assert.match(await inspect(), /Quota source: official query/);
+
+	mode = "rpc";
+	emit("model_select");
+	emit("before_provider_request");
+	emit("after_provider_response", response);
+	emit("provider_stream_event", stream);
+	assert.equal(fetches, 2);
+	emit("session_shutdown");
+	assert.match(await inspect(), /Quota source: none/);
+});
+
 test("subscription identity is captured per request and persisted by assistant entry ID", () => {
 	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
 	const entries: SessionEntry[] = [];
@@ -691,7 +925,7 @@ test("runtime ascii-fallback toggle swaps editor glyphs without rewriting the co
 	await contextBar("ascii-fallback maybe", ctx as unknown as ExtensionCommandContext);
 	assert.ok(render().includes(ASCII_GLYPHS.pacmanOpen));
 	assert.deepEqual(notices.at(-1), {
-		message: "Usage: /context-bar ascii-fallback [on|off|toggle]",
+		message: "Usage: /context-bar status | ascii-fallback [on|off|toggle]",
 		level: "warning",
 	});
 });
@@ -958,7 +1192,9 @@ test("warns once when a custom endpoint keeps Codex quota unavailable", async (t
 	handlers.get("session_start")?.({ reason: "startup" }, ctx);
 	await setImmediate();
 	await setImmediate();
-	assert.deepEqual(notices, ["OpenAI Codex quota is off: the active model does not use the official ChatGPT endpoint"]);
+	assert.deepEqual(notices, [
+		"Official Codex quota queries are off for this endpoint; waiting for provider response metadata",
+	]);
 	handlers.get("model_select")?.({}, ctx);
 	await setImmediate();
 	assert.equal(notices.length, 1);
@@ -1288,7 +1524,9 @@ test("quota is validated against the active endpoint before and after the reques
 	await setImmediate();
 	assert.doesNotMatch(render(), /5h 12%/);
 	assert.equal(fetched.length, 1);
-	assert.deepEqual(notices, ["OpenAI Codex quota is off: the active model does not use the official ChatGPT endpoint"]);
+	assert.deepEqual(notices, [
+		"Official Codex quota queries are off for this endpoint; waiting for provider response metadata",
+	]);
 
 	// An official request already in flight must discard its delayed reply after the switch.
 	model = { ...model, baseUrl: OFFICIAL };

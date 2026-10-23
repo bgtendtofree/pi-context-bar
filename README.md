@@ -18,15 +18,31 @@ editor, reporting it once per session rather than framing rows it cannot identif
 └─  gpt-5.6-sol · medium ─────────────────────────── 󰆼 98%  $1.61 ────┘
 ```
 
+Without a Nerd Font, the same frame uses `C` / `O`, plain pellets, `CH`, and `t/s`:
+
+```
+┌─    C . . . . . o . . . o . .   15.7% (200K) ~42.3t/s ──┐
+│  > hello                                                │
+└─ gpt-5.6-sol · medium ────────────────── CH98%  $1.61 ──┘
+```
+
+See the [real PTY demo](docs/demo.cast), recorded against an offline fixture with **simulated usage**,
+not a live provider benchmark. Replay with `asciinema play docs/demo.cast`; the recording includes
+native debug-snapshot notices from the smoke test.
+
 Pac-Man moves left → right using Pi's native context usage. Eaten pellets become empty space; pellets ahead are remaining capacity. While the agent runs, a state-colored ghost chases the boundary and Pac-Man chomps; both rest when idle. The chomping mouth and the ghost carry activity, and chomp speed is driven by live token throughput, so a slow turn is directly visible as slow chomping. When Pi reports no usable reading (right after compaction, before the next usable response), the frame shows a dim `?%` and a neutral lane instead of a false `0.0%`, and Pac-Man never rewinds to zero on an unknown reading.
 
 Every element uses Pi's active theme tokens, including truecolor/256-color capability overrides. Pac-Man is `text`, pellets are `dim`, power pellets are `muted`, and the ghost carries three states: `muted` while work has started but nothing is streamed yet, `accent` while the model is generating (reasoning or tool-call arguments), `success` while the answer itself streams. Reasoning and tool calls share a color on purpose: Omarchy's palette offers exactly one hue that is neither identity nor a state, so a fourth phase color would have to borrow a markdown or syntax role that some themes map onto the accent or onto red. `warning` and `error` stay reserved for crossed thresholds and failure, the way Omarchy keeps `urgent` for attention alone, so an active phase never reads as a problem. The frame is `borderMuted`, switching to `bashMode` while the input starts with `!`. Semantic border and metric colors follow live theme changes. The ghost rests at `agent_settled`, not an intermediate `agent_end` that may still retry or continue.
 
 ## Why
 
-`nano-context` has a great segmented bar, but its custom footer drops default pi stats (especially **cache hit `CH%`**) and stacks 3 chrome lines total.
+More conversation, less dashboard. Model identity and health share the editor's existing borders,
+instead of adding persistent footer rows. Position shows context, token-driven motion shows activity,
+and quiet numbers show cache, cost and throughput. Conversation and tool rendering remain native Pi.
 
-`pi-context-bar` turns context into a compact Pac-Man lane, restores `CH%` / cost, and separates stable environment metadata from live health. Default footer is replaced with an empty footer, model and health metrics move into the framed editor, and the redundant built-in streaming working row is hidden while the extension is active.
+This is an opinionated editor frame, not a general-purpose statusline builder. It deliberately omits
+Git, paths, multi-line tool dashboards, and layout presets. Other plugins already offer cache/cost
+metrics and richer context breakdowns; the distinction here is the compact layout and visual language.
 
 ## Layout
 
@@ -62,9 +78,30 @@ Session cost includes standalone usage entries (such as cache warming) and neste
 
 OpenAI Codex subscription quota sits beside the model label:
 
-- **OpenAI Codex (ChatGPT Plus/Pro)**: `5h 53%` and `7d 43%` windows from `/wham/usage`. Healthy windows stay quiet with just their label and used percent, matching the editor's warning threshold. A window above 70% shows a dim `󰦛 2h 30m` countdown to its reset (ASCII `r2h 30m`) next to that window only; exactly 70% is still quiet, and a healthy sibling window is never expanded. A dim `󰔖 <n>` count (ASCII `R<n>`) appears only while any reported quota (including the weekly percent) is above 70%; zero or unknown credits stay hidden. The border first fits the model, window percentages, and cache/cost, then spends only spare width on countdowns and credits, so optional detail never pushes out a useful number; on narrow borders those optional fields drop before any window percentage.
+- **OpenAI Codex (ChatGPT Plus/Pro)**: windows such as `5h 53%` and `7d 43%` from provider metadata or `/wham/usage`. Healthy windows stay quiet with just their label and used percent, matching the editor's warning threshold. A window above 70% shows a dim `󰦛 2h 30m` countdown to its reset (ASCII `r2h 30m`) next to that window only; exactly 70% is still quiet, and a healthy sibling window is never expanded. A dim `󰔖 <n>` count (ASCII `R<n>`) appears only while any reported quota (including the weekly percent) is above 70%; zero or unknown credits stay hidden. The border first fits the model, window percentages, and cache/cost, then spends only spare width on countdowns and credits, so optional detail never pushes out a useful number; on narrow borders those optional fields drop before any window percentage.
 
-Quota is advisory chrome: refreshed on activity (`turn_end`, `model_select`) at most once a minute, failures keep the last good snapshot, and it hides unless a physical legacy `openai-codex` model is active. The active endpoint is validated before a refresh and again when a delayed reply lands, so switching to a custom/proxy endpoint clears any shown official quota immediately and never attaches an in-flight official result to the unsupported model. Pi's new `/login openai` ChatGPT authentication uses different API credentials; quota and reset support are not assumed compatible with it. Virtual selections also keep legacy quota/reset disabled.
+Quota has two read paths:
+
+- **Passive response metadata first:** physical `openai-responses` and `openai-codex-responses`
+  models can publish `x-codex-{primary,secondary}-{used-percent,reset-at,window-minutes}` response
+  headers or `codex.rate_limits` stream events. This path performs no quota credential lookup or
+  network request, including with new `/login openai` authentication and compatible proxies.
+  The provider/transport must actually forward the metadata; compatibility is not inferred from login.
+- **Legacy official fallback:** physical `openai-codex` models on the official ChatGPT endpoint still
+  query `/wham/usage` at startup and on activity, at most once a minute. Fresh passive windows
+  suppress activity queries. A failed official query keeps its last good snapshot. Proxy endpoints,
+  new OpenAI authentication and virtual models never receive this legacy query.
+
+Passive snapshots replace both windows rather than merging different upstream credentials. They are
+cleared before the next request and on model/endpoint changes; delayed replies cannot overwrite a
+newer passive snapshot. Missing, malformed and expired windows are hidden, including on the next
+render after expiry; real 0% stays visible. Labels use reported durations, not guessed 5h/7d defaults.
+There is no idle quota timer. These are the responding upstream's limits, **not a proxy-pool total**.
+Banked reset credits come only from the official query; passive metadata never inherits an older
+response's credits. `/context-bar status` shows the source, timestamp and availability reason.
+
+Virtual selections keep quota and reset disabled. Reset redemption remains legacy official-only;
+passive quota support does not make different credentials or proxy endpoints safe for reset calls.
 
 ### `/openai-codex-reset`
 
@@ -105,6 +142,18 @@ Terminals without a Nerd Font (SSH into a remote box, a locked-down corporate pr
 
 Install order decides the winner, so pick one chrome extension per slot instead of relying on it.
 
+### Inspect hidden extension statuses
+
+`/context-bar status` shows a read-only diagnostic notification: model, glyph mode, config path,
+native context estimate, latest/weighted cache hit, cost/speed semantics, quota source/time/reason,
+and current statuses published by other extensions through `ctx.ui.setStatus()`.
+
+The normal footer stays empty. Status inspection never dispatches a slash command, opens another
+extension, sends a model message, or fetches quota. External status text has terminal controls and
+bidirectional overrides removed; inspection is bounded to 64 entries and 4096 characters per field.
+If another extension replaced our footer, or the editor fell back to native layout, that status
+source is unavailable rather than a retained stale snapshot.
+
 ## Install
 
 ```bash
@@ -141,10 +190,24 @@ npm run typecheck      # TypeScript 7
 npm test               # node:test
 npm run test:coverage  # Node coverage with 90% gates
 npm run smoke:package  # npm production-install smoke
+npm run smoke:tui      # offline POSIX PTY smoke; Python 3 required
 npm run ci             # full CI pipeline
 ```
 
 Coverage gates every runtime module: `commands/`, `lib/`, and the Pi/TUI adapter in `ui/` at ≥90% lines/functions/branches, and `index.ts` separately at ≥80% lines/functions/branches.
+
+The PTY smoke starts an isolated Pi against a loopback-only fake Responses service, using a dummy
+key and temporary agent directory. It exercises regular/fullscreen modes, both glyph sets, Chinese
+drafts and prompts, 100→36→100-column resizes, autocomplete above the frame, runtime glyph switching,
+passive quota, hidden extension status inspection, and clean shutdown. Native `/debug` render
+snapshots assert widths and the absence of extra footer rows. It tests terminal output/layout, not
+font rasterization or real provider authentication. CI runs it through `mise run ci` on Ubuntu.
+
+Re-record the demo without external API calls:
+
+```bash
+python3 scripts/smoke-tui.py docs/demo.cast
+```
 
 Smoke:
 

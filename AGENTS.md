@@ -35,6 +35,8 @@ Square framed input shell plus one quiet health row. No multi-line footer. Envir
 - `lib/context.ts` — native context snapshot types and session usage
 - `lib/chrome.ts` — Pac-Man lane, health metrics, role-based theme styling
 - `lib/openai.ts` — OpenAI Codex quota, expiry-aware banked reset
+- `lib/response-quota.ts` — passive response-header/stream quota parsing and expiry
+- `lib/status.ts` — bounded, display-only diagnostics and extension status inspection
 - `lib/header.ts` — quiet welcome header
 - `lib/prompt.ts` — prompt-state transition and glyph
 - `lib/border.ts` — pure model label fitting and frame rendering
@@ -60,3 +62,6 @@ CI contract for this repository (managed by pi-ci-standard — regenerate with `
 <!-- pi-ci-standard:validation:end -->
 
 `npm test` uses `node:test`. `npm run test:coverage` enforces Node coverage thresholds. `npm run smoke:package` verifies an npm production install. Keep pure logic in `lib/`; do not grow untested math in `index.ts`.
+
+`npm run smoke:tui` requires POSIX + Python 3 and runs a loopback-only fake provider in real PTYs.
+It is included in `mise run ci`; never substitute real credentials or a paid provider in that fixture.

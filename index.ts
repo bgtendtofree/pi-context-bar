@@ -41,7 +41,9 @@ import {
 	shouldRefreshQuota,
 } from "./lib/openai.ts";
 import { INITIAL_PROMPT_STATE, type PromptState, promptStateAfterTurn, promptStateFromEntries } from "./lib/prompt.ts";
+import { parseQuotaEvent, parseQuotaHeaders, responseQuotaKey, unexpiredQuota } from "./lib/response-quota.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
+import { renderStatus } from "./lib/status.ts";
 import { registerFramedEditor } from "./ui/framed-editor.ts";
 
 /** Streamed tokens per mouth frame: chomp speed follows throughput. */
@@ -75,7 +77,13 @@ type ChromeState = Readonly<{
 	quota: QuotaUsage | undefined;
 	quotaAccountId: string | undefined;
 	quotaLastAttemptAt: number | undefined;
-	/** One hint per session when a custom endpoint keeps Codex quota permanently unavailable. */
+	quotaSource: string | undefined;
+	quotaUpdatedAt: number | undefined;
+	quotaIssue: string | undefined;
+	quotaRequestKey: string | undefined;
+	quotaOwnerKey: string | undefined;
+	getExtensionStatuses: (() => ReadonlyMap<string, string>) | undefined;
+	/** One hint per session when a custom endpoint cannot host official quota queries. */
 	quotaEndpointWarned: boolean;
 }>;
 
@@ -102,6 +110,12 @@ const freshState = (): ChromeState => ({
 	quota: undefined,
 	quotaAccountId: undefined,
 	quotaLastAttemptAt: undefined,
+	quotaSource: undefined,
+	quotaUpdatedAt: undefined,
+	quotaIssue: undefined,
+	quotaRequestKey: undefined,
+	quotaOwnerKey: undefined,
+	getExtensionStatuses: undefined,
 	quotaEndpointWarned: false,
 });
 
@@ -161,7 +175,15 @@ const isCodexModel = (ctx: ExtensionContext): boolean =>
 
 /** Drop the shown quota and its retry anchor; used whenever the account or endpoint can no longer host it. */
 const dropQuota = (accountId: string | undefined): void => {
-	patch({ quota: undefined, quotaAccountId: accountId, quotaLastAttemptAt: undefined });
+	patch({
+		quota: undefined,
+		quotaAccountId: accountId,
+		quotaLastAttemptAt: undefined,
+		quotaSource: undefined,
+		quotaUpdatedAt: undefined,
+		quotaIssue: undefined,
+		quotaOwnerKey: undefined,
+	});
 };
 
 /** Warn once per session when the active Codex model does not use the official ChatGPT endpoint. */
@@ -169,16 +191,53 @@ const warnQuotaEndpointOnce = (ctx: ExtensionContext): void => {
 	if (state.quotaEndpointWarned) return;
 	patch({ quotaEndpointWarned: true });
 	if (ctx.hasUI)
-		ctx.ui.notify("OpenAI Codex quota is off: the active model does not use the official ChatGPT endpoint");
+		ctx.ui.notify("Official Codex quota queries are off for this endpoint; waiting for provider response metadata");
+};
+
+const passiveQuota = (): boolean => state.quotaSource === "response headers" || state.quotaSource === "stream event";
+
+const expireQuota = (ctx: ExtensionContext): void => {
+	if (!passiveQuota() || !state.quota) return;
+	if (state.quotaOwnerKey !== responseQuotaKey(ctx.model)) {
+		dropQuota(undefined);
+		patch({ quotaIssue: "model or endpoint changed; waiting for provider response metadata" });
+		return;
+	}
+	const quota = unexpiredQuota(state.quota, Date.now());
+	if (quota !== state.quota) patch({ quota, quotaIssue: "expired response quota windows were removed" });
+};
+
+const observeQuota = (quota: QuotaUsage | undefined, source: string): void => {
+	if (!quota) return;
+	quotaLookupId++;
+	patch({
+		quota,
+		quotaSource: source,
+		quotaUpdatedAt: Date.now(),
+		quotaAccountId: undefined,
+		quotaLastAttemptAt: undefined,
+		quotaOwnerKey: state.quotaRequestKey,
+		quotaIssue: quota.limits.length
+			? "responding upstream quota, not a proxy-pool aggregate; reset credits are not reported"
+			: "response reported no usable, unexpired Codex quota windows",
+	});
+	requestRender();
 };
 
 /** Refresh OpenAI quota on activity, at most once per throttle; failures keep the last snapshot. */
 const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void> => {
 	// Quota is chrome; headless and RPC sessions must not spend an authenticated request on it.
 	if (ctx.mode !== "tui") return;
+	expireQuota(ctx);
+	if (!force && passiveQuota() && state.quota?.limits.length) return;
 	if (!isCodexModel(ctx)) {
 		quotaLookupId++;
 		dropQuota(undefined);
+		patch({
+			quotaIssue: responseQuotaKey(ctx.model)
+				? "waiting for provider response metadata"
+				: "model API does not expose Codex quota",
+		});
 		return;
 	}
 	// Validate the active endpoint before the throttle: switching to a custom/proxy endpoint must clear
@@ -186,6 +245,7 @@ const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void>
 	if (officialCodexBaseUrl(ctx.model?.baseUrl) === undefined) {
 		quotaLookupId++;
 		dropQuota(undefined);
+		patch({ quotaIssue: "no official queries for custom endpoints; waiting for provider response metadata" });
 		warnQuotaEndpointOnce(ctx);
 		requestRender();
 		return;
@@ -200,7 +260,10 @@ const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void>
 			dropQuota(accountId);
 			requestRender();
 		}
-		if (!key || !accountId) return;
+		if (!key || !accountId) {
+			patch({ quotaIssue: "no legacy Codex credentials or account ID" });
+			return;
+		}
 		const now = performance.now();
 		if (!shouldRefreshQuota(state.quotaLastAttemptAt, now, force)) return;
 		patch({ quotaLastAttemptAt: now });
@@ -215,9 +278,16 @@ const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void>
 			state.quotaLastAttemptAt !== now
 		)
 			return;
-		patch({ quota });
+		patch({
+			quota,
+			quotaSource: "official query",
+			quotaUpdatedAt: Date.now(),
+			quotaIssue: "official ChatGPT account quota",
+		});
 		requestRender();
 	} catch (error) {
+		if (lookupId !== quotaLookupId) return;
+		patch({ quotaIssue: "official quota query failed; keeping the last good snapshot" });
 		// A custom endpoint can never host Codex quota, so say so once instead of polling forever in silence.
 		if (error instanceof Error && error.message === QUOTA_ENDPOINT_MESSAGE) warnQuotaEndpointOnce(ctx);
 		// ponytail: quota is advisory chrome; a failed poll must never break the editor
@@ -392,11 +462,22 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 		if (!startupHeaderSuppressed(pi)) setWelcomeHeader(ctx);
 	}
 	void refreshQuota(ctx);
-	ctx.ui.setFooter(() => ({ render: () => [], invalidate: () => {}, dispose: () => {} }));
+	ctx.ui.setFooter((_tui, _theme, footerData) => {
+		const getExtensionStatuses = () => footerData.getExtensionStatuses();
+		patch({ getExtensionStatuses });
+		return {
+			render: () => [],
+			invalidate: () => {},
+			dispose: () => {
+				if (state.getExtensionStatuses === getExtensionStatuses) patch({ getExtensionStatuses: undefined });
+			},
+		};
+	});
 	registerFramedEditor(ctx, {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
 		getHealth: () => {
+			expireQuota(ctx);
 			// Pi appends background usage entries (e.g. cache warming) while idle and only triggers a render; no
 			// extension lifecycle hook fires. The leaf-id memo keeps this cheap and rescans only on a new leaf.
 			// During a captured subscription turn, treat the provisional unmarked response as on-plan.
@@ -431,11 +512,34 @@ export default function zContext(pi: ExtensionAPI): void {
 	patch({ glyphs: configGlyphs() });
 
 	pi.registerCommand("context-bar", {
-		description: "Switch the ASCII glyph fallback used by the editor chrome",
+		description: "Inspect chrome/status diagnostics or switch ASCII glyphs",
 		handler: async (args, ctx) => {
+			if (args.trim() === "status") {
+				expireQuota(ctx);
+				refreshSnapshot(ctx);
+				refreshSessionUsage(ctx);
+				ctx.ui.notify(
+					renderStatus({
+						mode: ctx.mode,
+						model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "",
+						ascii: state.glyphs.ascii,
+						config: configPath(),
+						context: state.context,
+						usage: state.usage,
+						speed: state.tokenSpeed,
+						quota: state.quota,
+						quotaSource: state.quotaSource,
+						quotaUpdatedAt: state.quotaUpdatedAt,
+						quotaIssue: state.quotaIssue,
+						statuses: state.getExtensionStatuses?.(),
+					}),
+					"info",
+				);
+				return;
+			}
 			const ascii = nextAsciiFallback(args, state.glyphs.ascii);
 			if (ascii === undefined) {
-				ctx.ui.notify("Usage: /context-bar ascii-fallback [on|off|toggle]", "warning");
+				ctx.ui.notify("Usage: /context-bar status | ascii-fallback [on|off|toggle]", "warning");
 				return;
 			}
 			// Runtime only: the config file is read again at the next session start, so a toggle never rewrites
@@ -489,6 +593,34 @@ export default function zContext(pi: ExtensionAPI): void {
 		changeLaneActivity(activityAfterContext(state.laneActivity));
 		refreshSnapshot(ctx);
 		requestRender();
+	});
+
+	pi.on("before_provider_request", (_event, ctx) => {
+		if (ctx.mode !== "tui") return;
+		// A proxy may rotate credentials between requests; never merge windows from different responses.
+		if (passiveQuota()) dropQuota(undefined);
+		patch({ quotaRequestKey: responseQuotaKey(ctx.model) });
+	});
+	pi.on("after_provider_response", (event, ctx) => {
+		if (
+			ctx.mode === "tui" &&
+			state.quotaRequestKey !== undefined &&
+			state.quotaRequestKey === responseQuotaKey(ctx.model) &&
+			event.status >= 200 &&
+			event.status < 300
+		)
+			observeQuota(parseQuotaHeaders(event.headers, Date.now()), "response headers");
+	});
+	pi.on("provider_stream_event", (event, ctx) => {
+		if (
+			ctx.mode === "tui" &&
+			state.quotaRequestKey !== undefined &&
+			state.quotaRequestKey === responseQuotaKey(ctx.model) &&
+			event.provider === ctx.model?.provider &&
+			event.api === ctx.model.api &&
+			event.model === ctx.model.id
+		)
+			observeQuota(parseQuotaEvent(event.data, Date.now()), "stream event");
 	});
 
 	pi.on("agent_start", () => {
@@ -569,6 +701,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		}
 		patch({
 			tokenSpeed: completedTokenSpeed(state.speedTurnOutputTokens, state.speedTurnActiveMs) ?? state.tokenSpeed,
+			quotaRequestKey: undefined,
 			subscriptionTurn: false,
 			provisionalBaseIds: undefined,
 		});
@@ -588,6 +721,8 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 	pi.on("model_select", (_event, ctx) => {
+		patch({ quotaRequestKey: undefined });
+		if (passiveQuota()) dropQuota(undefined);
 		refreshSnapshot(ctx);
 		void refreshQuota(ctx);
 		requestRender();

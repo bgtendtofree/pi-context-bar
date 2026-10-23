@@ -1,7 +1,7 @@
 {
 	"name": "pi-context-bar",
 	"version": "0.1.0",
-	"description": "Square framed Pi editor with Pac-Man context health, cache hit, and cost.",
+	"description": "Open-sided Pi editor with Pac-Man context health, cache hit, and cost.",
 	"type": "module",
 	"license": "MIT",
 	"engines": {

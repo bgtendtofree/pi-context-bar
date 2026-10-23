@@ -156,46 +156,46 @@ describe("bottom border decoration priority", () => {
 	});
 });
 
-describe("rounded editor border", () => {
+describe("horizontal editor border", () => {
 	test("renders left and right labels", () => {
-		const border = renderLabeledBorder(48, "╰", "╯", "gpt-5.6-sol · medium", "CH98%  $1.61", (text) => text);
+		const border = renderLabeledBorder(48, "─", "─", "gpt-5.6-sol · medium", "CH98%  $1.61", (text) => text);
 		assert.equal(visibleWidth(border), 48);
-		assert.ok(border.startsWith("╰─ gpt-5.6-sol · medium "));
-		assert.ok(border.endsWith(" CH98%  $1.61 ──╯"));
+		assert.ok(border.startsWith("── gpt-5.6-sol · medium "));
+		assert.ok(border.endsWith(" CH98%  $1.61 ───"));
 	});
 
 	test("handles tiny widths", () => {
 		assert.equal(
-			renderLabeledBorder(0, "╰", "╯", "", "", (text) => text),
+			renderLabeledBorder(0, "─", "─", "", "", (text) => text),
 			"",
 		);
 		assert.equal(
-			renderLabeledBorder(1, "╰", "╯", "", "", (text) => text),
+			renderLabeledBorder(1, "─", "─", "", "", (text) => text),
 			"─",
 		);
-		assert.equal(visibleWidth(renderLabeledBorder(12, "╰", "╯", "", "", (text) => text)), 12);
+		assert.equal(visibleWidth(renderLabeledBorder(12, "─", "─", "", "", (text) => text)), 12);
 	});
 
 	test("shrinks labels instead of overflowing the frame", () => {
 		const plain = (text: string): string => text;
-		assert.equal(renderLabeledBorder(2, "┌", "┐", "m", "CH98%", plain), "┌┐");
-		assert.equal(renderLabeledBorder(3, "┌", "┐", "m", "CH98%", plain), "┌─┐");
+		assert.equal(renderLabeledBorder(2, "─", "─", "m", "CH98%", plain), "──");
+		assert.equal(renderLabeledBorder(3, "─", "─", "m", "CH98%", plain), "───");
 		for (const width of [2, 3, 4, 5, 9, 12, 20, 48]) {
-			const border = renderLabeledBorder(width, "┌", "┐", "verylongmodellabel · high", "CH98%  $1.61  ↑3", plain);
+			const border = renderLabeledBorder(width, "─", "─", "verylongmodellabel · high", "CH98%  $1.61  ↑3", plain);
 			assert.equal(visibleWidth(border), width, `width ${width} rendered ${border}`);
 		}
 	});
 
 	test("keeps labels that already fit untouched", () => {
 		const plain = (text: string): string => text;
-		assert.equal(renderLabeledBorder(24, "┌", "┐", "m", "CH", plain), `┌─ m ${"─".repeat(12)} CH ──┐`);
+		assert.equal(renderLabeledBorder(24, "─", "─", "m", "CH", plain), `── m ${"─".repeat(12)} CH ───`);
 	});
 
 	test("embeds middle content and fills the rest", () => {
 		const border = renderLabeledBorder(
 			30,
-			"╰",
-			"╯",
+			"─",
+			"─",
 			"model",
 			"CH98%",
 			(text) => text,
@@ -205,8 +205,8 @@ describe("rounded editor border", () => {
 		assert.ok(border.includes("xxxxxxxxxx"));
 		const withoutMiddle = renderLabeledBorder(
 			30,
-			"╰",
-			"╯",
+			"─",
+			"─",
 			"model",
 			"CH98%",
 			(text) => text,
@@ -217,6 +217,6 @@ describe("rounded editor border", () => {
 	});
 
 	test("measures labels by terminal columns", () => {
-		assert.equal(visibleWidth(renderLabeledBorder(14, "╰", "╯", "模型", "", (text) => text)), 14);
+		assert.equal(visibleWidth(renderLabeledBorder(14, "─", "─", "模型", "", (text) => text)), 14);
 	});
 });

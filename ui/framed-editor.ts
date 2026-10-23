@@ -49,7 +49,7 @@ export type FramedEditorOptions = Readonly<{
 	onTui: (tui: TUI) => void;
 }>;
 
-/** Frame side glyphs occupy one column each; popup rows get a two-column gutter. */
+/** Open side gutters occupy one column each; popup rows get a two-column gutter. */
 export const FRAME_COLUMNS = 1;
 export const POPUP_INDENT = 2;
 /** Body text sits behind a four-column indent (two spaces, glyph, space). */
@@ -160,7 +160,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 				return super.render(width);
 			}
 			const innerWidth = width - FRAME_COLUMNS * 2;
-			// Text sits four columns in (frame + two spaces + glyph + space), so the editor renders four narrower.
+			// Keep the side gutter and body indent so text, mouse, and IME columns stay aligned.
 			const rendered = super.render(innerWidth - BODY_INDENT);
 			const split = splitEditorRender(rendered, this.bottomBorder);
 			// No captured bottom border means pi's render shape is not the one the frame assumes. Keep
@@ -196,12 +196,12 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			const wrap = (line: string, prefix: string): string => {
 				const content = prefix + line;
 				const gap = Math.max(0, innerWidth - visibleWidth(content));
-				return frame("│") + content + " ".repeat(gap) + frame("│");
+				return ` ${content}${" ".repeat(gap)} `;
 			};
 
 			const body = lines.slice(1, -1);
 			const result = [
-				renderLabeledBorder(width, "┌", "┐", scrollUp, "", frame, (middleWidth) =>
+				renderLabeledBorder(width, "─", "─", scrollUp, "", frame, (middleWidth) =>
 					renderLaneStrip(
 						health.snapshot,
 						middleWidth,
@@ -245,7 +245,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			}
 			const { leftLabel, metrics } = bottom;
 			result.push(
-				renderLabeledBorder(width, "└", "┘", leftLabel, metrics, frame, (space) => {
+				renderLabeledBorder(width, "─", "─", leftLabel, metrics, frame, (space) => {
 					if (!scrollDown || space < 1) return "";
 					const label = truncateToWidth(scrollDown, space, "");
 					return frame("─".repeat(Math.floor((space - visibleWidth(label)) / 2))) + label;

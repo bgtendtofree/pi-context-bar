@@ -1,6 +1,6 @@
 # pi-context-bar
 
-Square editor with Pac-Man context chrome fused into its frame for [pi](https://pi.dev).
+Open-sided editor with Pac-Man context chrome fused into its top and bottom rules for [pi](https://pi.dev).
 
 Model, cache hit, and cost live in the editor frame — zero extra chrome rows. The Pac-Man lane auto-fits the window width across the top border.
 Slash-command autocomplete stays above the framed editor instead of expanding inside it.
@@ -13,17 +13,17 @@ render shape, the extension stops framing, restores Pi's footer and working row,
 editor, reporting it once per session rather than framing rows it cannot identify.
 
 ```
-┌─ 󰮯 • • • ○ • • • 15.7% (200K)  󰓅 ~42.3t/s ───────────────────────────┐
-│  ❯ hello                                                             │
-└─  gpt-5.6-sol · medium ─────────────────────────── 󰆼 98%  $1.61 ────┘
+── 󰮯 • • • ○ • • • 15.7% (200K)  󰓅 ~42.3t/s ────────────────────────────
+   ❯ hello
+── gpt-5.6-sol · medium ───────────────────────────── 󰆼 98%  $1.61 ─────
 ```
 
 Without a Nerd Font, the same frame uses `C` / `O`, plain pellets, `CH`, and `t/s`:
 
 ```
-┌─    C . . . . . o . . . o . .   15.7% (200K) ~42.3t/s ──┐
-│  > hello                                                │
-└─ gpt-5.6-sol · medium ────────────────── CH98%  $1.61 ──┘
+──    C . . . . . o . . . o . .   15.7% (200K) ~42.3t/s ───
+   > hello
+── gpt-5.6-sol · medium ────────────────── CH98%  $1.61 ───
 ```
 
 See the [real PTY demo](docs/demo.cast), recorded against an offline fixture with **simulated usage**,
@@ -54,7 +54,7 @@ metrics and richer context breakdowns; the distinction here is the compact layou
 | Pac-Man lane | empty consumed space → phase ghost while running → text Pac-Man → dim remaining pellets |
 | Right-aligned metrics | native `%` · optional token speed `t/s` |
 
-Healthy metrics stay dim; accent marks the model and ready prompt, and warning/error colors mark thresholds and failure only. The frame is square (`┌ ┐ └ ┘`, `─ │`) with no background fills.
+Healthy metrics stay dim; accent marks the model and ready prompt, and warning/error colors mark thresholds and failure only. Only top and bottom `─` rules remain, matching Pi's open-sided editor: no side borders, corners, background fills, or extra rows. Input indentation and metric positions stay unchanged.
 
 ## Icons
 

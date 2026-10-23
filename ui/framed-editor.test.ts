@@ -97,7 +97,7 @@ test("remaps popup clicks and body clicks from the frame/indent constants", () =
 	assert.deepEqual(remapEditorMouse({ ...event, y: 3 }, 2, 5), { ...event, x: bodyX, y: 1, width });
 });
 
-test("framed editor uses square frame tokens, no fills, and a four-column body indent", () => {
+test("editor uses horizontal borders, open sides, no fills, and the existing body indent", () => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
 	let colorMode: TerminalColorMode = "256color";
 	let speed: TokenSpeedSnapshot | null = null;
@@ -143,22 +143,21 @@ test("framed editor uses square frame tokens, no fills, and a four-column body i
 
 	const rendered = editor.render(80);
 	const plain = rendered.map(stripVTControlCharacters);
+	assert.equal(rendered.length, 3);
 	assert.ok(!rendered.join("").includes("\x1b[48"), "chrome must not emit background escapes");
-	for (const rounded of ["╭", "╮", "╰", "╯"]) assert.ok(!rendered.join("").includes(rounded));
-	// Square corners; frame in borderMuted.
-	assert.ok(plain[0]?.startsWith("┌─ "));
-	assert.ok(plain[0]?.endsWith("┐"));
-	assert.ok(plain[1]?.startsWith("│"));
-	assert.ok(plain[1]?.endsWith("│"));
-	assert.ok(plain[2]?.startsWith("└─ "));
-	assert.ok(plain[2]?.endsWith("┘"));
-	assert.equal(seenTokens.get("┌")?.at(-1), "borderMuted");
-	assert.equal(seenTokens.get("┐")?.at(-1), "borderMuted");
-	assert.equal(seenTokens.get("│")?.at(-1), "borderMuted");
-	// Body indent is four columns; lane, prompt glyph, and model label start at column 3.
-	assert.equal(plain[0]?.slice(0, 3), "┌─ ");
-	assert.equal(plain[1]?.slice(0, 3), "│  ");
-	assert.equal(plain[2]?.slice(0, 3), "└─ ");
+	assert.doesNotMatch(plain.join(""), /[┌┐└┘│╭╮╰╯]/);
+	// Horizontal rules use borderMuted; the side gutters stay blank.
+	assert.ok(plain[0]?.startsWith("── "));
+	assert.ok(plain[0]?.endsWith("─"));
+	assert.ok(plain[1]?.startsWith(" "));
+	assert.ok(plain[1]?.endsWith(" "));
+	assert.ok(plain[2]?.startsWith("── "));
+	assert.ok(plain[2]?.endsWith("─"));
+	assert.equal(seenTokens.get("─")?.at(-1), "borderMuted");
+	// Lane, prompt glyph, and model label keep column 3.
+	assert.equal(plain[0]?.slice(0, 3), "── ");
+	assert.equal(plain[1]?.slice(0, 3), "   ");
+	assert.equal(plain[2]?.slice(0, 3), "── ");
 	assert.equal(plain[1]?.indexOf("❯"), 3);
 	assert.equal(plain[2]?.indexOf("a-very-long-model-name"), 3);
 	// Two spaces separate the model group from the quota group.
@@ -168,11 +167,10 @@ test("framed editor uses square frame tokens, no fills, and a four-column body i
 	assert.equal(seenTokens.get("a-very-long-model-name")?.at(-1), "accent");
 	assert.equal(seenTokens.get(" · medium")?.at(-1), "dim");
 
-	// Bash mode recolors the whole frame.
+	// Bash mode recolors both horizontal borders.
 	editor.setText("!ls");
 	editor.render(80);
-	assert.equal(seenTokens.get("┌")?.at(-1), "bashMode");
-	assert.equal(seenTokens.get("│")?.at(-1), "bashMode");
+	assert.equal(seenTokens.get("─")?.at(-1), "bashMode");
 	editor.setText("");
 
 	// Failure glyph error.
@@ -180,7 +178,7 @@ test("framed editor uses square frame tokens, no fills, and a four-column body i
 	assert.match(stripVTControlCharacters(editor.render(80)[1] ?? ""), /✗/);
 	assert.equal(seenTokens.get("✗")?.at(-1), "error");
 
-	// Typed input starts at column 5 (frame + two spaces + glyph + space).
+	// Typed input starts at column 5 (gutter + two spaces + glyph + space).
 	editor.setText("input");
 	assert.equal(stripVTControlCharacters(editor.render(80)[1] ?? "").indexOf("input"), 5);
 
@@ -271,10 +269,18 @@ test("framed editor uses square frame tokens, no fills, and a four-column body i
 		]) {
 			editor.setText(text);
 			for (let width = 6; width <= 200; width++) {
+				const rows = editor.render(width);
 				assert.ok(
-					editor.render(width).every((line) => visibleWidth(line) <= width),
+					rows.every((line) => visibleWidth(line) <= width),
 					`editor width=${width}, speed=${Boolean(speed)}`,
 				);
+				assert.doesNotMatch(rows.map(stripVTControlCharacters).join(""), /[┌┐└┘│╭╮╰╯]/);
+				if (width >= 9) {
+					for (const row of rows.slice(1, -1)) {
+						const plainRow = stripVTControlCharacters(row);
+						assert.ok(plainRow.startsWith(" ") && plainRow.endsWith(" "), `open sides width=${width}`);
+					}
+				}
 			}
 		}
 	}
@@ -476,7 +482,7 @@ test("falls back to pi's own layout when the frame cannot fit", () => {
 		assert.deepEqual(framed.render(width), stock.render(width), `width=${width}`);
 	}
 	// One column more and the frame takes over.
-	assert.ok(stripVTControlCharacters(framed.render(9)[0] ?? "").includes("┌"));
+	assert.ok(stripVTControlCharacters(framed.render(9)[1] ?? "").startsWith("   ❯ "));
 });
 
 test("keeps native padding at zero across pi's host and /settings setters", () => {
@@ -606,7 +612,6 @@ test("re-renders pi's layout at full width when the frame loses its captured bor
 			rows.every((row) => visibleWidth(row) === width),
 			`width=${width}`,
 		);
-		assert.ok(!stripVTControlCharacters(rows.join("\n")).includes("┌"), `width=${width}`);
 	}
 });
 

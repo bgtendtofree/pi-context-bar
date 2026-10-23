@@ -1,14 +1,14 @@
 # pi-context-bar
 
-Square framed editor + single-line context chrome for pi: model label + Pac-Man lane + CH% + cost.
+Open-sided editor + single-line context chrome for pi: model label + Pac-Man lane + CH% + cost.
 
 ## Goal
 
-Square framed input shell plus one quiet health row. No multi-line footer. Environment in frame; health in lane + numbers. Glyphs and motion carry the game; theme colors carry meaning.
+Open-sided input shell with health in its top and bottom rules. No multi-line footer. Environment in chrome; health in lane + numbers. Glyphs and motion carry the game; theme colors carry meaning.
 
 ## Rules
 
-- Health chrome lives inside the editor frame; no extra rows
+- Health chrome lives on the editor's top and bottom rules; no extra rows
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
 - Editor top border: Pac-Man lane (auto-fits window width, no cap) + context `%` beside lane + quiet live `t/s` at the right end
 - Editor bottom border: model/thinking + OpenAI Codex quota beside it on the left, `CH`/`$` right; never path or Git
@@ -20,7 +20,7 @@ Square framed input shell plus one quiet health row. No multi-line footer. Envir
 - Omarchy alignment: activity stays in `muted`/`accent`/`success`; `warning` and `error` are reserved for thresholds and failure, matching Omarchy's `urgent`-for-attention rule. The ghost has exactly three states — quiet `muted`, generating `accent`, answering `success` — so `thinking` and `tools` share `accent` deliberately: hue carries identity, magnitude, and failure, never activity kind, and the lane's shape/motion carries which work is running
 - Quota hierarchy: healthy windows show percentages only; windows with usage >70% may show their future reset countdown, and available reset credits appear only while any quota is >70%; fit model + quota percentages + cache/cost first, then add countdowns/credits only in spare width
 - Glyph proportions: single-cell Mono Nerd Font glyphs only; do not change terminal font size/config or add per-glyph scaling tricks
-- Square geometry: corners `┌ ┐ └ ┘`, lines `─ │`; no rounded corners and no background fills anywhere
+- Open geometry: top and bottom `─` rules only; no side borders, corners, or background fills. Preserve input/prompt gutters and metric positions
 - Theme tokens only, never hex. Roles: `text` Pac-Man glyphs and typed input · `accent` model id, ready prompt, tools ghost, thinking ghost · `muted` working ghost, power pellets · `dim` pellets, thinking level, separators, route arrow, healthy metrics, scroll counts · `borderMuted` frame · `bashMode` frame while the input starts with `!` · `warning` thresholds · `success` response ghost · `error` failure glyph, thresholds
 - A source test fails the build on hex colors or raw ANSI escapes in chrome sources; Omarchy generates the palette as a pi theme (`omarchy-system`) from its active theme, so the extension only ever names tokens
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets

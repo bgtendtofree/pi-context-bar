@@ -174,6 +174,13 @@ describe("session usage", () => {
 		assert.equal(hasRecoverableBilling([assistantEntry("free", assistantUsage({}, 0), "openai")]), false);
 		assert.equal(hasRecoverableBilling([toolResultEntry("tools", assistantUsage({}, 0.2))]), false);
 		assert.equal(hasRecoverableBilling([assistantEntry("billed", assistantUsage({}, 0.4), "openai")]), true);
+		// A marker already reclassifies that response, so a fully marked branch has nothing to recover.
+		const marked = [assistantEntry("marked", assistantUsage({}, 0.4), "openai"), subscriptionMarker("marked")];
+		assert.equal(hasRecoverableBilling(marked), false);
+		assert.equal(
+			hasRecoverableBilling([...marked, assistantEntry("unmarked", assistantUsage({}, 0.2), "openai")]),
+			true,
+		);
 	});
 
 	test("parent recovery sentinel only matches the parent it names", () => {

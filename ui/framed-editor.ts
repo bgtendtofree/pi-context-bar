@@ -11,12 +11,14 @@ import {
 } from "../lib/border.ts";
 import {
 	type ChromeStyles,
+	formatDuration,
 	type GlyphSet,
 	type LaneActivity,
 	metricOptions,
 	type QuotaUsage,
 	quotaRender,
 	renderLaneStrip,
+	USAGE_WARNING_PERCENT,
 } from "../lib/chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "../lib/context.ts";
 import { type PromptState, promptColor, promptGlyph } from "../lib/prompt.ts";
@@ -220,6 +222,15 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			const now = Date.now();
 			const modelInfo = options.getModel();
 			const thinkingLevel = options.getThinkingLevel();
+			// Countdown text is the only bottom content that changes with wall-clock time; key on its
+			// rendered bucket so invalidation follows the relative reset boundary, not an absolute minute.
+			const countdown = (health.quota?.limits ?? [])
+				.map((limit) =>
+					limit.percent > USAGE_WARNING_PERCENT && limit.resetAt !== undefined
+						? formatDuration(limit.resetAt - now)
+						: "",
+				)
+				.join("|");
 			// The bottom border is the most expensive chrome to style and it changes far less often than the
 			// lane. Memoize it on the values it is built from so a streamed token only re-renders the lane;
 			// object identity catches new usage/quota, while a theme switch reaches this memo through
@@ -231,7 +242,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 				options.getGlyphs(),
 				health.usage,
 				health.quota,
-				Math.floor(now / 60_000),
+				countdown,
 				modelInfo?.id ?? null,
 				modelInfo?.reasoning ?? null,
 				modelInfo?.routed ?? null,
@@ -270,15 +281,17 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 				: { essentials: [""], upgrades: [] };
 			// Essential reading first: selected model id + window percentages + cache/cost. Optional model
 			// detail (thinking level, route arrow) and quota countdowns/credits only spend spare width.
+			const metricChoices = metricOptions(health.usage, styles, options.getGlyphs());
+			// Fit plain readings first: a decoration is the lowest tier, below optional quota detail.
 			const picked = pickBottomBorderContent({
 				width,
 				models: editorModelOptions(modelInfo, thinkingLevel),
 				quotas: quota.essentials,
-				metrics: metricOptions(health.usage, styles, options.getGlyphs()),
+				metrics: metricChoices.map(({ plain }) => ({ plain, decorated: plain })),
 				gap: MODEL_QUOTA_GAP,
 				scrollReserve,
 			});
-			const metrics = picked?.metric ?? "";
+			const plainMetrics = picked?.metric ?? "";
 			// Optional quota detail (countdowns, credits) expands only into width left after model +
 			// window percentages + cache/cost; it never displaces those essential readings.
 			const quotaText = picked
@@ -287,12 +300,28 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 							width,
 							model: picked.model,
 							quota: candidate,
-							metric: metrics,
+							metric: plainMetrics,
 							gap: MODEL_QUOTA_GAP,
 							scrollReserve,
 						}),
 					) ?? picked.quota)
 				: "";
+			// Only after the chosen quota detail may the metric decoration return, and only while the full
+			// model, quota, and reading still fit: an icon never displaces a useful countdown.
+			const metric = picked ? metricChoices.find((option) => option.plain === plainMetrics) : undefined;
+			const metrics =
+				picked &&
+				metric &&
+				bottomBorderFits({
+					width,
+					model: picked.model,
+					quota: quotaText,
+					metric: metric.decorated,
+					gap: MODEL_QUOTA_GAP,
+					scrollReserve,
+				})
+					? metric.decorated
+					: plainMetrics;
 			// The chosen model label is used verbatim; no decorative provider badge.
 			const chosenModel = picked?.model ?? "";
 			const modelLabel = chosenModel ? styleModelLabel(chosenModel, ctx) : "";

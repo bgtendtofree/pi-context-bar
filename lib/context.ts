@@ -127,15 +127,21 @@ export const accumulateSessionUsage = (
 	};
 };
 
-/** A marker only re-classifies a billed, non-plan response, so recovery can skip the parent read otherwise. */
-export const hasRecoverableBilling = (entries: readonly SessionEntry[]): boolean =>
-	entries.some(
+/**
+ * A marker only re-classifies a billed, non-plan response that is not already marked; recovery can
+ * skip the parent read otherwise.
+ */
+export const hasRecoverableBilling = (entries: readonly SessionEntry[]): boolean => {
+	const subscriptions = subscriptionMarkerIds(entries);
+	return entries.some(
 		(entry) =>
 			entry.type === "message" &&
 			entry.message.role === "assistant" &&
 			!PLAN_PROVIDERS.has(entry.message.provider) &&
+			!subscriptions.has(entry.id) &&
 			entry.message.usage.cost.total > 0,
 	);
+};
 
 /** Response ids billed on plan by markers in the parent session but absent from the forked branch. */
 export const recoverableSubscriptionMarkers = (

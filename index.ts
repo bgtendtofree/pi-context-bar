@@ -83,6 +83,12 @@ type ChromeState = Readonly<{
 	quotaUpdatedAt: number | undefined;
 	quotaIssue: string | undefined;
 	quotaRequestKey: string | undefined;
+	/**
+	 * Identity captured at the latest turn_start. Its presence means a turn started even when `key` is
+	 * undefined (a virtual/unsupported selection): that captured identity must fail closed, not fall
+	 * through to the newly selected model.
+	 */
+	turnQuota: Readonly<{ key: string | undefined }> | undefined;
 	quotaOwnerKey: string | undefined;
 	getExtensionStatuses: (() => ReadonlyMap<string, string>) | undefined;
 	/** One hint per session when a custom endpoint cannot host official quota queries. */
@@ -117,6 +123,7 @@ const freshState = (): ChromeState => ({
 	quotaUpdatedAt: undefined,
 	quotaIssue: undefined,
 	quotaRequestKey: undefined,
+	turnQuota: undefined,
 	quotaOwnerKey: undefined,
 	getExtensionStatuses: undefined,
 	quotaEndpointWarned: false,
@@ -620,7 +627,15 @@ export default function zContext(pi: ExtensionAPI): void {
 		if (ctx.mode !== "tui") return;
 		// A proxy may rotate credentials between requests; never merge windows from different responses.
 		if (passiveQuota()) dropQuota(undefined);
-		patch({ quotaRequestKey: responseQuotaKey(ctx.model) });
+		const selectedKey = responseQuotaKey(ctx.model);
+		const requestModel = payloadModelId(event.payload);
+		// The turn captured its selection before auth, when this request started. A switch during that
+		// wait must not re-home the response headers onto the newly selected model; the payload names
+		// the physical model for Responses APIs, while background requests use the captured turn key.
+		const identityMatches =
+			(requestModel === undefined || requestModel === ctx.model?.id) &&
+			(state.turnQuota === undefined || state.turnQuota.key === selectedKey);
+		patch({ quotaRequestKey: identityMatches ? selectedKey : undefined });
 	});
 	pi.on("after_provider_response", (event, ctx) => {
 		if (
@@ -648,8 +663,11 @@ export default function zContext(pi: ExtensionAPI): void {
 		if (changeLaneActivity("working")) requestRender();
 	});
 
-	pi.on("turn_start", () => {
+	pi.on("turn_start", (_event, ctx) => {
 		resetTurnSpeed();
+		// Capture the request's selection before auth; a later select must not claim its response quota.
+		// A virtual/unsupported selection is captured too, with `key` undefined, so it cannot fall through.
+		patch({ turnQuota: { key: responseQuotaKey(ctx.model) } });
 		requestRender();
 	});
 

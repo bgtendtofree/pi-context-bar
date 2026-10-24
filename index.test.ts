@@ -517,6 +517,152 @@ test("passive quota is request-scoped, replaces windows, expires, and supersedes
 	assert.match(await inspect(), /Quota source: none/);
 });
 
+test("a request started before a model switch cannot attach its quota to the new selection", async () => {
+	type RaceModel = {
+		provider: string;
+		api: string;
+		id: string;
+		contextWindow: number;
+		baseUrl: string;
+	};
+	const physicalA: RaceModel = {
+		provider: "openai",
+		api: "openai-responses",
+		id: "model-a",
+		contextWindow: 100_000,
+		baseUrl: "https://a.example.com/v1",
+	};
+	const quotaHeaders = (percent: number): Record<string, string> => ({
+		"x-codex-primary-used-percent": `${percent}`,
+		"x-codex-primary-reset-at": `${Math.floor(Date.now() / 1000) + 3600}`,
+		"x-codex-primary-window-minutes": "300",
+	});
+	const scenarios: ReadonlyArray<{
+		name: string;
+		initial: RaceModel;
+		payloadModel: string;
+		switchTo: Partial<RaceModel>;
+		stalePercent: number;
+	}> = [
+		{
+			name: "another model",
+			initial: physicalA,
+			payloadModel: "model-a",
+			switchTo: { id: "model-b" },
+			stalePercent: 55,
+		},
+		{
+			name: "the same model id on another endpoint",
+			initial: physicalA,
+			payloadModel: "model-a",
+			switchTo: { baseUrl: "https://b.example.com/v1" },
+			stalePercent: 55,
+		},
+		{
+			name: "the same model id on another provider",
+			initial: physicalA,
+			payloadModel: "model-a",
+			switchTo: { provider: "proxy-b" },
+			stalePercent: 55,
+		},
+		{
+			name: "a virtual turn routed to the new physical selection",
+			initial: {
+				provider: "router",
+				api: "pi-virtual",
+				id: "auto",
+				contextWindow: 100_000,
+				baseUrl: "https://router.invalid",
+			},
+			payloadModel: "gpt",
+			switchTo: {
+				provider: "proxy-b",
+				api: "openai-responses",
+				id: "gpt",
+				baseUrl: "https://b.invalid",
+			},
+			stalePercent: 88,
+		},
+	];
+	for (const { name, initial, payloadModel, switchTo, stalePercent } of scenarios) {
+		const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+		const notices: string[] = [];
+		let command: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"] | undefined;
+		let model: RaceModel = { ...initial };
+		let render = (): string => "";
+		const tui = { requestRender: () => {}, terminal: { rows: 40 } } as unknown as TUI;
+		const ctx = {
+			hasUI: true,
+			mode: "tui",
+			get model() {
+				return model;
+			},
+			getContextUsage: () => ({ tokens: 1_000, contextWindow: model.contextWindow }),
+			sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+			modelRegistry: {
+				find: (_provider: string, id: string) => ({ ...model, id }),
+				isUsingOAuth: () => false,
+				getProvider: () => undefined,
+				getApiKeyForProvider: async () => undefined,
+			},
+			ui: {
+				notify: (message: string) => notices.push(message),
+				theme: {
+					fg: (_color: string, text: string) => text,
+					bold: (text: string) => text,
+					style: (text: string) => text,
+				},
+				setWorkingVisible: () => {},
+				setHeader: () => {},
+				setFooter: () => {},
+				setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+					if (factory) {
+						const editor = factory(
+							tui,
+							{ borderColor: (text: string) => text } as EditorTheme,
+							{} as Parameters<NonNullable<typeof factory>>[2],
+						);
+						render = () => stripVTControlCharacters(editor.render(120).join("\n"));
+					}
+				},
+			},
+		} as unknown as ExtensionContext;
+		zContext({
+			registerCommand: (name: string, registration: Parameters<ExtensionAPI["registerCommand"]>[1]) => {
+				if (name === "context-bar") command = registration.handler;
+			},
+			getThinkingLevel: () => "off",
+			getSettings: () => ({ quietStartup: true }),
+			on: (eventName: string, handler: (event: unknown, ctx: ExtensionContext) => void) =>
+				handlers.set(eventName, handler),
+		} as unknown as ExtensionAPI);
+		const emit = (eventName: string, event: unknown = {}) => handlers.get(eventName)?.(event, ctx);
+		const inspect = async (): Promise<string> => {
+			await command?.("status", ctx as ExtensionCommandContext);
+			return notices.at(-1) ?? "";
+		};
+		emit("session_start");
+		// The turn starts under the initial selection; auth is still pending when the user selects the next one.
+		emit("turn_start");
+		model = { ...model, ...switchTo };
+		emit("model_select");
+		// The captured request's before_provider_request lands after the switch, then its response carries quota.
+		emit("before_provider_request", { payload: { model: payloadModel } });
+		emit("after_provider_response", { status: 200, headers: quotaHeaders(stalePercent) });
+		assert.doesNotMatch(render(), new RegExp(`5h ${stalePercent}%`), name);
+		assert.doesNotMatch(await inspect(), new RegExp(`5h ${stalePercent}%`), name);
+
+		// A normal request under the new selection still claims its own response quota.
+		emit("turn_start");
+		emit("before_provider_request", { payload: { model: model.id } });
+		emit("after_provider_response", { status: 200, headers: quotaHeaders(33) });
+		assert.match(render(), /5h 33%/, name);
+		assert.match(await inspect(), /5h 33%/, name);
+		assert.doesNotMatch(render(), new RegExp(`5h ${stalePercent}%`), name);
+		emit("session_shutdown");
+	}
+});
+
 test("subscription identity is captured per request and persisted by assistant entry ID", () => {
 	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
 	const entries: SessionEntry[] = [];
@@ -937,6 +1083,31 @@ test("a checked parent is skipped, and a sentinel copied from another fork does 
 		{ customType: SUBSCRIPTION_TURN_ENTRY, data: { messageEntryId: "sub" } },
 		{ customType: PARENT_MARKERS_CHECKED_ENTRY, data: { parentSession: parent } },
 	]);
+});
+
+test("an already-marked billed response skips the parent read but still writes the sentinel", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-fork-marked-"));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	const appended: unknown[] = [];
+	const parent = join(dir, "missing.jsonl");
+	const pi = {
+		registerCommand: () => {},
+		appendEntry: (customType: string, data: unknown) => appended.push({ customType, data }),
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => void) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	const ctx = {
+		hasUI: false,
+		mode: "print",
+		sessionManager: {
+			getEntries: () => [billedResponse("sub"), markerEntry("sub", "sub")],
+			getHeader: () => ({ parentSession: parent }),
+		},
+	} as unknown as ExtensionContext;
+	zContext(pi);
+	// A missing parent proves the read was skipped: a read failure would defer the sentinel for a retry.
+	handlers.get("session_start")?.({ reason: "resume" }, ctx);
+	assert.deepEqual(appended, [{ customType: PARENT_MARKERS_CHECKED_ENTRY, data: { parentSession: parent } }]);
 });
 
 test("runtime ascii-fallback toggle swaps editor glyphs without rewriting the config file", async (t) => {

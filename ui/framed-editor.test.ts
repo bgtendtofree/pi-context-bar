@@ -864,3 +864,51 @@ test("keeps window percentages and cache before optional thinking on narrow bord
 		assert.ok(wide.includes("medium") && wide.includes("$1.61"), wide);
 	}
 });
+
+test("drops the cache icon before a useful quota countdown", (t) => {
+	// Reproduction: at width 35 the icon kept its place but the `5h 75% 󰦛 1h` countdown did not,
+	// even though the bare cache/cost reading plus that countdown fits. Decoration is the lowest tier.
+	const now = 1_800_000_000_000;
+	t.mock.method(Date, "now", () => now);
+	const health: HealthState = {
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 1.61, cacheHitRate: 98, cacheHitRateAvg: 98 },
+		quota: { limits: [{ label: "5h", percent: 75, resetAt: now + 3_600_000 }] },
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
+	const line = stripVTControlCharacters(
+		buildFramedEditor(NERD_GLYPHS, { id: "gpt", reasoning: false }, health, "off").render(35).at(-1) ?? "",
+	);
+	assert.ok(line.includes("gpt"), line);
+	assert.ok(line.includes("5h 75%"), line);
+	assert.ok(line.includes(`${NERD_GLYPHS.reset} 1h`), line);
+	assert.ok(line.includes("98%  $1.61"), line);
+	assert.ok(!line.includes(NERD_GLYPHS.cache), line);
+	assert.equal(visibleWidth(line), 35, line);
+});
+
+test("invalidates the bottom memo when the relative countdown crosses its bucket", (t) => {
+	// The old key used Math.floor(now / 60_000), so a render that stayed inside one absolute minute
+	// kept a countdown the new relative reading had already crossed.
+	let now = 1_800_000_000_000; // Exact minute; +31s stays inside the same absolute minute.
+	t.mock.method(Date, "now", () => now);
+	const health: HealthState = {
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 0, cacheHitRate: undefined, cacheHitRateAvg: undefined },
+		quota: { limits: [{ label: "5h", percent: 75, resetAt: now + 90_000 }] },
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
+	const editor = buildFramedEditor(ASCII_GLYPHS, { id: "gpt", reasoning: false }, health, "off");
+	const bottom = (): string => stripVTControlCharacters(editor.render(80).at(-1) ?? "");
+	assert.match(bottom(), /r1m/);
+	now += 31_000;
+	assert.equal(Math.floor(now / 60_000), Math.floor((now - 31_000) / 60_000));
+	assert.match(bottom(), /r<1m/);
+	assert.doesNotMatch(bottom(), /r1m/);
+});

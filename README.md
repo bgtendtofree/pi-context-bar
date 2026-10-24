@@ -14,7 +14,7 @@ editor, reporting it once per session rather than framing rows it cannot identif
 
 ```
       󰮯 • • • • • • ○ • • ○ • • • • • • 15.7% (200K) 󰓅 ~42.3t/s
-   ❯ hello
+❯ hello
 ── gpt-5.6-sol · medium ───────────────────────────── 󰆼 98%  $1.61 ─────
 ```
 
@@ -22,7 +22,7 @@ Without a Nerd Font, the same frame uses `C` / `O`, plain pellets, `CH`, and `t/
 
 ```
      C . . . . . . o . . . o . . 15.7% (200K) ~42.3t/s
-   > hello
+> hello
 ── gpt-5.6-sol · medium ────────────────── CH98%  $1.61 ───
 ```
 
@@ -54,7 +54,7 @@ metrics and richer context breakdowns; the distinction here is the compact layou
 | Pac-Man lane | empty consumed space → phase ghost while running → text Pac-Man → dim remaining pellets |
 | Right-aligned metrics | native `%` · optional token speed `t/s` |
 
-Healthy metrics stay dim; accent marks the model and ready prompt, and warning/error colors mark thresholds and failure only. The Pac-Man strip spans the top row without `─` caps or filler; only the bottom keeps a horizontal rule. No side borders, corners, background fills, or extra rows. Input indentation and bottom metric positions stay unchanged; scroll counts remain visible.
+Healthy metrics stay dim; accent marks the model and ready prompt, and warning/error colors mark thresholds and failure only. The Pac-Man strip spans the top row without `─` caps or filler; only the bottom keeps a horizontal rule. No side borders, corners, background fills, or extra rows. The prompt is flush left, followed by one space; continuation rows align with typed text. The right gutter and bottom metric positions stay unchanged; scroll counts remain visible.
 
 ## Icons
 

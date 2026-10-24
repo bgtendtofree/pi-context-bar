@@ -19,8 +19,9 @@ is shipped, what needs an owner decision, and what remains.
 ## Baseline (shipped)
 
 - Open sides with a full-width top lane (no `─` caps or filler) and a bottom `─` rule;
-  no corners or background fills. Input, mouse, IME, header, and bottom metric columns
-  retain their existing gutters and alignment; no extra rows. Scroll counts remain visible.
+  no corners or background fills. Prompt and header are flush left; typed text follows the glyph
+  and one space, with continuation rows, mouse, and IME aligned. Right input gutter and bottom
+  metric positions stay unchanged; no extra rows. Scroll counts remain visible.
 - Theme tokens only, never hex. Roles: `text` Pac-Man and typed input, `accent` model id and
   ready prompt and tools and thinking ghost, `muted` working ghost and power pellets, `dim` pellets and
   thinking level and metrics, `borderMuted` bottom rule, `bashMode` bottom rule while input starts with `!`,
@@ -164,8 +165,8 @@ These are not part of the Nerd Font implementation:
 1. Pac-Man color: `text` (current) or neon yellow via `warning`.
 2. Frame no longer follows the thinking level; it switches only for bash mode. Restore pi's
    native `this.borderColor` to get the old behavior back.
-3. Narrow-width fallback threshold is `width < 9` (was `< 7`) because the body indent is four
-   columns and pi's word wrap recurses on wide graphemes below that.
+3. Narrow-width fallback threshold is `width < 6`: two prompt columns, one right gutter,
+   and at least three native editor columns so pi's word wrap can handle wide graphemes.
 4. Daily pi loads the GitHub package (`packages` in `~/.pi/agent/settings.json`), so the local
    checkout is not what runs day to day. Use `pi --no-extensions -e ./index.ts` to preview, or
    switch to `pi install -l file:./`.

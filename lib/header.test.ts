@@ -40,6 +40,7 @@ describe("welcome header mark", () => {
 
 	test("block mark keeps one theme token per cell and no brand hex", () => {
 		const lines = welcome("block", false, 80).map(stripVTControlCharacters);
+		assert.equal(HEADER_INDENT, 0, "header stays aligned with the flush-left prompt");
 		assert.equal(lines[1], `${" ".repeat(HEADER_INDENT)}▀▀█ v1.2.3`);
 		assert.equal(lines[2], `${" ".repeat(HEADER_INDENT)}█▀ █  esc interrupt · ctrl+c exit`);
 		assert.ok(!lines.join("").includes("#"));
@@ -63,12 +64,13 @@ describe("welcome header mark", () => {
 	});
 
 	test("falls back to the text wordmark when the mark cannot fit", () => {
-		for (const width of [1, 2, 3, 4, 5, 6]) {
+		for (const width of [1, 2, 3]) {
 			// One logo row and one blank row: the two-row mark and its hint row are gone.
 			const lines = welcome("block", false, width).map(stripVTControlCharacters);
 			assert.equal(lines.length, 2);
 			assert.ok(!/▀|█/.test(lines.join("")));
 		}
+		assert.equal(welcome("block", false, 4).length, 3);
 	});
 });
 
@@ -144,8 +146,11 @@ describe("welcome header", () => {
 		}
 	});
 
-	test("account for indentation when fitting complete hints", () => {
-		const hints: readonly Hint[] = [{ key: "/", action: "x".repeat(37) }];
+	test("fits complete hints against the full width of a flush-left header", () => {
+		const fitting: readonly Hint[] = [{ key: "/", action: "x".repeat(38) }];
+		assert.equal(renderWelcome(version, fitting, fitting, false, "text", 40, identityStyles).length, 3);
+		assert.equal(renderWelcome(version, fitting, fitting, true, "text", 40, identityStyles).length, 3);
+		const hints: readonly Hint[] = [{ key: "/", action: "x".repeat(39) }];
 		assert.equal(renderWelcome(version, hints, hints, false, "text", 40, identityStyles).length, 2);
 		assert.equal(renderWelcome(version, hints, hints, true, "text", 40, identityStyles).length, 2);
 	});

@@ -73,6 +73,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
 
 def run(mode, ascii_mode, port, recording=None):
     pacman = "C" if ascii_mode else "󰮯"
+    prompt = ">" if ascii_mode else "❯"
     with tempfile.TemporaryDirectory(prefix="pi-context-bar-tui-") as directory:
         agent = Path(directory)
         (agent / "settings.json").write_text(json.dumps({"quietStartup": True, "theme": "dark"}))
@@ -132,10 +133,12 @@ def run(mode, ascii_mode, port, recording=None):
                         data = os.read(master, 65536)
                     except OSError as error:
                         if error.errno == errno.EIO:
-                            break
+                            time.sleep(0.05)
+                            continue
                         raise
                     if not data:
-                        break
+                        time.sleep(0.05)
+                        continue
                     transcript.extend(data)
                     chunks.append([round(time.monotonic() - started, 4), "o", decoder.decode(data)])
                     if len(transcript) > 4_000_000:
@@ -157,7 +160,9 @@ def run(mode, ascii_mode, port, recording=None):
             top = next(i for i, line in enumerate(lines) if pacman in line and "─" not in line)
             bottom = next(i for i in range(top + 1, len(lines)) if lines[i].startswith("──"))
             assert all(width == columns for width, _ in pairs[top:bottom + 1])
-            assert all(line.startswith(" ") and line.endswith(" ") for line in lines[top + 1:bottom])
+            assert lines[top + 1].startswith(f"{prompt} "), lines[top + 1]
+            assert all(line.startswith("  ") for line in lines[top + 2:bottom])
+            assert all(line.endswith(" ") for line in lines[top + 1:bottom])
             assert not re.search(r"[┌┐└┘│╭╮╰╯]", "\n".join(lines[top:bottom + 1])), "unexpected side or corner"
             assert "─" not in lines[top], "unexpected lane rule caps"
             assert lines[bottom].endswith("─")
@@ -171,7 +176,7 @@ def run(mode, ascii_mode, port, recording=None):
                      "editor chrome")
             send(PROMPT)
             lines, top, bottom = capture()
-            assert PROMPT in "\n".join(lines[top:bottom + 1])
+            assert lines[top + 1].startswith(f"{prompt} {PROMPT}"), lines[top + 1]
             assert pacman in lines[top], lines[top]
             send("\r")
             wait_for(lambda: all(marker in ANSI.sub("", transcript.decode(errors="replace"))
@@ -202,9 +207,19 @@ def run(mode, ascii_mode, port, recording=None):
             wait_for(lambda: b"smoke: offline ready" in transcript, "other extension status inspection")
             assert b"Error loading extension" not in transcript
             assert b"unrecognized Pi editor layout" not in transcript
+            # Fullscreen can emit earlier cleanup markers; keep draining until this quit finishes.
+            offset = len(transcript)
             send("/quit\r")
-            wait_for(lambda: b"\x1b[?2004l" in transcript, "terminal cleanup")
-            _, status = os.waitpid(pid, 0)
+            wait_for(lambda: b"\x1b[?2004l" in transcript[offset:], "terminal cleanup")
+            status = 0
+
+            def exited():
+                nonlocal status
+                child, status = os.waitpid(pid, os.WNOHANG)
+                return child == pid
+
+            # Drain final fullscreen output so a full PTY cannot block the child's exit.
+            wait_for(exited, "process exit")
             finished = True
             assert os.waitstatus_to_exitcode(status) == 0, status
         finally:

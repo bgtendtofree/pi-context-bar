@@ -18,9 +18,9 @@ import type { PromptState } from "../lib/prompt.ts";
 import type { TokenSpeedSnapshot } from "../lib/speed.ts";
 import {
 	BODY_INDENT,
-	FRAME_COLUMNS,
 	type HealthState,
 	POPUP_INDENT,
+	RIGHT_GUTTER,
 	registerFramedEditor,
 	remapEditorMouse,
 	sameKey,
@@ -90,14 +90,14 @@ test("remaps popup clicks and body clicks from the frame/indent constants", () =
 		alt: false,
 		ctrl: false,
 	};
-	const bodyX = event.x - (FRAME_COLUMNS + BODY_INDENT);
+	const bodyX = event.x - BODY_INDENT;
 	const popupX = event.x - POPUP_INDENT;
-	const width = event.width - (FRAME_COLUMNS * 2 + BODY_INDENT);
+	const width = event.width - (RIGHT_GUTTER + BODY_INDENT);
 	assert.deepEqual(remapEditorMouse(event, 2, 5), { ...event, x: popupX, y: 5, width });
 	assert.deepEqual(remapEditorMouse({ ...event, y: 3 }, 2, 5), { ...event, x: bodyX, y: 1, width });
 });
 
-test("editor uses a full-width lane, bottom rule, open sides, and the existing body indent", () => {
+test("editor uses a full-width lane, bottom rule, open sides, and a flush-left prompt", () => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
 	let colorMode: TerminalColorMode = "256color";
 	let speed: TokenSpeedSnapshot | null = null;
@@ -152,16 +152,15 @@ test("editor uses a full-width lane, bottom rule, open sides, and the existing b
 		renderLaneStrip({ usedTokens: 20_000, contextWindow: 100_000 }, 80, { fg: (_token, text) => text }),
 	);
 	assert.doesNotMatch(plain[0] ?? "", /─/);
-	// The bottom rule uses borderMuted; the side gutters stay blank.
-	assert.ok(plain[1]?.startsWith(" "));
+	// The bottom rule uses borderMuted; the right gutter stays blank.
+	assert.ok(plain[1]?.startsWith("❯ "));
 	assert.ok(plain[1]?.endsWith(" "));
 	assert.ok(plain[2]?.startsWith("── "));
 	assert.ok(plain[2]?.endsWith("─"));
 	assert.equal(seenTokens.get("─")?.at(-1), "borderMuted");
-	// Prompt glyph and model label keep column 3.
-	assert.equal(plain[1]?.slice(0, 3), "   ");
+	// Prompt starts at the left edge; the bottom model label keeps column 3.
 	assert.equal(plain[2]?.slice(0, 3), "── ");
-	assert.equal(plain[1]?.indexOf("❯"), 3);
+	assert.equal(plain[1]?.indexOf("❯"), 0);
 	assert.equal(plain[2]?.indexOf("a-very-long-model-name"), 3);
 	// Two spaces separate the model group from the quota group.
 	assert.ok(plain[2]?.includes("medium  5h 30%"));
@@ -178,16 +177,21 @@ test("editor uses a full-width lane, bottom rule, open sides, and the existing b
 
 	// Failure glyph error.
 	prompt = "error";
-	assert.match(stripVTControlCharacters(editor.render(80)[1] ?? ""), /✗/);
+	assert.ok(stripVTControlCharacters(editor.render(80)[1] ?? "").startsWith("✗ "));
 	assert.equal(seenTokens.get("✗")?.at(-1), "error");
 
-	// Typed input starts at column 5 (gutter + two spaces + glyph + space).
+	// Typed input follows the flush-left glyph and one space.
 	editor.setText("input");
-	assert.equal(stripVTControlCharacters(editor.render(80)[1] ?? "").indexOf("input"), 5);
+	assert.equal(stripVTControlCharacters(editor.render(80)[1] ?? "").indexOf("input"), 2);
+
+	editor.setText("first\nsecond");
+	const multiline = editor.render(80).map(stripVTControlCharacters);
+	assert.ok(multiline[1]?.startsWith("✗ first"));
+	assert.ok(multiline[2]?.startsWith("  second"));
 
 	// Text that reads like pi's scroll cue is still body text: framed and indented like any other.
 	editor.setText("↑ 3 more");
-	assert.equal(stripVTControlCharacters(editor.render(80)[1] ?? "").indexOf("↑ 3 more"), 5);
+	assert.equal(stripVTControlCharacters(editor.render(80)[1] ?? "").indexOf("↑ 3 more"), 2);
 
 	// Guard pi's mouse convention: a body click lands the cursor on the clicked column. This is the
 	// check that fails if pi ever changes how handleMouse reads x, y, or width.
@@ -213,11 +217,11 @@ test("editor uses a full-width lane, bottom rule, open sides, and the existing b
 		});
 	};
 	for (const column of [0, 2, 5]) {
-		click(FRAME_COLUMNS + BODY_INDENT + column, 1);
+		click(BODY_INDENT + column, 1);
 		assert.deepEqual(mouse.getCursor(), { line: 0, col: column }, `column=${column}`);
 	}
 	// A frame row is not a text row: clicking the top border leaves the cursor where it was.
-	click(FRAME_COLUMNS + BODY_INDENT + 3, 0);
+	click(BODY_INDENT + 3, 0);
 	assert.deepEqual(mouse.getCursor(), { line: 0, col: 5 });
 
 	// Pi 1.2 resolves the fake cursor in TUI; preserve its marker and framed IME position.
@@ -231,10 +235,7 @@ test("editor uses a full-width lane, bottom rule, open sides, and the existing b
 			assert.equal(cursorLines.length, 1);
 			const line = cursorLines[0] ?? "";
 			const marker = line.indexOf(CURSOR_MARKER);
-			assert.equal(
-				visibleWidth(line.slice(0, marker)),
-				FRAME_COLUMNS + BODY_INDENT + visibleWidth(text.split("\n").at(-1) ?? ""),
-			);
+			assert.equal(visibleWidth(line.slice(0, marker)), BODY_INDENT + visibleWidth(text.split("\n").at(-1) ?? ""));
 			assert.ok(line.slice(marker + CURSOR_MARKER.length).startsWith(renderFakeCursor(" ")));
 			assert.ok(lines.every((row) => visibleWidth(row) === width));
 		}
@@ -273,19 +274,24 @@ test("editor uses a full-width lane, bottom rule, open sides, and the existing b
 			Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n"),
 		]) {
 			editor.setText(text);
-			for (let width = 6; width <= 200; width++) {
+			for (let width = 3; width <= 200; width++) {
 				const rows = editor.render(width);
 				assert.ok(
 					rows.every((line) => visibleWidth(line) <= width),
 					`editor width=${width}, speed=${Boolean(speed)}`,
 				);
 				assert.doesNotMatch(rows.map(stripVTControlCharacters).join(""), /[┌┐└┘│╭╮╰╯]/);
-				if (width >= 9) {
+				if (width >= 6) {
 					assert.doesNotMatch(stripVTControlCharacters(rows[0] ?? ""), /─/);
+					assert.ok(stripVTControlCharacters(rows[1] ?? "").startsWith("✗ "));
 					for (const row of rows.slice(1, -1)) {
 						const plainRow = stripVTControlCharacters(row);
-						assert.ok(plainRow.startsWith(" ") && plainRow.endsWith(" "), `open sides width=${width}`);
+						assert.ok(plainRow.endsWith(" "), `right gutter width=${width}`);
 					}
+					assert.ok(
+						rows.slice(2, -1).every((row) => stripVTControlCharacters(row).startsWith("  ")),
+						`continuation indent width=${width}`,
+					);
 				}
 			}
 		}
@@ -482,19 +488,19 @@ test("falls back to pi's own layout when the frame cannot fit", () => {
 		{ matches: () => false } as unknown as KeybindingsManager,
 		{ paddingX: 0 },
 	);
-	for (const width of [1, 4, 8]) {
+	for (const width of [1, 4, 5]) {
 		stock.setText("input");
 		framed.setText("input");
 		assert.deepEqual(framed.render(width), stock.render(width), `width=${width}`);
 	}
 	// One column more and the frame takes over.
-	assert.ok(stripVTControlCharacters(framed.render(9)[1] ?? "").startsWith("   ❯ "));
+	assert.ok(stripVTControlCharacters(framed.render(6)[1] ?? "").startsWith("❯ "));
 });
 
 test("keeps native padding at zero across pi's host and /settings setters", () => {
 	// Pi copies defaultEditor.getPaddingX() onto a custom editor after the factory returns
 	// (setCustomEditorComponent) and /settings calls that setter again while the editor is live. The
-	// frame draws its own four-column body indent, so native padding must stay 0: a copied padding
+	// frame draws its own two-column body indent, so native padding must stay 0: a copied padding
 	// shifts every typed column and, at the frame's minimum width, makes pi's layout recurse on a
 	// wide grapheme.
 	const health: HealthState = {
@@ -515,10 +521,10 @@ test("keeps native padding at zero across pi's host and /settings setters", () =
 		{ paddingX: 0 },
 	);
 	const body = (width = 80): string => stripVTControlCharacters(framed.render(width)[1] ?? "");
-	const bodyColumn = FRAME_COLUMNS + BODY_INDENT;
+	const bodyColumn = BODY_INDENT;
 
 	// The host's padding copy must not move the frame's native padding, and typed text stays at the
-	// designed fifth column (frame + two spaces + prompt glyph + space).
+	// designed text column (prompt glyph + space).
 	assert.equal(framed.getPaddingX(), 0);
 	framed.setPaddingX(1);
 	assert.equal(framed.getPaddingX(), 0);
@@ -534,9 +540,9 @@ test("keeps native padding at zero across pi's host and /settings setters", () =
 	framed.setPaddingX(1);
 	for (const text of ["中", "😀", "中文😀"]) {
 		framed.setText(text);
-		assert.doesNotThrow(() => framed.render(9), text);
+		assert.doesNotThrow(() => framed.render(6), text);
 		assert.ok(
-			framed.render(9).every((line) => visibleWidth(line) === 9),
+			framed.render(6).every((line) => visibleWidth(line) === 6),
 			text,
 		);
 	}
@@ -545,7 +551,7 @@ test("keeps native padding at zero across pi's host and /settings setters", () =
 	// Widths below 3 are ASCII-only: stock pi overflows on its own with a wide grapheme there, which is
 	// outside this frame's contract. Wide graphemes are compared from the width stock can render.
 	framed.setPaddingX(2);
-	const lastFallbackWidth = FRAME_COLUMNS * 2 + BODY_INDENT + 2;
+	const lastFallbackWidth = RIGHT_GUTTER + BODY_INDENT + 2;
 	for (const [text, firstWidth] of [
 		["hello", 1],
 		["中", 3],
@@ -581,13 +587,13 @@ test("keeps native padding at zero across pi's host and /settings setters", () =
 	assert.deepEqual(framed.getCursor(), { line: 0, col: 3 });
 	framed.setFocused(true);
 	framed.setText("中");
-	const cursorLine = framed.render(9).find((line) => line.includes(CURSOR_MARKER)) ?? "";
+	const cursorLine = framed.render(6).find((line) => line.includes(CURSOR_MARKER)) ?? "";
 	assert.equal(visibleWidth(cursorLine.slice(0, cursorLine.indexOf(CURSOR_MARKER))), bodyColumn + visibleWidth("中"));
 	framed.setFocused(false);
 });
 
 test("re-renders pi's layout at full width when the frame loses its captured border", () => {
-	// Regression: the fallback returned the body rendered six columns narrower (the frame's body
+	// Regression: the fallback returned the body rendered narrower (the frame's body
 	// indent) while handleMouse used full-width coordinates, so a pi render-shape change left a short
 	// editor with misaligned clicks. The fallback must be pi's own full-width layout.
 	const health: HealthState = {
@@ -634,7 +640,7 @@ test("reports an unrecognized pi layout once, and never for a known narrow fallb
 	const framed = buildFramedEditor(NERD_GLYPHS, { id: "gpt-test", reasoning: false }, health);
 	framed.setText("input");
 	// Too narrow to frame is a known, intended fallback: it must not read as a changed pi.
-	framed.render(8);
+	framed.render(5);
 	assert.deepEqual(framed.layoutNotices(), []);
 
 	// A frame that lost the border it captured is a pi change, and the frame retries every render.

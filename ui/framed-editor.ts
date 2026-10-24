@@ -49,11 +49,11 @@ export type FramedEditorOptions = Readonly<{
 	onTui: (tui: TUI) => void;
 }>;
 
-/** Open side gutters occupy one column each; popup rows get a two-column gutter. */
-export const FRAME_COLUMNS = 1;
+/** Keep one blank column at the right edge; the prompt starts flush left. */
+export const RIGHT_GUTTER = 1;
 export const POPUP_INDENT = 2;
-/** Body text sits behind a four-column indent (two spaces, glyph, space). */
-export const BODY_INDENT = 4;
+/** Body text follows the prompt glyph and one space; continuation rows use the same indent. */
+export const BODY_INDENT = 2;
 /** Two spaces separate the model label group from the quota group. */
 export const MODEL_QUOTA_GAP = 2;
 
@@ -78,9 +78,9 @@ export const remapEditorMouse = (event: TuiMouseEvent, popupRows: number, editor
 	const popup = event.y < popupRows;
 	return {
 		...event,
-		x: event.x - (popup ? POPUP_INDENT : FRAME_COLUMNS + BODY_INDENT),
+		x: event.x - (popup ? POPUP_INDENT : BODY_INDENT),
 		y: popup ? editorRows + event.y : event.y - popupRows,
-		width: event.width - (FRAME_COLUMNS * 2 + BODY_INDENT),
+		width: event.width - (RIGHT_GUTTER + BODY_INDENT),
 	};
 };
 
@@ -154,20 +154,20 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 
 		override render(width: number): string[] {
 			// Pi reserves a cursor column; a one-column wrap recurses on wide graphemes.
-			// Below the frame's four-column indent there is no room for a wrapped cell.
-			if (width < FRAME_COLUMNS * 2 + BODY_INDENT + 3) {
+			// Leave room for a wide grapheme after the prompt and right gutter.
+			if (width < RIGHT_GUTTER + BODY_INDENT + 3) {
 				this.editorRows = 0;
 				return super.render(width);
 			}
-			const innerWidth = width - FRAME_COLUMNS * 2;
-			// Keep the side gutter and body indent so text, mouse, and IME columns stay aligned.
+			const innerWidth = width - RIGHT_GUTTER;
+			// Share the body indent and right gutter with mouse and IME coordinates.
 			const rendered = super.render(innerWidth - BODY_INDENT);
 			const split = splitEditorRender(rendered, this.bottomBorder);
 			// No captured bottom border means pi's render shape is not the one the frame assumes. Keep
 			// pi's own layout rather than framing rows we cannot identify; handleMouse then passes the
 			// event through untouched, matching pi's unshifted geometry. Re-render at the full width:
 			// `rendered` above is pi's layout narrowed by the frame's body indent, which would leave the
-			// editor six columns short of the terminal.
+			// editor short of the terminal.
 			if (!split) {
 				this.editorRows = 0;
 				// Once per editor, not per render: the frame retries every frame and pi's shape does not
@@ -192,11 +192,11 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 					: "";
 			const scrollDown = this.hiddenBelow ? styles.fg("dim", `↓${this.hiddenBelow}`) : "";
 			const scrollReserve = scrollDown ? 1 : 0;
-			const prompt = `${" ".repeat(BODY_INDENT - 2)}${ctx.ui.theme.fg(promptColor(health.prompt), promptGlyph(health.prompt, options.getGlyphs()))} `;
+			const prompt = `${ctx.ui.theme.fg(promptColor(health.prompt), promptGlyph(health.prompt, options.getGlyphs()))} `;
 			const wrap = (line: string, prefix: string): string => {
 				const content = prefix + line;
 				const gap = Math.max(0, innerWidth - visibleWidth(content));
-				return ` ${content}${" ".repeat(gap)} `;
+				return `${content}${" ".repeat(gap + RIGHT_GUTTER)}`;
 			};
 
 			const body = lines.slice(1, -1);

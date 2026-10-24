@@ -24,8 +24,8 @@ export const PI_MARK_LINES = ["▀▀█", "█▀ █"] as const;
 export const headerMark = (ascii: boolean, appleTerminal: boolean): HeaderMark =>
 	ascii || appleTerminal ? "text" : "block";
 
-/** Mark column: the editor's side gutter plus two spaces, where the `❯` prompt sits. */
-export const HEADER_INDENT = 3;
+/** Match the editor's flush-left `❯` prompt. */
+export const HEADER_INDENT = 0;
 
 /** Gap between the mark's second row and the compact hints sharing that row. */
 const MARK_GAP = "  ";
@@ -88,7 +88,7 @@ export const renderWelcome = (
 	styles: HeaderStyles,
 ): readonly string[] => {
 	if (width <= 0) return [];
-	// Match the editor's gutter + prompt columns; leave room for the mark on tiny terminals.
+	// Match the editor's prompt column; leave room for the mark on tiny terminals.
 	const padding = Math.min(HEADER_INDENT, Math.max(width - 1, 0));
 	const prefix = " ".repeat(padding);
 	const contentWidth = width - padding;

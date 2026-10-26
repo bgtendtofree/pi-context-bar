@@ -25,7 +25,7 @@ Open-sided input shell with health in its top and bottom rows. No multi-line foo
 - A source test fails the build on hex colors or raw ANSI escapes in chrome sources; Omarchy generates the palette as a pi theme (`omarchy-system`) from its active theme, so the extension only ever names tokens
 - Lane runs left → right: empty consumed space, Pac-Man boundary, remaining pellets
 - Chomp driven by streamed tokens: mouth speed = throughput, static when idle (no timers)
-- Keep token speed dim: `~Nt/s` while estimated live, provider-calibrated `Nt/s` after turn
+- Keep token speed dim: `~Nt/s` while estimated live (one-second window, held until it can measure), provider-calibrated `Nt/s` after turn
 - Timing: TTFT = `before_provider_request` (or `turn_start` fallback) → first non-empty text/thinking/tool-call output; run = `agent_start` → `agent_settled`, never reset by retry/recovery or tool loops; labels say last measured vs pending; aborts/errors clear pending
 - Effective context is a `context_with_system` hook-time observation: replay Pi's public `getCurrentSystemPrompt`/`getCurrentTools`, store only bounded numeric summary (top 3 tool-result names/volumes, no bodies/prompts/messages to disk/session), label last-observed and invalidate on new session/branch/model/compaction; text volume is never normalized to Pi tokens
 - Request usage: exact integers, last assistant response on the current branch only; all-zero/partial/non-finite usage is unavailable, never 0; run context delta only for known readings with the same window

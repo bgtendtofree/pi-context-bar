@@ -103,7 +103,7 @@ export const renderStatus = (snapshot: StatusSnapshot): string => {
 		`Context: ${context.usedTokens ?? "?"} / ${context.contextWindow || "?"} tokens (Pi's current estimate)`,
 		`Cache: latest ${usage.cacheHitRate?.toFixed(1) ?? "?"}% · weighted session ${usage.cacheHitRateAvg?.toFixed(1) ?? "?"}%`,
 		`Cost: ${formatCost(usage.cost) || "$0"} (recorded estimate, not an invoice)`,
-		`Speed: ${formatTokenSpeed(snapshot.speed) || "unavailable"} (~ = visible-content estimate: CJK 1/char, tool JSON 2/char, prose and reasoning 4/char; excludes first-token wait and tool gaps)`,
+		`Speed: ${formatTokenSpeed(snapshot.speed) || "unavailable"} (~ = visible-content estimate: CJK 1/char, tool JSON 2/char, prose and reasoning 4/char; live is a 1 s window, held when it cannot measure; excludes first-token wait and tool gaps)`,
 		`Timing TTFT: ${ttft}`,
 		`Timing run: ${run}`,
 		`Waiting: ${waiting}`,

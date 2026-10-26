@@ -6,7 +6,10 @@ import {
 	estimateDeltaTokens,
 	estimateTokenSpeed,
 	formatTokenSpeed,
+	pushSpeedSample,
+	SPEED_SAMPLE_CAP,
 	TOOL_CHARACTERS_PER_TOKEN,
+	windowedTokenSpeed,
 } from "./speed.ts";
 
 describe("token speed", () => {
@@ -45,5 +48,74 @@ describe("token speed", () => {
 		assert.equal(formatTokenSpeed(completedTokenSpeed(100, 2000)), "50.0t/s");
 		assert.equal(completedTokenSpeed(10, 50), null);
 		assert.equal(formatTokenSpeed(null), "");
+	});
+});
+
+describe("live window", () => {
+	test("measures the newest reading against the oldest sample inside the window", () => {
+		assert.equal(
+			windowedTokenSpeed([
+				{ at: 0, tokens: 0 },
+				{ at: 500, tokens: 100 },
+			])?.tokensPerSecond,
+			200,
+		);
+		// The sample at 600 stays inside the one-second window; the 1100 reading spans it.
+		const samples = pushSpeedSample(pushSpeedSample([{ at: 0, tokens: 0 }], 600, 100), 1100, 300);
+		assert.deepEqual(samples, [
+			{ at: 600, tokens: 100 },
+			{ at: 1100, tokens: 300 },
+		]);
+		assert.equal(windowedTokenSpeed(samples)?.tokensPerSecond, 400);
+	});
+
+	test("drops samples older than the window so a pause cannot drag the reading down", () => {
+		const samples = pushSpeedSample(
+			[
+				{ at: 0, tokens: 0 },
+				{ at: 100, tokens: 50 },
+			],
+			1200,
+			300,
+		);
+		assert.deepEqual(samples, [{ at: 1200, tokens: 300 }]);
+		// One sample cannot span a rate: the caller keeps its previous reading.
+		assert.equal(windowedTokenSpeed(samples), null);
+	});
+
+	test("reports nothing until the window spans the minimum interval", () => {
+		assert.equal(windowedTokenSpeed([]), null);
+		assert.equal(windowedTokenSpeed([{ at: 10, tokens: 5 }]), null);
+		assert.equal(
+			windowedTokenSpeed([
+				{ at: 10, tokens: 5 },
+				{ at: 400, tokens: 40 },
+			]),
+			null,
+		);
+		assert.equal(
+			windowedTokenSpeed([
+				{ at: 10, tokens: 5 },
+				{ at: 510, tokens: 105 },
+			])?.tokensPerSecond,
+			200,
+		);
+	});
+
+	test("a flat token count is not a rate", () => {
+		assert.equal(
+			windowedTokenSpeed([
+				{ at: 0, tokens: 50 },
+				{ at: 600, tokens: 50 },
+			]),
+			null,
+		);
+	});
+
+	test("caps sample growth at pathological chunk rates", () => {
+		let samples: readonly { at: number; tokens: number }[] = [];
+		for (let index = 0; index < SPEED_SAMPLE_CAP + 50; index++) samples = pushSpeedSample(samples, index, index);
+		assert.equal(samples.length, SPEED_SAMPLE_CAP);
+		assert.equal(samples.at(-1)?.tokens, SPEED_SAMPLE_CAP + 49);
 	});
 });

@@ -53,7 +53,15 @@ import {
 } from "./lib/openai.ts";
 import { INITIAL_PROMPT_STATE, type PromptState, promptStateAfterTurn, promptStateFromEntries } from "./lib/prompt.ts";
 import { parseQuotaEvent, parseQuotaHeaders, responseQuotaKey, unexpiredQuota } from "./lib/response-quota.ts";
-import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
+import {
+	completedTokenSpeed,
+	estimateDeltaTokens,
+	estimateTokenSpeed,
+	pushSpeedSample,
+	type SpeedSample,
+	type TokenSpeedSnapshot,
+	windowedTokenSpeed,
+} from "./lib/speed.ts";
 import { restoreDecision, STASH_SHORTCUT, STASH_SUBCOMMAND, stashDecision } from "./lib/stash.ts";
 import { renderStatus } from "./lib/status.ts";
 import {
@@ -97,6 +105,8 @@ type ChromeState = Readonly<{
 	tokenSpeed: TokenSpeedSnapshot | null;
 	speedStreamTokens: number;
 	speedStreamStartedAt: number | undefined;
+	/** Cumulative token readings inside the live window; cleared per assistant message. */
+	speedSamples: readonly SpeedSample[];
 	speedTurnOutputTokens: number;
 	speedTurnActiveMs: number;
 	timing: TimingState;
@@ -148,6 +158,7 @@ const freshState = (): ChromeState => ({
 	tokenSpeed: null,
 	speedStreamTokens: 0,
 	speedStreamStartedAt: undefined,
+	speedSamples: [],
 	speedTurnOutputTokens: 0,
 	speedTurnActiveMs: 0,
 	timing: INITIAL_TIMING,
@@ -504,6 +515,7 @@ const resetTurnSpeed = (): void => {
 		tokenSpeed: null,
 		speedStreamTokens: 0,
 		speedStreamStartedAt: undefined,
+		speedSamples: [],
 		speedTurnOutputTokens: 0,
 		speedTurnActiveMs: 0,
 		chompTokens: 0,
@@ -880,6 +892,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		patch({
 			speedStreamTokens: 0,
 			speedStreamStartedAt: undefined,
+			speedSamples: [],
 			subscriptionTurn,
 			// Boundary: only an assistant entry created after this point belongs to the captured request.
 			provisionalBaseIds: subscriptionTurn
@@ -909,10 +922,18 @@ export default function zContext(pi: ExtensionAPI): void {
 		const tokens = estimateDeltaTokens(delta, type === "toolcall_delta" ? "toolcall" : "text");
 		const streamStartedAt = state.speedStreamStartedAt ?? now;
 		const totalTokens = state.speedStreamTokens + tokens;
+		const samples = pushSpeedSample(state.speedSamples, now, totalTokens);
 		patch({
 			speedStreamStartedAt: streamStartedAt,
 			speedStreamTokens: totalTokens,
-			tokenSpeed: estimateTokenSpeed(totalTokens, now - streamStartedAt) ?? state.tokenSpeed,
+			speedSamples: samples,
+			// Hold the last reading while the window is still too short to measure; only the first
+			// reading of a session falls back to the cumulative estimate so the field never blanks.
+			tokenSpeed:
+				windowedTokenSpeed(samples) ??
+				(state.tokenSpeed
+					? { ...state.tokenSpeed, estimated: true }
+					: estimateTokenSpeed(totalTokens, now - streamStartedAt)),
 			chompTokens: state.chompTokens + tokens,
 		});
 		requestRender();

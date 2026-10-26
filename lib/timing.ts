@@ -113,11 +113,25 @@ export const settleAgentRun = (state: TimingState, now: number, aborted: boolean
 	return { ...state, request: undefined, run: undefined, lastRun, waiting: false };
 };
 
-/** Short, dim speed-field notice: Pi's own indicator kind first, then waiting, then a held stash. */
-export const nativePhaseLabel = (kind: string | undefined): string | undefined => {
-	if (kind === "retry") return "retrying…";
-	if (kind === "compaction") return "compact…";
-	if (kind === "branchSummary") return "summary…";
+/**
+ * Short, dim notices that may occupy the speed field. Labels live here so the chrome only has to
+ * pick the icon; callers pass the label through unchanged.
+ */
+export const NOTICES = {
+	waiting: "waiting…",
+	retrying: "retrying…",
+	compact: "compact…",
+	summary: "summary…",
+	stash: "stash",
+} as const;
+
+export type HealthNotice = (typeof NOTICES)[keyof typeof NOTICES];
+
+/** Pi's own indicator kind first, then waiting, then a held stash. */
+export const nativePhaseLabel = (kind: string | undefined): HealthNotice | undefined => {
+	if (kind === "retry") return NOTICES.retrying;
+	if (kind === "compaction") return NOTICES.compact;
+	if (kind === "branchSummary") return NOTICES.summary;
 	return undefined;
 };
 
@@ -130,12 +144,12 @@ export const healthNotice = (
 		/** A request is active and has already produced observable output. */
 		outputActive: boolean;
 	}>,
-): string | undefined => {
+): HealthNotice | undefined => {
 	const phase = nativePhaseLabel(input.phase);
 	// Once output flows, the live t/s reading owns the field even if a native phase is still set.
 	if (phase && !(input.outputActive && input.hasSpeed)) return phase;
-	if (input.waiting) return "waiting…";
-	return input.stashed && !input.hasSpeed ? "stash" : undefined;
+	if (input.waiting) return NOTICES.waiting;
+	return input.stashed && !input.hasSpeed ? NOTICES.stash : undefined;
 };
 
 /** Status detail: milliseconds below a second, seconds below a minute, then minutes. */

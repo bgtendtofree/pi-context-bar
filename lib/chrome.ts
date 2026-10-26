@@ -4,6 +4,7 @@ import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
 import { formatTokenSpeed, type TokenSpeedSnapshot } from "./speed.ts";
+import { type HealthNotice, NOTICES } from "./timing.ts";
 
 export const PACMAN_GLYPH = "󰮯";
 export const PACMAN_CLOSED_GLYPH = "󰝥";
@@ -29,6 +30,12 @@ export type GlyphSet = Readonly<{
 	pellet: string;
 	/** Power pellet marking the warning/error ratios; ASCII's `o` replaces the circular `○`. */
 	powerPellet: string;
+	/** Pending-notice icons for the speed field: hourglass, retry, collapse, script, archive. */
+	waiting: string;
+	retrying: string;
+	compact: string;
+	summary: string;
+	stash: string;
 	/** ASCII fallbacks compact their reset/credit tokens ("r52m", "R1") and omit icons. */
 	ascii: boolean;
 }>;
@@ -45,6 +52,12 @@ export const NERD_GLYPHS: GlyphSet = {
 	speed: "\u{f04c5}",
 	pellet: PELLET_GLYPH,
 	powerPellet: POWER_PELLET_GLYPH,
+	// md-timer_sand, md-refresh, md-arrow_collapse_vertical, md-script_text, md-archive.
+	waiting: "\u{f051f}",
+	retrying: "\u{f0450}",
+	compact: "\u{f084d}",
+	summary: "\u{f0bc2}",
+	stash: "\u{f003c}",
 	ascii: false,
 };
 
@@ -60,6 +73,11 @@ export const ASCII_GLYPHS: GlyphSet = {
 	speed: "",
 	pellet: ".",
 	powerPellet: "o",
+	waiting: "",
+	retrying: "",
+	compact: "",
+	summary: "",
+	stash: "",
 	ascii: true,
 };
 
@@ -365,6 +383,15 @@ export const renderPacmanLane = (
  */
 const SPEED_FIELD_TEXT = "~100.0t/s";
 
+/** Icon field for each pending notice, so callers only ever pass the label. */
+const NOTICE_GLYPH_FIELDS: Readonly<Record<HealthNotice, "waiting" | "retrying" | "compact" | "summary" | "stash">> = {
+	[NOTICES.waiting]: "waiting",
+	[NOTICES.retrying]: "retrying",
+	[NOTICES.compact]: "compact",
+	[NOTICES.summary]: "summary",
+	[NOTICES.stash]: "stash",
+};
+
 /**
  * Top-border strip: auto-fit lane with context `%` (+ window size) and one reserved right slot.
  * The slot carries a live speed reading or, while Pi is waiting/retrying/compacting, a short dim
@@ -378,7 +405,7 @@ export const renderLaneStrip = (
 	activity: LaneActivity = "idle",
 	speed: TokenSpeedSnapshot | null = null,
 	glyphs: GlyphSet = NERD_GLYPHS,
-	notice?: string,
+	notice?: HealthNotice,
 ): string => {
 	if (width <= 2) return "";
 	const percentValue =
@@ -396,30 +423,35 @@ export const renderLaneStrip = (
 	const percentOptions = [...(window ? [`${percent} ${styles.fg("dim", `(${window})`)}`] : []), percent];
 	const rawSpeed = formatTokenSpeed(speed);
 	const noticeText = notice?.trim() ? notice : undefined;
-	const slotText = noticeText ?? rawSpeed;
-	// One reserved field (right-aligned reading) so common digit lengths, the `~` estimate marker,
-	// provider calibration, and the wait notice cannot resize the lane. A longer real reading grows
-	// the field, never cuts it.
-	const slotFieldWidth = slotText ? Math.max(visibleWidth(SPEED_FIELD_TEXT), visibleWidth(slotText)) : 0;
 	// Pad by terminal columns: a Nerd Font glyph may be one cell but two UTF-16 units.
 	const padLeft = (text: string, fieldWidth: number): string =>
 		" ".repeat(Math.max(0, fieldWidth - visibleWidth(text))) + text;
-	// The speedometer is decorative and never decorates a notice: icon field, plain field, then the
-	// reading's own width on tight strips, then nothing.
-	const slotOptions = slotText
+	// A reading may spend two extra columns on the speedometer; a notice spends the same two on its
+	// own icon (or as blank space when the glyph set has none), so the percent and lane never move
+	// when output starts or between notices.
+	const iconFieldWidth = visibleWidth(SPEED_FIELD_TEXT) + 2;
+	const speedOptions = rawSpeed
 		? [
-				// A speed reading may spend two extra columns on the speedometer; a notice reserves the
-				// same columns as blank space so the percent and lane keep their position when output
-				// starts. Only glyph sets that have the icon reserve it.
-				...(glyphs.speed
-					? [padLeft(noticeText === undefined ? `${glyphs.speed} ${slotText}` : slotText, slotFieldWidth + 2)]
-					: []),
-				padLeft(slotText, slotFieldWidth),
-				slotText,
-				// Pending punctuation drops before readable phase text on narrow strips.
-				...(noticeText?.endsWith("…") ? [noticeText.slice(0, -1)] : []),
+				...(glyphs.speed ? [padLeft(`${glyphs.speed} ${rawSpeed}`, iconFieldWidth)] : []),
+				padLeft(rawSpeed, visibleWidth(SPEED_FIELD_TEXT)),
+				rawSpeed,
 			].filter((value, index, all) => all.indexOf(value) === index)
 		: [];
+	// A notice is its icon alone when the glyph set has one; the words are the fallback for ASCII or a
+	// terminal without Nerd Fonts. The icon is padded to the reading's field so the percent and lane
+	// never move when output starts, and the words keep the reading's field when they do show.
+	const noticeIcon = noticeText ? glyphs[NOTICE_GLYPH_FIELDS[noticeText]] : "";
+	const noticeOptions = noticeText
+		? noticeIcon
+			? [padLeft(noticeIcon, iconFieldWidth), noticeIcon]
+			: [
+					padLeft(noticeText, visibleWidth(SPEED_FIELD_TEXT)),
+					noticeText,
+					// Pending punctuation drops before readable phase text on narrow strips.
+					...(noticeText.endsWith("…") ? [noticeText.slice(0, -1)] : []),
+				].filter((value, index, all) => all.indexOf(value) === index)
+		: [];
+	const slotOptions = noticeText ? noticeOptions : speedOptions;
 	const styleSlot = (value: string): string => (value ? styles.fg("dim", value) : "");
 	const laneWidth = (pickedPercent: string | undefined, pickedSlot: string | undefined): number =>
 		width - 2 - (pickedPercent ? visibleWidth(pickedPercent) + 1 : 0) - (pickedSlot ? visibleWidth(pickedSlot) + 1 : 0);

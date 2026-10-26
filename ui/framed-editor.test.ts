@@ -984,7 +984,7 @@ test("invalidates the bottom memo when the relative countdown crosses its bucket
 });
 
 test("puts wait/phase notices in the speed slot and mirrors Pi's indicator kind", () => {
-	const health = (notice?: string): HealthState => ({
+	const health = (notice?: HealthState["notice"]): HealthState => ({
 		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
 		usage: { cost: 0, cacheHitRate: undefined, cacheHitRateAvg: undefined },
 		quota: undefined,
@@ -1000,7 +1000,9 @@ test("puts wait/phase notices in the speed slot and mirrors Pi's indicator kind"
 
 	framed.setHealth(health("retrying…"));
 	const after = framed.render(80).map(stripVTControlCharacters);
-	assert.match(after[0] ?? "", /retrying…/);
+	// The icon carries the notice alone; the words survive only without icons.
+	assert.match(after[0] ?? "", new RegExp(NERD_GLYPHS.retrying));
+	assert.doesNotMatch(after[0] ?? "", /retrying…/);
 	assert.doesNotMatch(after[0] ?? "", /t\/s/);
 	// The notice replaces the reading inside the same reserved field; the percent cannot move.
 	assert.equal(after[0]?.indexOf("20.0%"), before[0]?.indexOf("20.0%"));

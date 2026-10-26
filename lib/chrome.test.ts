@@ -30,6 +30,7 @@ import {
 	USAGE_WARNING_PERCENT,
 } from "./chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
+import { type HealthNotice, NOTICES } from "./timing.ts";
 
 const usage = (partial: Partial<SessionUsage> = {}): SessionUsage => ({
 	cost: 0,
@@ -454,25 +455,35 @@ describe("lane strip", () => {
 		assert.ok(!idle.includes("t/s"));
 	});
 
+	const ICON_FOR_NOTICE = {
+		[NOTICES.waiting]: NERD_GLYPHS.waiting,
+		[NOTICES.retrying]: NERD_GLYPHS.retrying,
+		[NOTICES.compact]: NERD_GLYPHS.compact,
+		[NOTICES.summary]: NERD_GLYPHS.summary,
+		[NOTICES.stash]: NERD_GLYPHS.stash,
+	} as const;
+
 	test("puts wait/retry notices in the same reserved field so the lane does not move", () => {
 		const speed = { tokensPerSecond: 42.25, estimated: true };
 		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
 			const baseline = stripVTControlCharacters(
 				renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed, glyphs),
 			);
-			for (const notice of ["waiting…", "retrying…", "compact…", "summary…"]) {
+			for (const notice of [NOTICES.waiting, NOTICES.retrying, NOTICES.compact, NOTICES.summary] as const) {
 				const { styles, seen } = recorder();
 				const strip = stripVTControlCharacters(
 					renderLaneStrip(dominantSnapshot, 60, styles, 0, "idle", speed, glyphs, notice),
 				);
+				// The icon carries the phase alone; the words are the ASCII fallback.
+				const shown = glyphs.ascii ? notice : ICON_FOR_NOTICE[notice];
 				assert.equal(visibleWidth(strip), 60);
-				// Pending labels fit the existing field, including the longest one, `retrying…`.
 				assert.equal(strip.indexOf("15.6%"), baseline.indexOf("15.6%"));
 				assert.equal(strip.indexOf(glyphs.pacmanOpen), baseline.indexOf(glyphs.pacmanOpen));
-				assert.ok(strip.endsWith(`${notice} `), strip);
+				assert.ok(strip.endsWith(`${shown} `), strip);
 				assert.ok(!strip.includes("t/s"), strip);
 				assert.ok(!strip.includes(NERD_GLYPHS.speed), strip);
-				assert.ok(seen.some(([token, text]) => token === "dim" && text.trim() === notice));
+				if (!glyphs.ascii) assert.ok(!strip.includes(notice), strip);
+				assert.ok(seen.some(([token, text]) => token === "dim" && text.includes(shown)));
 			}
 		}
 	});
@@ -487,8 +498,36 @@ describe("lane strip", () => {
 		);
 		assert.equal(visibleWidth(before), 60);
 		assert.equal(before.indexOf("15.6%"), after.indexOf("15.6%"));
-		assert.ok(before.endsWith("waiting… "));
+		assert.ok(before.endsWith(`${NERD_GLYPHS.waiting} `));
 		assert.ok(after.endsWith("~9.8t/s "));
+	});
+
+	test("shows one notice icon instead of its words, and the words only without icons", () => {
+		for (const notice of [
+			NOTICES.waiting,
+			NOTICES.retrying,
+			NOTICES.compact,
+			NOTICES.summary,
+			NOTICES.stash,
+		] as const) {
+			const icon = ICON_FOR_NOTICE[notice];
+			const wide = stripVTControlCharacters(
+				renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", null, NERD_GLYPHS, notice),
+			);
+			assert.equal(visibleWidth(wide), 60);
+			assert.ok(wide.endsWith(`${icon} `), wide);
+			assert.ok(!wide.includes(notice), wide);
+			// ASCII has no icons, so the notice falls back to its words.
+			const ascii = stripVTControlCharacters(
+				renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", null, ASCII_GLYPHS, notice),
+			);
+			assert.ok(ascii.endsWith(`${notice} `), ascii);
+		}
+		// The single-cell icon survives a strip too narrow for any wording.
+		const tight = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 24, identityStyles, 0, "idle", null, NERD_GLYPHS, NOTICES.waiting),
+		);
+		assert.ok(tight.endsWith(`${NERD_GLYPHS.waiting} `), tight);
 	});
 
 	test("drops the notice before the percent on narrow strips", () => {
@@ -505,7 +544,7 @@ describe("lane strip", () => {
 			),
 		);
 		assert.ok(roomy.includes("?%"), roomy);
-		assert.ok(roomy.includes("waiting"), roomy);
+		assert.ok(roomy.includes(NERD_GLYPHS.waiting), roomy);
 		const tight = stripVTControlCharacters(
 			renderLaneStrip(
 				snapshot({ usedTokens: null, contextWindow: 0 }),
@@ -522,33 +561,39 @@ describe("lane strip", () => {
 		assert.ok(!tight.includes("waiting"), tight);
 	});
 
-	test("drops pending punctuation before phase text on narrow strips", () => {
-		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
-			for (const [notice, width] of [
-				["waiting…", 17],
-				["retrying…", 18],
-			] as const) {
-				const strip = renderLaneStrip(
-					snapshot({ usedTokens: null, contextWindow: 0 }),
-					width,
-					identityStyles,
-					0,
-					"idle",
-					null,
-					glyphs,
-					notice,
-				);
-				assert.equal(visibleWidth(strip), width);
-				assert.ok(strip.includes("?%"), strip);
-				assert.ok(strip.endsWith(`${notice.slice(0, -1)} `), strip);
-				assert.ok(!strip.includes("…"), strip);
-			}
+	test("drops pending punctuation before phase text on narrow ASCII strips", () => {
+		for (const [notice, width] of [
+			["waiting…", 17],
+			["retrying…", 18],
+		] as const) {
+			const strip = renderLaneStrip(
+				snapshot({ usedTokens: null, contextWindow: 0 }),
+				width,
+				identityStyles,
+				0,
+				"idle",
+				null,
+				ASCII_GLYPHS,
+				notice,
+			);
+			assert.equal(visibleWidth(strip), width);
+			assert.ok(strip.includes("?%"), strip);
+			assert.ok(strip.endsWith(`${notice.slice(0, -1)} `), strip);
+			assert.ok(!strip.includes("…"), strip);
 		}
 	});
 
 	test("every pending notice fits widths 0..200 in either glyph set", () => {
 		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
-			for (const notice of ["waiting…", "retrying…", "compact…", "summary…", "stash", " "]) {
+			// A blank notice is not a notice; the guard is typed away at the call site but still shipped.
+			for (const notice of [
+				NOTICES.waiting,
+				NOTICES.retrying,
+				NOTICES.compact,
+				NOTICES.summary,
+				NOTICES.stash,
+				" " as unknown as HealthNotice,
+			] as const) {
 				for (let width = 0; width <= 200; width++) {
 					const strip = renderLaneStrip(dominantSnapshot, width, identityStyles, 0, "working", null, glyphs, notice);
 					assert.ok(visibleWidth(strip) <= width, `strip width=${width}, notice=${notice}`);

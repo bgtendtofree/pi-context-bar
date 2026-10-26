@@ -24,6 +24,7 @@ import type { ContextSnapshot, SessionUsage } from "../lib/context.ts";
 import { type PromptState, promptColor, promptGlyph } from "../lib/prompt.ts";
 import type { TokenSpeedSnapshot } from "../lib/speed.ts";
 import { STASH_SHORTCUT, stashShortcutFree } from "../lib/stash.ts";
+import type { HealthNotice } from "../lib/timing.ts";
 
 export type HealthState = Readonly<{
 	snapshot: ContextSnapshot;
@@ -34,7 +35,7 @@ export type HealthState = Readonly<{
 	activity: LaneActivity;
 	prompt: PromptState;
 	/** Short dim right-slot notice (wait/retry/compaction/stash) that temporarily replaces speed. */
-	notice?: string | undefined;
+	notice?: HealthNotice | undefined;
 }>;
 
 /** Public Pi indicator kinds; the extension keeps only the kind, never the private indicator object. */

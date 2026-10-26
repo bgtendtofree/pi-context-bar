@@ -906,7 +906,7 @@ export default function zContext(pi: ExtensionAPI): void {
 				? event.assistantMessageEvent.delta
 				: undefined;
 		if (!delta) return;
-		const tokens = estimateDeltaTokens(delta);
+		const tokens = estimateDeltaTokens(delta, type === "toolcall_delta" ? "toolcall" : "text");
 		const streamStartedAt = state.speedStreamStartedAt ?? now;
 		const totalTokens = state.speedStreamTokens + tokens;
 		patch({

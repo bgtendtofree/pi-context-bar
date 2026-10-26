@@ -463,28 +463,34 @@ describe("lane strip", () => {
 		[NOTICES.stash]: NERD_GLYPHS.stash,
 	} as const;
 
-	test("puts wait/retry notices in the same reserved field so the lane does not move", () => {
+	test("keeps the settled reading beside a phase glyph in the reserved field", () => {
 		const speed = { tokensPerSecond: 42.25, estimated: true };
-		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
-			const baseline = stripVTControlCharacters(
-				renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed, glyphs),
+		const baseline = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed, NERD_GLYPHS),
+		);
+		for (const notice of [NOTICES.waiting, NOTICES.retrying, NOTICES.compact, NOTICES.summary] as const) {
+			const { styles, seen } = recorder();
+			const strip = stripVTControlCharacters(
+				renderLaneStrip(dominantSnapshot, 60, styles, 0, "idle", speed, NERD_GLYPHS, notice),
 			);
-			for (const notice of [NOTICES.waiting, NOTICES.retrying, NOTICES.compact, NOTICES.summary] as const) {
-				const { styles, seen } = recorder();
-				const strip = stripVTControlCharacters(
-					renderLaneStrip(dominantSnapshot, 60, styles, 0, "idle", speed, glyphs, notice),
-				);
-				// The icon carries the phase alone; the words are the ASCII fallback.
-				const shown = glyphs.ascii ? notice : ICON_FOR_NOTICE[notice];
-				assert.equal(visibleWidth(strip), 60);
-				assert.equal(strip.indexOf("15.6%"), baseline.indexOf("15.6%"));
-				assert.equal(strip.indexOf(glyphs.pacmanOpen), baseline.indexOf(glyphs.pacmanOpen));
-				assert.ok(strip.endsWith(`${shown} `), strip);
-				assert.ok(!strip.includes("t/s"), strip);
-				assert.ok(!strip.includes(NERD_GLYPHS.speed), strip);
-				if (!glyphs.ascii) assert.ok(!strip.includes(notice), strip);
-				assert.ok(seen.some(([token, text]) => token === "dim" && text.includes(shown)));
-			}
+			// The phase glyph takes the speedometer's slot; the reading stays beside it.
+			const shown = ICON_FOR_NOTICE[notice];
+			assert.equal(visibleWidth(strip), 60);
+			assert.equal(strip.indexOf("15.6%"), baseline.indexOf("15.6%"));
+			assert.equal(strip.indexOf(NERD_GLYPHS.pacmanOpen), baseline.indexOf(NERD_GLYPHS.pacmanOpen));
+			assert.ok(strip.endsWith(`${shown} ~42.3t/s `), strip);
+			assert.ok(!strip.includes(NERD_GLYPHS.speed), strip);
+			assert.ok(!strip.includes(notice), strip);
+			assert.ok(seen.some(([token, text]) => token === "dim" && text.includes(shown)));
+		}
+		// ASCII has no phase glyph, so its words replace the whole field instead.
+		for (const notice of [NOTICES.waiting, NOTICES.retrying, NOTICES.compact, NOTICES.summary] as const) {
+			const strip = stripVTControlCharacters(
+				renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed, ASCII_GLYPHS, notice),
+			);
+			assert.equal(visibleWidth(strip), 60);
+			assert.ok(strip.endsWith(`${notice} `), strip);
+			assert.ok(!strip.includes("t/s"), strip);
 		}
 	});
 
@@ -498,7 +504,8 @@ describe("lane strip", () => {
 		);
 		assert.equal(visibleWidth(before), 60);
 		assert.equal(before.indexOf("15.6%"), after.indexOf("15.6%"));
-		assert.ok(before.endsWith(`${NERD_GLYPHS.waiting} `));
+		// Without a reading the field holds the unknown marker, never a lone icon in blank space.
+		assert.ok(before.endsWith(`${NERD_GLYPHS.waiting} ?t/s `));
 		assert.ok(after.endsWith("~9.8t/s "));
 	});
 
@@ -515,7 +522,7 @@ describe("lane strip", () => {
 				renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", null, NERD_GLYPHS, notice),
 			);
 			assert.equal(visibleWidth(wide), 60);
-			assert.ok(wide.endsWith(`${icon} `), wide);
+			assert.ok(wide.endsWith(`${icon} ?t/s `), wide);
 			assert.ok(!wide.includes(notice), wide);
 			// ASCII has no icons, so the notice falls back to its words.
 			const ascii = stripVTControlCharacters(
@@ -523,7 +530,7 @@ describe("lane strip", () => {
 			);
 			assert.ok(ascii.endsWith(`${notice} `), ascii);
 		}
-		// The single-cell icon survives a strip too narrow for any wording.
+		// The single-cell icon survives a strip too narrow for the placeholder.
 		const tight = stripVTControlCharacters(
 			renderLaneStrip(dominantSnapshot, 24, identityStyles, 0, "idle", null, NERD_GLYPHS, NOTICES.waiting),
 		);

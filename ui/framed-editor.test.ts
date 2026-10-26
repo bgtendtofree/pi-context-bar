@@ -1000,11 +1000,12 @@ test("puts wait/phase notices in the speed slot and mirrors Pi's indicator kind"
 
 	framed.setHealth(health("retrying…"));
 	const after = framed.render(80).map(stripVTControlCharacters);
-	// The icon carries the notice alone; the words survive only without icons.
+	// The phase glyph replaces the speedometer; the last reading stays beside it.
 	assert.match(after[0] ?? "", new RegExp(NERD_GLYPHS.retrying));
 	assert.doesNotMatch(after[0] ?? "", /retrying…/);
-	assert.doesNotMatch(after[0] ?? "", /t\/s/);
-	// The notice replaces the reading inside the same reserved field; the percent cannot move.
+	assert.match(after[0] ?? "", /~42\.3t\/s/);
+	assert.doesNotMatch(after[0] ?? "", new RegExp(NERD_GLYPHS.speed));
+	// Both readings share one reserved field; the percent cannot move.
 	assert.equal(after[0]?.indexOf("20.0%"), before[0]?.indexOf("20.0%"));
 
 	// Pi routes its public indicator here instead of a separate status row; the frame keeps only

@@ -394,8 +394,9 @@ const NOTICE_GLYPH_FIELDS: Readonly<Record<HealthNotice, "waiting" | "retrying" 
 
 /**
  * Top-border strip: auto-fit lane with context `%` (+ window size) and one reserved right slot.
- * The slot carries a live speed reading or, while Pi is waiting/retrying/compacting, a short dim
- * notice in the same field so the lane and percent do not move when output starts.
+ * The slot is a phase glyph plus a reading: a live speed while output flows, the settled reading
+ * while Pi reports a phase, and `?t/s` when that phase has no reading yet. The field never shrinks
+ * to a lone icon, so the lane and percent do not move when output starts.
  */
 export const renderLaneStrip = (
 	snapshot: ContextSnapshot,
@@ -437,13 +438,18 @@ export const renderLaneStrip = (
 				rawSpeed,
 			].filter((value, index, all) => all.indexOf(value) === index)
 		: [];
-	// A notice is its icon alone when the glyph set has one; the words are the fallback for ASCII or a
-	// terminal without Nerd Fonts. The icon is padded to the reading's field so the percent and lane
-	// never move when output starts, and the words keep the reading's field when they do show.
+	// A notice takes the speedometer's glyph slot and keeps the reading beside it; without a reading
+	// it shows `?t/s`, the same unknown marker as `?%`, so the field never holds a lone icon in a
+	// wide blank. The words are the fallback for ASCII or a terminal without Nerd Fonts.
 	const noticeIcon = noticeText ? glyphs[NOTICE_GLYPH_FIELDS[noticeText]] : "";
+	const noticeReading = rawSpeed || "?t/s";
 	const noticeOptions = noticeText
 		? noticeIcon
-			? [padLeft(noticeIcon, iconFieldWidth), noticeIcon]
+			? [
+					padLeft(`${noticeIcon} ${noticeReading}`, iconFieldWidth),
+					`${noticeIcon} ${noticeReading}`,
+					noticeIcon,
+				].filter((value, index, all) => all.indexOf(value) === index)
 			: [
 					padLeft(noticeText, visibleWidth(SPEED_FIELD_TEXT)),
 					noticeText,

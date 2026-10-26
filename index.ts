@@ -1,4 +1,5 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { keyText, parseSessionEntries, VERSION } from "@earendil-works/pi-coding-agent";
 import { isAppleTerminalSession } from "@earendil-works/pi-tui";
@@ -26,6 +27,16 @@ import {
 	SUBSCRIPTION_TURN_ENTRY,
 } from "./lib/context.ts";
 import {
+	buildEffectiveContext,
+	type ContextChange,
+	type ContextMessage,
+	compareContext,
+	type EffectiveContextSummary,
+	latestRequestUsage,
+	type RequestUsage,
+	toolDeclaration,
+} from "./lib/context-audit.ts";
+import {
 	COMPACT_HINT_DEFS,
 	EXPANDED_HINT_DEFS,
 	type HeaderStyles,
@@ -43,7 +54,22 @@ import {
 import { INITIAL_PROMPT_STATE, type PromptState, promptStateAfterTurn, promptStateFromEntries } from "./lib/prompt.ts";
 import { parseQuotaEvent, parseQuotaHeaders, responseQuotaKey, unexpiredQuota } from "./lib/response-quota.ts";
 import { completedTokenSpeed, estimateDeltaTokens, estimateTokenSpeed, type TokenSpeedSnapshot } from "./lib/speed.ts";
+import { restoreDecision, STASH_SHORTCUT, STASH_SUBCOMMAND, stashDecision } from "./lib/stash.ts";
 import { renderStatus } from "./lib/status.ts";
+import {
+	endAgentRun,
+	endTurn,
+	healthNotice,
+	INITIAL_TIMING,
+	isObservableOutput,
+	observeOutput,
+	settleAgentRun,
+	startAgentRun,
+	startRequest,
+	startTurn,
+	type TimingReport,
+	type TimingState,
+} from "./lib/timing.ts";
 import { registerFramedEditor } from "./ui/framed-editor.ts";
 
 /** Streamed tokens per mouth frame: chomp speed follows throughput. */
@@ -73,6 +99,17 @@ type ChromeState = Readonly<{
 	speedStreamStartedAt: number | undefined;
 	speedTurnOutputTokens: number;
 	speedTurnActiveMs: number;
+	timing: TimingState;
+	/** Pi's native working indicator kind, read through the public editor API. */
+	phase: string | undefined;
+	lastRequestUsage: RequestUsage | undefined;
+	effective: EffectiveContextSummary | undefined;
+	effectiveIssue: string | undefined;
+	runContext: ContextSnapshot | undefined;
+	runContextIssue: string | undefined;
+	contextChange: ContextChange | undefined;
+	/** In-memory draft; never written to disk or carried into another session. */
+	stash: string | undefined;
 	tui: RenderRequester | undefined;
 	glyphs: GlyphSet;
 	prompt: PromptState;
@@ -113,6 +150,15 @@ const freshState = (): ChromeState => ({
 	speedStreamStartedAt: undefined,
 	speedTurnOutputTokens: 0,
 	speedTurnActiveMs: 0,
+	timing: INITIAL_TIMING,
+	phase: undefined,
+	lastRequestUsage: undefined,
+	effective: undefined,
+	effectiveIssue: undefined,
+	runContext: undefined,
+	runContextIssue: undefined,
+	contextChange: undefined,
+	stash: undefined,
 	tui: undefined,
 	glyphs: NERD_GLYPHS,
 	prompt: INITIAL_PROMPT_STATE,
@@ -172,11 +218,116 @@ const refreshSessionUsage = (ctx: ExtensionContext): void => {
 						entry.type === "message" && entry.message.role === "assistant" && !state.provisionalBaseIds?.has(entry.id),
 				)?.id
 			: undefined;
+	// Never fall back to `getEntries()`: a response on another branch must stay unavailable here.
+	const branch = typeof ctx.sessionManager.getBranch === "function" ? ctx.sessionManager.getBranch() : undefined;
 	patch({
 		usage: accumulateSessionUsage(entries, { provisionalSubscriptionId: provisionalId }),
+		lastRequestUsage: branch ? latestRequestUsage(branch) : undefined,
 		usageLeafId: leafId,
 		usageProvisional: state.subscriptionTurn,
 	});
+};
+
+/** A stale/unobserved summary is explicitly unavailable until the next context observation. */
+const markEffectiveUnknown = (issue: string): void => {
+	patch({ effective: undefined, effectiveIssue: issue });
+};
+
+/**
+ * Last effective context observed at the `context_with_system` hook. Only the bounded numeric
+ * summary is kept; messages, prompts, and tool payloads are never stored. Later handlers or the
+ * provider can still transform the transcript after this observation.
+ */
+const observeEffectiveContext = (messages: readonly { role: string }[]): void => {
+	try {
+		patch({
+			effective: buildEffectiveContext({
+				messages: messages as readonly ContextMessage[],
+				systemPrompt: getCurrentSystemPrompt(messages),
+				// Replayed transcript declarations, not getActiveTools: hidden/conditional tools that
+				// never reach the provider must not inflate the Tools estimate.
+				tools: getCurrentTools(messages).map(toolDeclaration),
+				now: Date.now(),
+			}),
+			effectiveIssue: undefined,
+		});
+	} catch {
+		markEffectiveUnknown("effective context observation failed");
+	}
+};
+
+const timingReport = (): TimingReport => ({
+	lastTtftMs: state.timing.lastTtftMs,
+	requestPending: state.timing.request !== undefined && state.timing.request.ttftMs === undefined,
+	runActive: state.timing.run !== undefined,
+	lastRun: state.timing.lastRun,
+	phase: state.phase,
+});
+
+const stashBlocks = (ctx: ExtensionContext, action: string): boolean => {
+	if (state.stash === undefined) return false;
+	ctx.ui.notify(
+		`Draft stash still holds text; restore it first with ${STASH_SHORTCUT} or /context-bar ${STASH_SUBCOMMAND} (${action} cancelled)`,
+		"warning",
+	);
+	return true;
+};
+
+/** Clear the stash only after the editor accepted the text, so a failed set can be retried. */
+const restoreDraftText = (ctx: ExtensionContext, text: string): void => {
+	try {
+		ctx.ui.setEditorText(text);
+	} catch {
+		ctx.ui.notify("Draft restore failed; the stash is still held and can be retried", "warning");
+		return;
+	}
+	patch({ stash: undefined });
+	ctx.ui.notify("Stashed draft restored", "info");
+};
+
+const toggleStash = (ctx: ExtensionContext): void => {
+	if (ctx.mode !== "tui") {
+		ctx.ui.notify("Draft stash requires the interactive editor", "warning");
+		return;
+	}
+	const decision = stashDecision(ctx.ui.getEditorText(), state.stash);
+	if (decision.action === "stash") {
+		try {
+			ctx.ui.setEditorText("");
+		} catch {
+			ctx.ui.notify("Draft stash failed; editor text was not changed and nothing was stashed", "warning");
+			return;
+		}
+		patch({ stash: decision.text });
+		ctx.ui.notify(`Draft stashed (${STASH_SHORTCUT} or /context-bar ${STASH_SUBCOMMAND} restores)`, "info");
+	} else if (decision.action === "restore") {
+		restoreDraftText(ctx, decision.text);
+	} else if (decision.action === "refuse") {
+		ctx.ui.notify(
+			"A draft is already stashed and the editor has text; empty the editor to restore it (nothing was overwritten)",
+			"warning",
+		);
+	} else {
+		ctx.ui.notify(`Nothing to stash or restore (${STASH_SHORTCUT} stashes non-empty editor text)`, "info");
+	}
+	requestRender();
+};
+
+const restoreStashedDraft = (ctx: ExtensionContext): void => {
+	if (ctx.mode !== "tui") {
+		ctx.ui.notify("Draft stash requires the interactive editor", "warning");
+		return;
+	}
+	// A submitted slash command has already cleared the editor; verify anyway and never overwrite.
+	const decision = restoreDecision(ctx.ui.getEditorText(), state.stash);
+	if (decision.action === "restore") {
+		restoreDraftText(ctx, decision.text);
+	} else if (decision.action === "refuse") {
+		ctx.ui.notify(`Editor already has text; not overwriting it (${STASH_SHORTCUT} stashes or restores)`, "warning");
+	} else {
+		ctx.ui.notify(`No stashed draft to restore (${STASH_SHORTCUT} stashes the editor)`, "info");
+	}
+	requestRender();
 };
 
 /** New OpenAI OAuth and virtual selections cannot redeem legacy ChatGPT resets. */
@@ -492,6 +643,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 	patch({ prompt: promptStateFromEntries(ctx.sessionManager.getBranch()) });
 	refreshSnapshot(ctx);
 	refreshSessionUsage(ctx);
+	markEffectiveUnknown("waiting for the next context observation");
 
 	if (ctx.mode === "tui") {
 		ctx.ui.setWorkingVisible(false);
@@ -529,9 +681,23 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 				frame: Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0),
 				activity: state.laneActivity,
 				prompt: state.prompt,
+				notice: healthNotice({
+					phase: state.phase,
+					waiting: state.timing.waiting,
+					stashed: state.stash !== undefined,
+					hasSpeed: state.tokenSpeed !== null,
+					outputActive: state.timing.request?.ttftMs !== undefined,
+				}),
 			};
 		},
 		getGlyphs: () => state.glyphs,
+		onWorkingStatus: (kind) => {
+			// Mirror Pi's native retry/compaction/summary phase; never infer one from errors.
+			if (state.phase === kind) return;
+			patch({ phase: kind });
+			requestRender();
+		},
+		onStash: () => toggleStash(ctx),
 		onUnrecognizedLayout: () => {
 			// The empty footer and hidden working row belong to the framed editor; restore Pi's chrome when it is not there.
 			ctx.ui.setFooter(undefined);
@@ -548,8 +714,12 @@ export default function zContext(pi: ExtensionAPI): void {
 	patch({ glyphs: configGlyphs() });
 
 	pi.registerCommand("context-bar", {
-		description: "Inspect chrome/status diagnostics or switch ASCII glyphs",
+		description: "Inspect chrome/status diagnostics, restore a stashed draft, or switch ASCII glyphs",
 		handler: async (args, ctx) => {
+			if (args.trim() === STASH_SUBCOMMAND) {
+				restoreStashedDraft(ctx);
+				return;
+			}
 			if (args.trim() === "status") {
 				expireQuota(ctx);
 				refreshSnapshot(ctx);
@@ -563,6 +733,12 @@ export default function zContext(pi: ExtensionAPI): void {
 						context: state.context,
 						usage: state.usage,
 						speed: state.tokenSpeed,
+						timing: timingReport(),
+						requestUsage: state.lastRequestUsage,
+						contextChange: state.contextChange,
+						effective: state.effective,
+						effectiveIssue: state.effectiveIssue,
+						stash: state.stash !== undefined,
 						quota: state.quota,
 						quotaSource: state.quotaSource,
 						quotaUpdatedAt: state.quotaUpdatedAt,
@@ -575,7 +751,7 @@ export default function zContext(pi: ExtensionAPI): void {
 			}
 			const ascii = nextAsciiFallback(args, state.glyphs.ascii);
 			if (ascii === undefined) {
-				ctx.ui.notify("Usage: /context-bar status | ascii-fallback [on|off|toggle]", "warning");
+				ctx.ui.notify(`Usage: /context-bar status | ${STASH_SUBCOMMAND} | ascii-fallback [on|off|toggle]`, "warning");
 				return;
 			}
 			// Runtime only: the config file is read again at the next session start, so a toggle never rewrites
@@ -596,7 +772,17 @@ export default function zContext(pi: ExtensionAPI): void {
 			}),
 	});
 
+	pi.on("session_before_switch", (event, ctx) =>
+		stashBlocks(ctx, event.reason === "new" ? "new session" : "session switch") ? { cancel: true } : undefined,
+	);
+
+	pi.on("session_before_tree", (_event, ctx) => (stashBlocks(ctx, "tree navigation") ? { cancel: true } : undefined));
+
 	pi.on("session_before_fork", (event, ctx) => {
+		if (stashBlocks(ctx, "fork")) {
+			pendingForkSubscriptionIds = undefined;
+			return { cancel: true };
+		}
 		const entries = ctx.sessionManager.getEntries();
 		const target =
 			event.position === "at" ? event.entryId : (ctx.sessionManager.getEntry?.(event.entryId)?.parentId ?? null);
@@ -622,8 +808,14 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 
+	pi.on("context_with_system", (event) => {
+		// Observation point for the effective request; numeric summary only, no message retention.
+		observeEffectiveContext(event.messages);
+	});
+
 	pi.on("before_provider_request", (event, ctx) => {
 		captureRequestBilling(event.payload, ctx);
+		patch({ timing: startRequest(state.timing, performance.now()) });
 		if (ctx.mode !== "tui") return;
 		// A proxy may rotate credentials between requests; never merge windows from different responses.
 		if (passiveQuota()) dropQuota(undefined);
@@ -659,12 +851,20 @@ export default function zContext(pi: ExtensionAPI): void {
 			observeQuota(parseQuotaEvent(event.data, Date.now()), "stream event");
 	});
 
-	pi.on("agent_start", () => {
-		if (changeLaneActivity("working")) requestRender();
+	pi.on("agent_start", (_event, ctx) => {
+		refreshSnapshot(ctx);
+		// A retried `agent_start` keeps the original run start; only `agent_settled` ends the run.
+		// A fresh run clears the previous settled delta instead of presenting it as this run's.
+		if (state.timing.run === undefined)
+			patch({ runContext: state.context, runContextIssue: undefined, contextChange: undefined });
+		patch({ timing: startAgentRun(state.timing, performance.now()) });
+		changeLaneActivity("working");
+		requestRender();
 	});
 
 	pi.on("turn_start", (_event, ctx) => {
 		resetTurnSpeed();
+		patch({ timing: startTurn(state.timing, performance.now()) });
 		// Capture the request's selection before auth; a later select must not claim its response quota.
 		// A virtual/unsupported selection is captured too, with `key` undefined, so it cannot fall through.
 		patch({ turnQuota: { key: responseQuotaKey(ctx.model) } });
@@ -693,12 +893,19 @@ export default function zContext(pi: ExtensionAPI): void {
 		const next = activityForAssistantEvent(type);
 		if (next && changeLaneActivity(next)) requestRender();
 
+		const now = performance.now();
+		// Start events and empty deltas are not output; only observable content records TTFT.
+		const timing = observeOutput(state.timing, now, isObservableOutput(event.assistantMessageEvent));
+		if (timing !== state.timing) {
+			patch({ timing });
+			requestRender();
+		}
+
 		const delta =
 			type === "text_delta" || type === "thinking_delta" || type === "toolcall_delta"
 				? event.assistantMessageEvent.delta
 				: undefined;
 		if (!delta) return;
-		const now = performance.now();
 		const tokens = estimateDeltaTokens(delta);
 		const streamStartedAt = state.speedStreamStartedAt ?? now;
 		const totalTokens = state.speedStreamTokens + tokens;
@@ -713,6 +920,10 @@ export default function zContext(pi: ExtensionAPI): void {
 
 	pi.on("message_end", (event) => {
 		if (event.message.role !== "assistant") return;
+		if (event.message.stopReason === "error" || event.message.stopReason === "aborted") {
+			const timing = endTurn(state.timing);
+			if (timing !== state.timing) patch({ timing });
+		}
 		patch({
 			speedTurnActiveMs:
 				state.speedStreamStartedAt !== undefined
@@ -735,6 +946,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		}
 		patch({
 			tokenSpeed: completedTokenSpeed(state.speedTurnOutputTokens, state.speedTurnActiveMs) ?? state.tokenSpeed,
+			timing: endTurn(state.timing),
 			quotaRequestKey: undefined,
 			subscriptionTurn: false,
 			billingRequest: undefined,
@@ -747,17 +959,30 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_end", (_event, ctx) => {
+		patch({ timing: endAgentRun(state.timing) });
 		refreshSnapshot(ctx);
 		refreshSessionUsage(ctx);
 		requestRender();
 	});
-	pi.on("agent_settled", () => {
+	pi.on("agent_settled", (event, ctx) => {
+		refreshSnapshot(ctx);
+		const change = compareContext(state.runContext, state.context, state.runContextIssue);
+		patch({
+			timing: settleAgentRun(state.timing, performance.now(), event.aborted),
+			contextChange: change,
+			runContext: undefined,
+			runContextIssue: undefined,
+		});
+		refreshSessionUsage(ctx);
 		changeLaneActivity("idle");
 		requestRender();
 	});
 	pi.on("model_select", (_event, ctx) => {
-		patch({ quotaRequestKey: undefined });
+		// A run that spans a model switch has no comparable before/after context reading.
+		patch({ quotaRequestKey: undefined, contextChange: { unavailable: "model changed" } });
+		if (state.timing.run) patch({ runContextIssue: "model changed during the run" });
 		if (passiveQuota()) dropQuota(undefined);
+		markEffectiveUnknown("model changed; waiting for the next observation");
 		refreshSnapshot(ctx);
 		void refreshQuota(ctx);
 		requestRender();
@@ -765,6 +990,9 @@ export default function zContext(pi: ExtensionAPI): void {
 	pi.on("thinking_level_select", requestRender);
 	pi.on("session_compact", (_event, ctx) => {
 		const before = state.context;
+		patch({ contextChange: { unavailable: "compaction changed the context" } });
+		if (state.timing.run) patch({ runContextIssue: "compaction changed the context during the run" });
+		markEffectiveUnknown("compaction changed the context; waiting for the next observation");
 		refreshSnapshot(ctx);
 		refreshSessionUsage(ctx);
 		if (
@@ -780,13 +1008,40 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 	pi.on("session_tree", (_event, ctx) => {
-		patch({ prompt: promptStateFromEntries(ctx.sessionManager.getBranch()) });
+		patch({
+			prompt: promptStateFromEntries(ctx.sessionManager.getBranch()),
+			contextChange: { unavailable: "branch changed" },
+		});
+		if (state.timing.run) patch({ runContextIssue: "branch changed during the run" });
+		markEffectiveUnknown("branch changed; waiting for the next observation");
 		refreshSnapshot(ctx);
 		refreshSessionUsage(ctx);
 		requestRender();
 	});
 	pi.on("session_shutdown", (event, ctx) => {
 		quotaLookupId++;
+		// Shutdown cannot be cancelled. Restore a held draft into an empty editor first (reload keeps
+		// editor text); with a non-empty editor the SDK leaves no non-disk place to preserve it.
+		if (state.stash !== undefined && ctx.mode === "tui") {
+			try {
+				if (ctx.ui.getEditorText().length === 0) {
+					ctx.ui.setEditorText(state.stash);
+				} else {
+					// Reload/quit cannot be cancelled, so this in-memory draft cannot be preserved.
+					ctx.ui.notify(
+						`Stash lost during ${event.reason} shutdown: the editor already has text; restore the draft before reloading or quitting (${STASH_SHORTCUT} or /context-bar ${STASH_SUBCOMMAND})`,
+						"warning",
+					);
+				}
+			} catch {
+				// A forced shutdown can take the editor before this handler runs; no disk workaround.
+				try {
+					ctx.ui.notify(`Stash could not be restored during ${event.reason} shutdown`, "warning");
+				} catch {
+					// The UI is already gone.
+				}
+			}
+		}
 		// Pi emits session_shutdown for a fork before session_start carries the ids forward, so keep them.
 		if (event.reason !== "fork") pendingForkSubscriptionIds = undefined;
 		if (state.rewindTimer) clearInterval(state.rewindTimer);

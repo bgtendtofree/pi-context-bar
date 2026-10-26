@@ -52,7 +52,7 @@ metrics and richer context breakdowns; the distinction here is the compact layou
 | Editor body | `❯` prompt (accent) · typed input |
 | Editor border right | cache database · optional `$` |
 | Pac-Man lane | empty consumed space → phase ghost while running → text Pac-Man → dim remaining pellets |
-| Right-aligned metrics | native `%` · optional token speed `t/s` |
+| Right-aligned metrics | native `%` · one reserved field: wait/phase notice or token speed `t/s` |
 
 Healthy metrics stay dim; accent marks the model and ready prompt, and warning/error colors mark thresholds and failure only. The Pac-Man strip spans the top row without `─` caps or filler; only the bottom keeps a horizontal rule. No side borders, corners, background fills, or extra rows. The prompt is flush left, followed by one space; continuation rows align with typed text. The right gutter and bottom metric positions stay unchanged; scroll counts remain visible.
 
@@ -115,6 +115,24 @@ Only the exact known completed consume codes `reset` and `already_redeemed` allo
 
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. Timing starts at the first output delta and excludes tool-execution gaps. While a reading exists, a wide top row right-aligns it in one reserved field sized for three-digit speeds, so digit growth, the `~` estimate marker, and provider calibration never resize the lane or move Pac-Man and the context percent; an unknown or absent speed reserves nothing. Narrow rows keep the percent first and may shrink or drop the field before any useful number.
 
+The same reserved field shows a short dim wait state before the first non-empty output: `waiting`, or Pi's own observable phase kind (`retrying`, `compact`, `summary`) while the public embedded working-status API reports one. The normal `t/s` returns as soon as output streams. These are static labels — no timer, no new row — and Pac-Man remains token-driven. A held draft shows `stash` only when no speed reading is active and the field would otherwise be empty.
+
+`/context-bar status` reports the last measured time-to-first-token and full agent-run duration. TTFT starts at `before_provider_request` (falling back to `turn_start` when the transport never emits that stage) and ends at the first non-empty text, thinking, or tool-call output; bare starts and empty deltas do not count. The run starts at `agent_start` and ends at `agent_settled`, so it includes tool loops and Pi's retry/recovery starts instead of resetting at `agent_end`. A pending request is shown as waiting; an older measurement stays labelled as last measured. Aborts and errors clear the pending measurement, and an aborted run is labelled.
+
+### Effective context and request usage
+
+`/context-bar status` also reports raw token usage of the last assistant response **on the current branch**: uncached input, cache read, cache write, output, and total. These are request traffic, not the current context capacity. All-zero usage is Pi's placeholder for “no report” (typical on provider errors), and partial/non-finite usage is also unavailable rather than shown as zero.
+
+The effective-context breakdown is a **hook-time observation**, never a reconstruction from session history. At each `context_with_system` event the extension replays Pi's public transcript helpers (`getCurrentSystemPrompt` and `getCurrentTools` from `@earendil-works/pi-ai`) against the messages the hook actually exposes, and stores only a bounded numeric summary. Messages, prompts, and tool payloads are never retained, written to disk, or added to the session. Because the helper reads transcript tool declarations, tools hidden or conditionally removed from the provider request are not counted merely because they are active in Pi.
+
+System is the replayed prompt, Tools is the declaration text, and Messages/Tool Results/Summary/Other are text volumes of the observed transcript after compaction and context edits. Only the three largest tool results are named, without their bodies. These are character volumes of the observed sources, not provider token counts, and they are never normalized to Pi's context estimate. Later `context_with_system` handlers or the provider can still transform the transcript after this observation; the status labels the snapshot as last observed at the hook. A new session, branch, model selection, or compaction marks the summary unavailable until the next observation. The status also compares Pi's context reading at run start and settlement only when both readings are known and the window is unchanged; model, branch, compaction, or unknown readings make the delta unavailable with a reason. No cache-miss attribution is attempted.
+
+### Draft stash
+
+`Alt+S` stashes or restores one in-memory editor draft. Non-empty editor with no held draft stashes and clears; empty editor with a held draft restores and clears; both non-empty refuses without overwriting either; both empty is a no-op. The draft is never sent to the model and never written to disk or session entries. The key is claimed only when no resolved Pi action (built-in, extension, or user override) owns `Alt+S`; otherwise the original action receives the key through Pi's normal editor path, and another extension's registered shortcut keeps the priority Pi already gives it. `/context-bar stash` is the discoverable restore path; because Pi has already cleared the submitted command line, it restores only and refuses to overwrite a non-empty editor.
+
+`session_before_switch`, `session_before_fork`, and `session_before_tree` cancel a new/resume/fork/tree transition while a draft is held, so the stash cannot leak into another session silently. Reload and quit shutdown cannot be cancelled by an extension: if the editor is empty the draft is restored into it first (reload keeps editor text); if the editor already has text, the extension warns that the in-memory stash is lost. A forced kill cannot be guaranteed. Stash restore updates the editor before clearing the stash, so a failed editor write leaves the draft recoverable for a retry.
+
 Top row carries context consumption (lane, `%` with the model's context-window size, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, using the columns previously reserved for short rule caps.
 
 `CH` shows the latest turn's cache hit rate (pi's built-in footer semantics). When the session's token-weighted average diverges from it by more than 5 points, the average joins the label as `CH98/94%` (latest/average), so a quietly drifting hit rate cannot mislead; the average is dim and the latest turn keeps the warning/error coloring.
@@ -145,12 +163,16 @@ Install order decides the winner, so pick one chrome extension per slot instead 
 ### Inspect hidden extension statuses
 
 `/context-bar status` shows a read-only diagnostic notification: model, glyph mode, config path,
-native context estimate, latest/weighted cache hit, cost/speed semantics, quota source/time/reason,
-and current statuses published by other extensions through `ctx.ui.setStatus()`.
+native context estimate, latest/weighted cache hit, cost/speed semantics, TTFT/run timing, raw
+last-response usage, the hook-time effective-context summary, stash state, quota source/time/reason,
+and current statuses published by other extensions through `ctx.ui.setStatus()`. Request token
+counts are exact integers; only the effective-context text volumes use compact K/M labels.
 
 The normal footer stays empty. Status inspection never dispatches a slash command, opens another
-extension, sends a model message, or fetches quota. External status text has terminal controls and
-bidirectional overrides removed; inspection is bounded to 64 entries and 4096 characters per field.
+extension, sends a model message, or fetches quota. The effective-context summary is bounded to
+2000 messages / 8M characters of scanned text, keeps only the three largest tool-result names and volumes,
+and never stores message bodies. External status text has terminal controls and bidirectional
+overrides removed; inspection is bounded to 64 entries and 4096 characters per field.
 If another extension replaced our footer, or the editor fell back to native layout, that status
 source is unavailable rather than a retained stale snapshot.
 
@@ -221,7 +243,7 @@ pi --no-extensions -e ./index.ts --no-session --no-tools -p "Reply ok"
 - Tests use built-in `node:test` and Node coverage
 - Runtime source and tests use separate TypeScript configs
 - Loads as `.ts` via jiti (no build step)
-- Pi core packages stay `*` peers per Pi's package guidance; development and CI test exact Pi `1.4.0`. Older API compatibility is not verified.
+- Pi core packages (`pi-coding-agent`, `pi-tui`, and `pi-ai` for the public transcript replay) stay `*` peers per Pi's package guidance; development and CI test exact Pi `1.4.0`. Older API compatibility is not verified.
 
 ### Pi 1.4.0 compatibility
 

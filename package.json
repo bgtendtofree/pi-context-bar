@@ -20,6 +20,7 @@
 		"lib/border.ts",
 		"lib/chrome.ts",
 		"lib/config.ts",
+		"lib/context-audit.ts",
 		"lib/context.ts",
 		"lib/header.ts",
 		"lib/json.ts",
@@ -28,7 +29,9 @@
 		"lib/prompt.ts",
 		"lib/response-quota.ts",
 		"lib/speed.ts",
+		"lib/stash.ts",
 		"lib/status.ts",
+		"lib/timing.ts",
 		"ui/framed-editor.ts",
 		"README.md",
 		"LICENSE"
@@ -50,6 +53,7 @@
 		"ci": "npm run quality && npm run typecheck && npm run test:coverage && npm run test:coverage:index && npm run smoke:package && npm run smoke:tui"
 	},
 	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
 		"@earendil-works/pi-coding-agent": "*",
 		"@earendil-works/pi-tui": "*"
 	},

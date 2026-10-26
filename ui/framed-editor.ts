@@ -1,6 +1,6 @@
 import { CustomEditor, type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	bottomBorderFits,
 	editorModelOptions,
@@ -23,6 +23,7 @@ import {
 import type { ContextSnapshot, SessionUsage } from "../lib/context.ts";
 import { type PromptState, promptColor, promptGlyph } from "../lib/prompt.ts";
 import type { TokenSpeedSnapshot } from "../lib/speed.ts";
+import { STASH_SHORTCUT, stashShortcutFree } from "../lib/stash.ts";
 
 export type HealthState = Readonly<{
 	snapshot: ContextSnapshot;
@@ -32,7 +33,12 @@ export type HealthState = Readonly<{
 	frame: number;
 	activity: LaneActivity;
 	prompt: PromptState;
+	/** Short dim right-slot notice (wait/retry/compaction/stash) that temporarily replaces speed. */
+	notice?: string | undefined;
 }>;
+
+/** Public Pi indicator kinds; the extension keeps only the kind, never the private indicator object. */
+export type WorkingStatusKind = NonNullable<Parameters<CustomEditor["setWorkingStatusIndicator"]>[0]>["kind"];
 
 export type FramedEditorOptions = Readonly<{
 	getModel: () => ModelInfo;
@@ -43,6 +49,10 @@ export type FramedEditorOptions = Readonly<{
 	 * bottom-border memo key below needs the live set to notice the switch.
 	 */
 	getGlyphs: () => GlyphSet;
+	/** Pi's own retry/compaction/branch-summary indicator kind, read through the public editor API. */
+	onWorkingStatus?: (kind: WorkingStatusKind | undefined) => void;
+	/** Stash/restore the draft, only when Alt+S is not already bound to another editor action. */
+	onStash?: () => void;
 	/**
 	 * Reported once per editor when pi's render shape is not the one the frame assumes, so a pi update
 	 * shows up as a message instead of chrome that quietly stopped appearing.
@@ -116,10 +126,44 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 		private bottomResult: Readonly<{ leftLabel: string; metrics: string }> | null = null;
 		private layoutReported = false;
 
+		private readonly editorKeybindings: KeybindingsManager;
+
 		constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
-			super(tui, theme, keybindings, { paddingX: 0 });
+			// embedWorkingStatus routes Pi's retry/compaction/summary indicators here instead of a
+			// separate status row; the frame replaces their native text with one dim right-slot label.
+			super(tui, theme, keybindings, { paddingX: 0, embedWorkingStatus: true });
+			this.editorKeybindings = keybindings;
 			this.setAutocompleteMaxVisible(3);
 			options.onTui(tui);
+		}
+
+		/**
+		 * Pi's global extension shortcut would win over user bindings. The stash key is handled here
+		 * instead, only while no resolved editor/app action uses it; otherwise the bound action gets
+		 * the input through `super` unchanged.
+		 */
+		override handleInput(data: string): void {
+			// Ordinary typing must not scan every resolved binding: only the stash key does.
+			if (!options.onStash || !matchesKey(data, STASH_SHORTCUT)) {
+				super.handleInput(data);
+				return;
+			}
+			const getEffectiveConfig = this.editorKeybindings.getEffectiveConfig;
+			const free =
+				typeof getEffectiveConfig === "function" && stashShortcutFree(getEffectiveConfig.call(this.editorKeybindings));
+			if (free) {
+				// Another extension's registered shortcut keeps the priority Pi already gives it.
+				if (this.onExtensionShortcut?.(data)) return;
+				options.onStash();
+				return;
+			}
+			super.handleInput(data);
+		}
+
+		/** Public override: Pi still owns the indicator; the frame only mirrors its kind. */
+		override setWorkingStatusIndicator(indicator: Parameters<CustomEditor["setWorkingStatusIndicator"]>[0]): void {
+			options.onWorkingStatus?.(indicator?.kind);
+			super.setWorkingStatusIndicator(indicator);
 		}
 
 		/**
@@ -213,6 +257,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 						health.activity,
 						health.speed,
 						options.getGlyphs(),
+						health.notice,
 					),
 			];
 

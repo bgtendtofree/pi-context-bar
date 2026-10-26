@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import type {
 	AgentSettledEvent,
 	CustomEntry,
@@ -1139,7 +1140,7 @@ test("runtime ascii-fallback toggle swaps editor glyphs without rewriting the co
 		model,
 		getContextUsage: () => ({ tokens: 0, contextWindow: model.contextWindow }),
 		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
-		modelRegistry: { getApiKeyForProvider: async () => undefined },
+		modelRegistry: { find: () => undefined, getApiKeyForProvider: async () => undefined },
 		ui: {
 			notify: (message: string, level: string) => notices.push({ message, level }),
 			theme: {
@@ -1188,7 +1189,7 @@ test("runtime ascii-fallback toggle swaps editor glyphs without rewriting the co
 	await contextBar("ascii-fallback maybe", ctx as unknown as ExtensionCommandContext);
 	assert.ok(render().includes(ASCII_GLYPHS.pacmanOpen));
 	assert.deepEqual(notices.at(-1), {
-		message: "Usage: /context-bar status | ascii-fallback [on|off|toggle]",
+		message: "Usage: /context-bar status | stash | ascii-fallback [on|off|toggle]",
 		level: "warning",
 	});
 });
@@ -1221,7 +1222,7 @@ test("re-applies asciiFallback glyphs after Pi replaces the session", async (t) 
 		model,
 		getContextUsage: () => ({ tokens: 0, contextWindow: model.contextWindow }),
 		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
-		modelRegistry: { getApiKeyForProvider: async () => undefined },
+		modelRegistry: { find: () => undefined, getApiKeyForProvider: async () => undefined },
 		ui: {
 			notify: () => {},
 			theme: {
@@ -1343,6 +1344,7 @@ test("lane chomps streamed tokens, reports live speed, and rewinds after compact
 	assert.ok(!render().includes(NERD_GLYPHS.ghost));
 
 	handlers.get("agent_start")?.({ type: "agent_start" }, ctx);
+	handlers.get("turn_start")?.({ type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 	handlers.get("message_start")?.({ type: "message_start", message: { role: "user" } }, ctx);
 	handlers.get("message_start")?.(
 		{
@@ -1474,7 +1476,7 @@ test("honours quietStartup by leaving pi's own startup header alone", () => {
 			model,
 			getContextUsage: () => ({ tokens: 0, contextWindow: model.contextWindow }),
 			sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
-			modelRegistry: { getApiKeyForProvider: async () => undefined },
+			modelRegistry: { find: () => undefined, getApiKeyForProvider: async () => undefined },
 			ui: {
 				notify: () => {},
 				theme: {
@@ -1528,7 +1530,7 @@ test("tool-call events keep the generating ghost while only answer text succeeds
 			getBranch: () => [],
 			getHeader: () => null,
 		},
-		modelRegistry: { getApiKeyForProvider: async () => undefined },
+		modelRegistry: { find: () => undefined, getApiKeyForProvider: async () => undefined },
 		ui: {
 			notify: () => {},
 			theme: {
@@ -1604,7 +1606,7 @@ test("unknown native context tokens stay unavailable through compaction and reco
 		model,
 		getContextUsage: () => ({ tokens, contextWindow: model.contextWindow }),
 		sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
-		modelRegistry: { getApiKeyForProvider: async () => undefined },
+		modelRegistry: { find: () => undefined, getApiKeyForProvider: async () => undefined },
 		ui: {
 			notify: () => {},
 			theme: {
@@ -1670,7 +1672,7 @@ test("editor health scans background usage on render without a turn or agent eve
 		model,
 		getContextUsage: () => ({ tokens: 1_000, contextWindow: model.contextWindow }),
 		sessionManager: { getEntries: () => entries, getLeafId: () => leafId, getBranch: () => [] },
-		modelRegistry: { getApiKeyForProvider: async () => undefined },
+		modelRegistry: { find: () => undefined, getApiKeyForProvider: async () => undefined },
 		ui: {
 			notify: () => {},
 			theme: {
@@ -1967,4 +1969,443 @@ test("does not bill a captured subscription response before its marker lands at 
 	assert.ok(render().includes("$0.440"));
 	assert.ok(!render().includes("$0.940"));
 	handlers.get("session_shutdown")?.({}, ctx);
+});
+
+type StashHarness = Readonly<{
+	handlers: Map<string, (event: unknown, ctx: ExtensionContext) => unknown>;
+	commands: Map<string, Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>;
+	notices: { message: string; level: string | undefined }[];
+	ctx: ExtensionContext;
+	setEditorText: (text: string) => void;
+	editorText: () => string;
+	appendCount: () => number;
+	setEntries: (entries: SessionEntry[], leafId: string | null) => void;
+	setBranch: (branch: SessionEntry[]) => void;
+	setLeaf: (leafId: string | null) => void;
+	setUsedTokens: (tokens: number) => void;
+	setProjectionMessages: (messages: readonly unknown[]) => void;
+	emitContextWithSystem: (messages: readonly { role: string }[]) => void;
+	stash: () => void;
+	failNextEditorSet: () => void;
+	status: () => Promise<string>;
+}>;
+
+/** Minimal live-session harness for stash/timing/diagnostics wiring; no renderer is exercised here. */
+const stashHarness = (): StashHarness => {
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+	const commands = new Map<string, Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>();
+	const notices: { message: string; level: string | undefined }[] = [];
+	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
+	let editorText = "";
+	let failSet = false;
+	let entries: SessionEntry[] = [];
+	let branch: SessionEntry[] = [];
+	let leafId: string | null = null;
+	let usedTokens = 0;
+	let messages: readonly unknown[] = [];
+	let appendEntries = 0;
+	const model = { provider: "test", api: "test", id: "test-model", contextWindow: 100_000 };
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		model,
+		getSystemPrompt: () => "SYS",
+		getContextUsage: () => ({ tokens: usedTokens, contextWindow: model.contextWindow }),
+		sessionManager: {
+			getEntries: () => entries,
+			getLeafId: () => leafId,
+			getBranch: () => branch,
+			buildSessionProjection: () => ({ messages, thinkingLevel: "off", model: null, entries: [] }),
+		},
+		modelRegistry: { find: () => undefined, getApiKeyForProvider: async () => undefined },
+		ui: {
+			notify: (message: string, level?: string) => notices.push({ message, level }),
+			theme: {
+				fg: (_token: string, text: string) => text,
+				bold: (text: string) => text,
+				style: (text: string) => text,
+			},
+			setWorkingVisible: () => {},
+			setHeader: () => {},
+			setFooter: () => {},
+			setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+				if (!factory) return;
+				const tui = { requestRender: () => {}, terminal: { rows: 20 } } as unknown as TUI;
+				const theme = { borderColor: (text: string) => text } as EditorTheme;
+				const keybindings = {
+					getEffectiveConfig: () => ({}),
+					matches: () => false,
+				} as unknown as Parameters<NonNullable<typeof factory>>[2];
+				editor = factory(tui, theme, keybindings);
+			},
+			getEditorText: () => editorText,
+			setEditorText: (text: string) => {
+				if (failSet) {
+					failSet = false;
+					throw new Error("editor setter failed");
+				}
+				editorText = text;
+			},
+		},
+	} as unknown as ExtensionContext;
+	const pi = {
+		registerCommand: (name: string, command: Parameters<ExtensionAPI["registerCommand"]>[1]) =>
+			commands.set(name, command.handler),
+		getThinkingLevel: () => "off",
+		getActiveTools: () => ["read", "bash"],
+		getAllTools: () => [
+			{ name: "read", description: "Read a file", parameters: { type: "object" } },
+			{ name: "bash", description: "", parameters: { type: "object" } },
+		],
+		appendEntry: () => {
+			appendEntries++;
+		},
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => handlers.set(name, handler),
+	} as unknown as ExtensionAPI;
+	zContext(pi);
+	handlers.get("session_start")?.({ reason: "startup" }, ctx);
+	return {
+		handlers,
+		commands,
+		notices,
+		ctx,
+		setEditorText: (text) => {
+			editorText = text;
+		},
+		editorText: () => editorText,
+		appendCount: () => appendEntries,
+		setEntries: (next, leaf) => {
+			entries = next;
+			branch = next;
+			leafId = leaf;
+		},
+		setBranch: (next) => {
+			branch = next;
+		},
+		setLeaf: (leaf) => {
+			leafId = leaf;
+		},
+		setUsedTokens: (tokens) => {
+			usedTokens = tokens;
+		},
+		setProjectionMessages: (next) => {
+			messages = next;
+		},
+		emitContextWithSystem: (next) => {
+			handlers.get("context_with_system")?.({ type: "context_with_system", messages: next }, ctx);
+		},
+		stash: () => editor?.handleInput("\x1bs"),
+		failNextEditorSet: () => {
+			failSet = true;
+		},
+		status: async () => {
+			await commands.get("context-bar")?.("status", ctx as ExtensionCommandContext);
+			return notices.at(-1)?.message ?? "";
+		},
+	};
+};
+
+test("Alt+S stashes without sending anything, and the command only restores", async () => {
+	const h = stashHarness();
+	const command = h.commands.get("context-bar");
+	assert.ok(command);
+	assert.equal(h.appendCount(), 0);
+
+	await command("stash", h.ctx as ExtensionCommandContext);
+	assert.match(h.notices.at(-1)?.message ?? "", /No stashed draft/);
+
+	h.setEditorText("  draft 中文\nsecond line  ");
+	h.stash();
+	assert.equal(h.editorText(), "");
+	assert.match(h.notices.at(-1)?.message ?? "", /Draft stashed/);
+	assert.match(await h.status(), /Stash: 1 draft held in memory/);
+	assert.equal(h.appendCount(), 0);
+
+	// The command runs after Pi already cleared the submitted line, so it restores.
+	await command("stash", h.ctx as ExtensionCommandContext);
+	assert.equal(h.editorText(), "  draft 中文\nsecond line  ");
+	assert.match(h.notices.at(-1)?.message ?? "", /restored/);
+	assert.match(await h.status(), /Stash: none/);
+
+	// Both sides hold text: refuse and leave both untouched.
+	h.setEditorText("first");
+	h.stash();
+	h.setEditorText("second");
+	h.stash();
+	assert.equal(h.editorText(), "second");
+	assert.match(h.notices.at(-1)?.message ?? "", /nothing was overwritten/);
+	await command("stash", h.ctx as ExtensionCommandContext);
+	assert.equal(h.editorText(), "second");
+	assert.match(h.notices.at(-1)?.message ?? "", /not overwriting/);
+
+	// Emptying the editor lets the restore happen; nothing was lost.
+	h.setEditorText("");
+	await command("stash", h.ctx as ExtensionCommandContext);
+	assert.equal(h.editorText(), "first");
+	assert.equal(h.appendCount(), 0);
+	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, h.ctx);
+});
+
+test("a failed editor restore keeps the stash for a retry", async () => {
+	const h = stashHarness();
+	h.setEditorText("retry me");
+	h.stash();
+	assert.equal(h.editorText(), "");
+	assert.match(await h.status(), /Stash: 1 draft held in memory/);
+
+	h.failNextEditorSet();
+	h.stash();
+	assert.equal(h.editorText(), "");
+	assert.match(h.notices.at(-1)?.message ?? "", /still held and can be retried/);
+	assert.match(await h.status(), /Stash: 1 draft held in memory/);
+
+	// Clearing the stash happens only after the editor accepted the text.
+	h.stash();
+	assert.equal(h.editorText(), "retry me");
+	assert.match(await h.status(), /Stash: none/);
+	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, h.ctx);
+});
+
+test("a held stash blocks session replacement until it is restored", async () => {
+	const h = stashHarness();
+	h.setEditorText("held draft");
+	h.stash();
+	assert.equal(h.editorText(), "");
+	assert.equal(h.appendCount(), 0);
+
+	for (const [name, event] of [
+		["session_before_switch", { type: "session_before_switch", reason: "new" }],
+		["session_before_switch", { type: "session_before_switch", reason: "resume", targetSessionFile: "x" }],
+		["session_before_fork", { type: "session_before_fork", entryId: "e", position: "at" }],
+		["session_before_tree", { type: "session_before_tree" }],
+	] as const) {
+		assert.deepEqual(h.handlers.get(name)?.(event, h.ctx), { cancel: true }, name);
+		assert.match(h.notices.at(-1)?.message ?? "", /cancelled/);
+	}
+	assert.equal(h.appendCount(), 0);
+
+	// Restore through the command, then the same transitions are free again.
+	await h.commands.get("context-bar")?.("stash", h.ctx as ExtensionCommandContext);
+	assert.equal(h.editorText(), "held draft");
+	assert.equal(
+		h.handlers.get("session_before_switch")?.({ type: "session_before_switch", reason: "new" }, h.ctx),
+		undefined,
+	);
+	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, h.ctx);
+});
+
+test("shutdown restores a stash into an empty editor and reports the non-empty boundary", async () => {
+	const h = stashHarness();
+	h.setEditorText("recoverable");
+	h.stash();
+	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "reload" }, h.ctx);
+	// Reload keeps editor text; the free editor received the draft before the runtime reset.
+	assert.equal(h.editorText(), "recoverable");
+	assert.match(await h.status(), /Stash: none/);
+
+	// A non-empty editor cannot take the draft without overwriting it; the SDK has no cancellable
+	// shutdown, so this is the documented loss boundary rather than a silent state-only clear.
+	h.handlers.get("session_start")?.({ reason: "startup" }, h.ctx);
+	h.setEditorText("held again");
+	h.stash();
+	h.setEditorText("typed over");
+	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, h.ctx);
+	assert.equal(h.editorText(), "typed over");
+	assert.match(h.notices.at(-1)?.message ?? "", /Stash lost during quit shutdown/);
+	h.handlers.get("session_start")?.({ reason: "startup" }, h.ctx);
+	await h.commands.get("context-bar")?.("stash", h.ctx as ExtensionCommandContext);
+	assert.match(h.notices.at(-1)?.message ?? "", /No stashed draft/);
+	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, h.ctx);
+});
+
+test("status observes TTFT, run time, request traffic, context change, and effective buckets", async (t) => {
+	let clock = 100;
+	t.mock.method(performance, "now", () => clock);
+	const h = stashHarness();
+	const assistantEntry: SessionEntry = {
+		type: "message",
+		id: "a1",
+		parentId: null,
+		timestamp: "",
+		message: {
+			role: "assistant",
+			content: [],
+			api: "test",
+			provider: "test",
+			model: "test",
+			usage: {
+				input: 500,
+				output: 40,
+				cacheRead: 900,
+				cacheWrite: 20,
+				totalTokens: 1460,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 0,
+		},
+	};
+	// No assistant response yet: usage and TTFT are unavailable, not zero.
+	assert.match(await h.status(), /Request usage: unavailable \(latest response has no usable usage report\)/);
+	assert.match(await h.status(), /Timing TTFT: unavailable/);
+
+	h.setEntries([assistantEntry], "a1");
+	h.setUsedTokens(1000);
+	const esc = String.fromCharCode(27);
+	// The projection still contains a huge toolResult; the observed hook is the only source.
+	h.setProjectionMessages([{ role: "toolResult", toolName: "projection-only", content: "G".repeat(50_000) }]);
+	const systemMessage = {
+		role: "system",
+		content: "BASE",
+		sections: { extra: "SECTION" },
+		toolsAdded: [{ name: "read", description: "Read a file", parameters: { type: "object" } }],
+		timestamp: 1,
+	};
+	const observed = [
+		systemMessage,
+		{ role: "user", content: [{ type: "text", text: "hello" }] },
+		{ role: "toolResult", toolName: "bash", content: [{ type: "text", text: "0123456789" }] },
+		{ role: "toolResult", toolName: `${esc}[31mevil`, content: "xx" },
+		{ role: "compactionSummary", summary: "sum" },
+	];
+
+	h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
+	clock = 200;
+	h.handlers.get("turn_start")?.({ type: "turn_start", turnIndex: 0, timestamp: 0 }, h.ctx);
+	clock = 300;
+	h.handlers.get("before_provider_request")?.({ type: "before_provider_request", payload: {} }, h.ctx);
+	clock = 350;
+	h.emitContextWithSystem(observed);
+	clock = 400;
+	h.handlers.get("message_update")?.(
+		{
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", delta: "" },
+		},
+		h.ctx,
+	);
+	const pending = await h.status();
+	assert.match(pending, /Waiting: yes, no non-empty output yet/);
+	assert.match(pending, /Timing TTFT: unavailable/);
+	assert.match(pending, /last observed at context_with_system/);
+
+	clock = 550;
+	h.handlers.get("message_update")?.(
+		{
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", delta: "0123456789" },
+		},
+		h.ctx,
+	);
+	h.handlers.get("message_end")?.(
+		{ type: "message_end", message: { role: "assistant", stopReason: "stop", usage: { output: 40 } } },
+		h.ctx,
+	);
+	h.handlers.get("turn_end")?.(
+		{
+			type: "turn_end",
+			turnIndex: 0,
+			message: { role: "assistant", stopReason: "stop" },
+			messageEntryId: "a1",
+			toolResults: [],
+			toolResultEntryIds: [],
+		},
+		h.ctx,
+	);
+	h.setUsedTokens(2500);
+	h.handlers.get("agent_end")?.({ type: "agent_end" }, h.ctx);
+	clock = 1600;
+	h.handlers.get("agent_settled")?.({ type: "agent_settled", aborted: false }, h.ctx);
+
+	const output = await h.status();
+	assert.match(output, /Timing TTFT: 250 ms/);
+	assert.match(output, /Timing run: 1\.50 s · 1 turns/);
+	assert.match(output, /Waiting: no/);
+	assert.match(output, /Context change: \+1500 tokens \(1000 → 2500/);
+	assert.match(
+		output,
+		/Request usage: input 500 \(uncached\) · cache read 900 · cache write 20 · output 40 · total 1460/,
+	);
+	assert.match(output, /stop reason stop/);
+	const responseTools = getCurrentTools(observed);
+	assert.equal(responseTools.length, 1);
+	const toolChars =
+		(responseTools[0]?.name.length ?? 0) +
+		(responseTools[0]?.description.length ?? 0) +
+		JSON.stringify(responseTools[0]?.parameters).length;
+	assert.match(output, new RegExp(`System: ${getCurrentSystemPrompt(observed).length} chars`));
+	assert.match(output, new RegExp(`Tools: ${toolChars} chars`));
+	assert.match(output, /Messages: 5 · Tool results: 12 · Summary: 3 · Other: 0 chars/);
+	assert.match(output, /Largest tool results: bash 10 chars · evil 2 chars/);
+	// The hidden/projection tool result is neither counted nor named.
+	assert.doesNotMatch(output, /projection-only/);
+	assert.doesNotMatch(output, /G{10}/);
+	assert.ok(!output.includes(esc));
+	assert.match(output, /Stash: none/);
+
+	h.handlers.get("model_select")?.({ type: "model_select" }, h.ctx);
+	const afterModel = await h.status();
+	assert.match(afterModel, /Context change: unavailable \(model changed\)/);
+	assert.match(afterModel, /Effective context: unavailable \(model changed; waiting for the next observation\)/);
+	// The last measured TTFT is still labelled as last; the switch does not present it as current.
+	assert.match(afterModel, /Timing TTFT: 250 ms/);
+	assert.match(afterModel, /Waiting: no/);
+
+	// A run that spans compaction has no comparable before/after reading, and the summary is
+	// unknown until the next observation.
+	clock = 1700;
+	h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
+	// A fresh run never presents the previous settled delta as this run's.
+	const runB = await h.status();
+	assert.match(runB, /Context change: pending \(run in progress; settles at agent end\)/);
+	assert.doesNotMatch(runB, /\+1500 tokens/);
+	h.setUsedTokens(3000);
+	h.handlers.get("session_compact")?.(
+		{
+			type: "session_compact",
+			compactionEntry: { id: "c" },
+			fromExtension: false,
+			reason: "manual",
+			willRetry: false,
+		},
+		h.ctx,
+	);
+	clock = 2000;
+	h.handlers.get("agent_settled")?.({ type: "agent_settled", aborted: false }, h.ctx);
+	const afterCompact = await h.status();
+	assert.match(afterCompact, /Context change: unavailable \(compaction changed the context during the run\)/);
+	assert.match(afterCompact, /Effective context: unavailable \(compaction changed the context/);
+
+	// Request usage follows the active branch: an assistant response from another branch must not
+	// be read after the tree switches.
+	const otherBranchEntry: SessionEntry = {
+		type: "message",
+		id: "b1",
+		parentId: null,
+		timestamp: "",
+		message: {
+			...assistantEntry.message,
+			usage: {
+				input: 7000,
+				output: 70,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 7070,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+		},
+	} as SessionEntry;
+	h.setEntries([assistantEntry, otherBranchEntry], "a1");
+	h.setBranch([assistantEntry]);
+	assert.match(await h.status(), /Request usage: input 500 /);
+	h.setBranch([otherBranchEntry]);
+	h.setLeaf("b1");
+	h.handlers.get("session_tree")?.({ type: "session_tree", newLeafId: "b1", oldLeafId: "a1" }, h.ctx);
+	const afterTree = await h.status();
+	assert.match(afterTree, /Context change: unavailable \(branch changed\)/);
+	assert.match(afterTree, /Effective context: unavailable \(branch changed/);
+	assert.match(afterTree, /Request usage: input 7000 /);
+	assert.doesNotMatch(afterTree, /input 500 /);
+
+	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, h.ctx);
 });

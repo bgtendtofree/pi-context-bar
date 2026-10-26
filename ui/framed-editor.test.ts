@@ -5,11 +5,15 @@ import { CustomEditor, type ExtensionContext, type KeybindingsManager } from "@e
 import type { EditorTheme, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import {
 	CURSOR_MARKER,
+	getKeybindings,
 	isFocusable,
 	parseColor,
 	renderFakeCursor,
+	setKeybindings,
 	styleText,
 	type TerminalColorMode,
+	TUI_KEYBINDINGS,
+	KeybindingsManager as TuiKeybindingsManager,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { ModelInfo } from "../lib/border.ts";
@@ -25,6 +29,7 @@ import {
 	remapEditorMouse,
 	sameKey,
 	splitEditorRender,
+	type WorkingStatusKind,
 } from "./framed-editor.ts";
 
 const TOKEN_HEX: Readonly<Record<string, string>> = {
@@ -316,11 +321,15 @@ const buildFramedEditor = (
 	tokenCalls: () => number;
 	forceBorderMismatch: () => void;
 	layoutNotices: () => readonly string[];
+	setWorkingStatus: (kind: WorkingStatusKind | undefined) => void;
+	statusKinds: () => readonly (WorkingStatusKind | undefined)[];
+	embedsWorkingStatus: () => boolean;
 } => {
 	let editor: ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> | undefined;
 	let fgCalls = 0;
 	let currentHealth = health;
 	const layoutNotices: string[] = [];
+	const statusKinds: (WorkingStatusKind | undefined)[] = [];
 	const ctx = {
 		mode: "tui",
 		ui: {
@@ -344,6 +353,7 @@ const buildFramedEditor = (
 		getThinkingLevel: () => thinkingLevel,
 		getHealth: () => currentHealth,
 		getGlyphs: () => glyphs,
+		onWorkingStatus: (kind) => statusKinds.push(kind),
 		onUnrecognizedLayout: () => layoutNotices.push("unrecognized"),
 		onTui: () => {},
 	});
@@ -357,6 +367,8 @@ const buildFramedEditor = (
 		getCursor: () => { line: number; col: number };
 		renderBottomBorder: (width: number, hiddenLineCount: number) => string;
 		bottomBorder: string;
+		setWorkingStatusIndicator: (indicator: Parameters<CustomEditor["setWorkingStatusIndicator"]>[0]) => void;
+		embedWorkingStatus: boolean;
 	};
 	return {
 		render: (width) => built.render(width),
@@ -383,6 +395,21 @@ const buildFramedEditor = (
 				return line;
 			};
 		},
+		setWorkingStatus: (kind) => {
+			// Duck-typed indicator: the frame keeps only `kind`; Pi's own rendering is discarded.
+			const indicator =
+				kind === undefined
+					? undefined
+					: ({
+							kind,
+							renderInBorder: () => "",
+							renderSpinnerInBorder: () => "",
+							dispose: () => {},
+						} as unknown as Parameters<CustomEditor["setWorkingStatusIndicator"]>[0]);
+			built.setWorkingStatusIndicator(indicator);
+		},
+		statusKinds: () => statusKinds,
+		embedsWorkingStatus: () => built.embedWorkingStatus === true,
 	};
 };
 
@@ -954,4 +981,157 @@ test("invalidates the bottom memo when the relative countdown crosses its bucket
 	assert.equal(Math.floor(now / 60_000), Math.floor((now - 31_000) / 60_000));
 	assert.match(bottom(), /r<1m/);
 	assert.doesNotMatch(bottom(), /r1m/);
+});
+
+test("puts wait/phase notices in the speed slot and mirrors Pi's indicator kind", () => {
+	const health = (notice?: string): HealthState => ({
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 0, cacheHitRate: undefined, cacheHitRateAvg: undefined },
+		quota: undefined,
+		speed: { tokensPerSecond: 42.3, estimated: true },
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+		notice,
+	});
+	const framed = buildFramedEditor(NERD_GLYPHS, { id: "gpt-test", reasoning: false }, health());
+	const before = framed.render(80).map(stripVTControlCharacters);
+	assert.match(before[0] ?? "", /~42\.3t\/s/);
+
+	framed.setHealth(health("retrying"));
+	const after = framed.render(80).map(stripVTControlCharacters);
+	assert.match(after[0] ?? "", /retrying/);
+	assert.doesNotMatch(after[0] ?? "", /t\/s/);
+	// The notice replaces the reading inside the same reserved field; the percent cannot move.
+	assert.equal(after[0]?.indexOf("20.0%"), before[0]?.indexOf("20.0%"));
+
+	// Pi routes its public indicator here instead of a separate status row; the frame keeps only
+	// the kind through the public override and discards the native bordered text.
+	assert.equal(framed.embedsWorkingStatus(), true);
+	assert.deepEqual(framed.statusKinds(), []);
+	framed.setWorkingStatus("retry");
+	framed.setWorkingStatus("compaction");
+	framed.setWorkingStatus(undefined);
+	assert.deepEqual(framed.statusKinds(), ["retry", "compaction", undefined]);
+	assert.equal(framed.render(80).length, 3);
+});
+
+test("claims Alt+S only when no effective editor binding owns it", () => {
+	const health: HealthState = {
+		snapshot: { usedTokens: 0, contextWindow: 100_000 },
+		usage: { cost: 0, cacheHitRate: undefined, cacheHitRateAvg: undefined },
+		quota: undefined,
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
+	type Editor = ReturnType<NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>> & {
+		setText: (text: string) => void;
+		getText: () => string;
+		handleInput: (data: string) => void;
+		getCursor: () => { line: number; col: number };
+		onExtensionShortcut?: (data: string) => boolean;
+	};
+	const build = (
+		bindings: Readonly<Record<string, string | readonly string[] | undefined>> | undefined,
+		matches: (data: string, key: string) => boolean,
+		noConfig = false,
+	) => {
+		let editor: Editor | undefined;
+		let stashes = 0;
+		let configReads = 0;
+		const calls: [string, string][] = [];
+		const ctx = {
+			mode: "tui",
+			ui: {
+				theme: { fg: (_token: string, text: string) => text },
+				setEditorComponent: (factory: Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]) => {
+					if (!factory) return;
+					const tui = { requestRender: () => {}, terminal: { rows: 20 } } as unknown as TUI;
+					const theme = { borderColor: (text: string) => text } as EditorTheme;
+					const keybindings = {
+						...(noConfig
+							? {}
+							: {
+									getEffectiveConfig: () => {
+										configReads++;
+										return bindings;
+									},
+								}),
+						matches: (data: string, key: string) => {
+							calls.push([data, key]);
+							return matches(data, key);
+						},
+					} as unknown as Parameters<NonNullable<typeof factory>>[2];
+					editor = factory(tui, theme, keybindings) as Editor;
+				},
+			},
+		} as unknown as ExtensionContext;
+		registerFramedEditor(ctx, {
+			getModel: () => ({ id: "gpt-test", reasoning: false }),
+			getThinkingLevel: () => "off",
+			getHealth: () => health,
+			getGlyphs: () => ASCII_GLYPHS,
+			onStash: () => {
+				stashes++;
+			},
+			onTui: () => {},
+		});
+		assert.ok(editor);
+		return { editor, stashes: () => stashes, configReads: () => configReads, calls };
+	};
+
+	// Free key: consume it for the stash instead of inserting an "s" into the draft.
+	const free = build(
+		{ "tui.editor.cursorWordLeft": "alt+left", "tui.input.submit": ["enter", "ctrl+enter"] },
+		() => false,
+	);
+	// Ordinary input never reads the binding map, and only the stash key skips `super`.
+	free.editor.setText("");
+	free.editor.handleInput("a");
+	assert.equal(free.configReads(), 0);
+	assert.equal(free.editor.getText(), "a");
+	const typingChecks = free.calls.length;
+
+	free.editor.setText("keep");
+	free.editor.handleInput("\x1bs");
+	assert.equal(free.stashes(), 1);
+	assert.equal(free.configReads(), 1);
+	assert.equal(free.editor.getText(), "keep");
+	assert.equal(free.calls.length, typingChecks);
+
+	// User override wins: the original action receives the key through super, not the stash. Pi's
+	// editor reads the global keybindings manager, so install a real one with alt+s bound.
+	const previous = getKeybindings();
+	const manager = new TuiKeybindingsManager(TUI_KEYBINDINGS, { "tui.editor.cursorWordLeft": "alt+s" });
+	setKeybindings(manager);
+	try {
+		const conflict = build(manager.getResolvedBindings(), (data, key) =>
+			manager.matches(data, key as Parameters<TuiKeybindingsManager["matches"]>[1]),
+		);
+		conflict.editor.setText("one two three");
+		const before = conflict.editor.getCursor().col;
+		conflict.editor.handleInput("\x1bs");
+		assert.equal(conflict.stashes(), 0);
+		assert.ok(conflict.editor.getCursor().col < before, "bound action still ran");
+	} finally {
+		setKeybindings(previous);
+	}
+
+	// Another extension's shortcut keeps the priority Pi gives it; the stash does not steal it.
+	const otherExtension = build({ "tui.editor.cursorWordLeft": "alt+left" }, () => false);
+	otherExtension.editor.onExtensionShortcut = () => true;
+	otherExtension.editor.handleInput("\x1bs");
+	assert.equal(otherExtension.stashes(), 0);
+
+	// Multi-key bindings are checked too.
+	const multi = build({ "tui.editor.cursorWordLeft": ["alt+s", "ctrl+left"] }, () => false);
+	multi.editor.handleInput("\x1bs");
+	assert.equal(multi.stashes(), 0);
+
+	// Without a resolved binding map the frame cannot prove Alt+S is free, so it passes through.
+	const unknown = build(undefined, () => false, true);
+	unknown.editor.handleInput("\x1bs");
+	assert.equal(unknown.stashes(), 0);
 });

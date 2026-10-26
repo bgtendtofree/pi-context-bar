@@ -365,7 +365,11 @@ export const renderPacmanLane = (
  */
 const SPEED_FIELD_TEXT = "~100.0t/s";
 
-/** Top-border strip: auto-fit lane with context `%` (+ window size), quiet speed at the right end. */
+/**
+ * Top-border strip: auto-fit lane with context `%` (+ window size) and one reserved right slot.
+ * The slot carries a live speed reading or, while Pi is waiting/retrying/compacting, a short dim
+ * notice in the same field so the lane and percent do not move when output starts.
+ */
 export const renderLaneStrip = (
 	snapshot: ContextSnapshot,
 	width: number,
@@ -374,6 +378,7 @@ export const renderLaneStrip = (
 	activity: LaneActivity = "idle",
 	speed: TokenSpeedSnapshot | null = null,
 	glyphs: GlyphSet = NERD_GLYPHS,
+	notice?: string,
 ): string => {
 	if (width <= 2) return "";
 	const percentValue =
@@ -390,59 +395,64 @@ export const renderLaneStrip = (
 	// An unknown window still keeps the honest `?%`; only the `(size)` form needs a known denominator.
 	const percentOptions = [...(window ? [`${percent} ${styles.fg("dim", `(${window})`)}`] : []), percent];
 	const rawSpeed = formatTokenSpeed(speed);
-	// One reserved field (right-aligned reading) so common digit lengths, the `~` estimate marker, and
-	// provider calibration cannot resize the lane. A longer real reading grows the field, never cuts it.
-	const speedFieldWidth = rawSpeed ? Math.max(visibleWidth(SPEED_FIELD_TEXT), visibleWidth(rawSpeed)) : 0;
+	const noticeText = notice?.trim() ? notice : undefined;
+	const slotText = noticeText ?? rawSpeed;
+	// One reserved field (right-aligned reading) so common digit lengths, the `~` estimate marker,
+	// provider calibration, and the wait notice cannot resize the lane. A longer real reading grows
+	// the field, never cuts it.
+	const slotFieldWidth = slotText ? Math.max(visibleWidth(SPEED_FIELD_TEXT), visibleWidth(slotText)) : 0;
 	// Pad by terminal columns: a Nerd Font glyph may be one cell but two UTF-16 units.
 	const padLeft = (text: string, fieldWidth: number): string =>
 		" ".repeat(Math.max(0, fieldWidth - visibleWidth(text))) + text;
-	// The speedometer is decorative: icon field, plain field, then the reading's own width on tight
-	// strips, then no speed at all.
-	const speedOptions = rawSpeed
+	// The speedometer is decorative and never decorates a notice: icon field, plain field, then the
+	// reading's own width on tight strips, then nothing.
+	const slotOptions = slotText
 		? [
-				...(glyphs.speed ? [padLeft(`${glyphs.speed} ${rawSpeed}`, speedFieldWidth + 2)] : []),
-				padLeft(rawSpeed, speedFieldWidth),
-				rawSpeed,
+				// A speed reading may spend two extra columns on the speedometer; a notice reserves the
+				// same columns as blank space so the percent and lane keep their position when output
+				// starts. Only glyph sets that have the icon reserve it.
+				...(glyphs.speed
+					? [padLeft(noticeText === undefined ? `${glyphs.speed} ${slotText}` : slotText, slotFieldWidth + 2)]
+					: []),
+				padLeft(slotText, slotFieldWidth),
+				slotText,
 			].filter((value, index, all) => all.indexOf(value) === index)
 		: [];
-	const styleSpeed = (value: string): string => (value ? styles.fg("dim", value) : "");
-	const laneWidth = (pickedPercent: string | undefined, pickedSpeed: string | undefined): number =>
-		width -
-		2 -
-		(pickedPercent ? visibleWidth(pickedPercent) + 1 : 0) -
-		(pickedSpeed ? visibleWidth(pickedSpeed) + 1 : 0);
+	const styleSlot = (value: string): string => (value ? styles.fg("dim", value) : "");
+	const laneWidth = (pickedPercent: string | undefined, pickedSlot: string | undefined): number =>
+		width - 2 - (pickedPercent ? visibleWidth(pickedPercent) + 1 : 0) - (pickedSlot ? visibleWidth(pickedSlot) + 1 : 0);
 	let pickedPercent: string | undefined;
-	let pickedSpeed = "";
+	let pickedSlot = "";
 	for (const candidate of percentOptions) {
-		for (const option of speedOptions) {
+		for (const option of slotOptions) {
 			if (laneWidth(candidate, option) >= 4) {
 				pickedPercent = candidate;
-				pickedSpeed = styleSpeed(option);
+				pickedSlot = styleSlot(option);
 				break;
 			}
 		}
 		if (pickedPercent) break;
 		if (laneWidth(candidate, undefined) >= 4) {
 			pickedPercent = candidate;
-			pickedSpeed = "";
+			pickedSlot = "";
 			break;
 		}
 	}
 	if (!pickedPercent) {
-		for (const option of speedOptions) {
+		for (const option of slotOptions) {
 			if (laneWidth(undefined, option) >= 4) {
-				pickedSpeed = styleSpeed(option);
+				pickedSlot = styleSlot(option);
 				break;
 			}
 		}
 	}
 	const lane = renderPacmanLane(
 		snapshot,
-		Math.max(0, laneWidth(pickedPercent, pickedSpeed)),
+		Math.max(0, laneWidth(pickedPercent, pickedSlot)),
 		styles,
 		animationFrame,
 		activity,
 		glyphs,
 	);
-	return ` ${[lane, pickedPercent, pickedSpeed].filter(Boolean).join(" ")} `;
+	return ` ${[lane, pickedPercent, pickedSlot].filter(Boolean).join(" ")} `;
 };

@@ -454,6 +454,72 @@ describe("lane strip", () => {
 		assert.ok(!idle.includes("t/s"));
 	});
 
+	test("puts wait/retry notices in the same reserved field so the lane does not move", () => {
+		const speed = { tokensPerSecond: 42.25, estimated: true };
+		const baseline = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed, NERD_GLYPHS),
+		);
+		for (const notice of ["waiting", "retrying", "compact", "summary"]) {
+			const strip = stripVTControlCharacters(
+				renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed, NERD_GLYPHS, notice),
+			);
+			assert.equal(visibleWidth(strip), 60);
+			// The notice temporarily replaces the speed reading; neither digit growth nor the estimate
+			// marker can move Pac-Man or the percent.
+			assert.equal(strip.indexOf("15.6%"), baseline.indexOf("15.6%"));
+			assert.equal(strip.indexOf(PACMAN_GLYPH), baseline.indexOf(PACMAN_GLYPH));
+			assert.ok(strip.includes(notice), strip);
+			assert.ok(!strip.includes("t/s"), strip);
+			// A notice is plain dim text; the speedometer never decorates it.
+			assert.ok(!strip.includes(NERD_GLYPHS.speed), strip);
+		}
+	});
+
+	test("notice and speed share one right-aligned field across the transition", () => {
+		const speed = { tokensPerSecond: 9.8, estimated: true };
+		const before = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", null, NERD_GLYPHS, "waiting"),
+		);
+		const after = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed, NERD_GLYPHS),
+		);
+		assert.equal(visibleWidth(before), 60);
+		assert.equal(before.indexOf("15.6%"), after.indexOf("15.6%"));
+		assert.ok(before.endsWith("waiting "));
+		assert.ok(after.endsWith("~9.8t/s "));
+	});
+
+	test("drops the notice before the percent on narrow strips", () => {
+		const roomy = stripVTControlCharacters(
+			renderLaneStrip(
+				snapshot({ usedTokens: null, contextWindow: 0 }),
+				17,
+				identityStyles,
+				0,
+				"idle",
+				null,
+				NERD_GLYPHS,
+				"waiting",
+			),
+		);
+		assert.ok(roomy.includes("?%"), roomy);
+		assert.ok(roomy.includes("waiting"), roomy);
+		const tight = stripVTControlCharacters(
+			renderLaneStrip(
+				snapshot({ usedTokens: null, contextWindow: 0 }),
+				13,
+				identityStyles,
+				0,
+				"idle",
+				null,
+				NERD_GLYPHS,
+				"waiting",
+			),
+		);
+		assert.ok(tight.includes("?%"), tight);
+		assert.ok(!tight.includes("waiting"), tight);
+	});
+
 	test("shrinks the speed field rather than dropping a readable number on narrow strips", () => {
 		// Without a known window the reserved field cannot fit, but the reading's own width can.
 		const strip = stripVTControlCharacters(

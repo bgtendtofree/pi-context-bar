@@ -382,6 +382,8 @@ export const renderPacmanLane = (
  * and the context percent fixed while digits, the `~` estimate marker, or provider calibration change.
  */
 const SPEED_FIELD_TEXT = "~100.0t/s";
+/** Narrower reserved fields; content changes width only by dropping to the next standard size. */
+const NARROW_FIELD_WIDTHS = [9, 8, 7] as const;
 
 /** Icon field for each pending notice, so callers only ever pass the label. */
 const NOTICE_GLYPH_FIELDS: Readonly<Record<HealthNotice, "waiting" | "retrying" | "compact" | "summary" | "stash">> = {
@@ -395,8 +397,8 @@ const NOTICE_GLYPH_FIELDS: Readonly<Record<HealthNotice, "waiting" | "retrying" 
 /**
  * Top-border strip: auto-fit lane with context `%` (+ window size) and one reserved right slot.
  * The slot is a phase glyph plus a reading: a live speed while output flows, the settled reading
- * while Pi reports a phase, and `?t/s` when that phase has no reading yet. The field never shrinks
- * to a lone icon, so the lane and percent do not move when output starts.
+ * while Pi reports a phase, and `?t/s` while output is active but not yet measurable. The field
+ * never shrinks to a lone icon, so the lane and percent do not move when output starts.
  */
 export const renderLaneStrip = (
 	snapshot: ContextSnapshot,
@@ -431,38 +433,58 @@ export const renderLaneStrip = (
 	// own icon (or as blank space when the glyph set has none), so the percent and lane never move
 	// when output starts or between notices.
 	const iconFieldWidth = visibleWidth(SPEED_FIELD_TEXT) + 2;
-	const speedOptions = rawSpeed
-		? [
-				...(glyphs.speed ? [padLeft(`${glyphs.speed} ${rawSpeed}`, iconFieldWidth)] : []),
-				padLeft(rawSpeed, visibleWidth(SPEED_FIELD_TEXT)),
-				rawSpeed,
-			].filter((value, index, all) => all.indexOf(value) === index)
-		: [];
+	/** One content width comes from a fixed set, so a reading appearing cannot resize the slot. */
+	const reservedField = (content: string, icon = "", narrowIcons = false): readonly string[] => {
+		const options = [
+			...(icon && visibleWidth(`${icon} ${content}`) <= iconFieldWidth
+				? [padLeft(`${icon} ${content}`, iconFieldWidth)]
+				: []),
+			...NARROW_FIELD_WIDTHS.flatMap((fieldWidth) => {
+				const iconContent = narrowIcons && icon ? `${icon} ${content}` : content;
+				const withIcon = visibleWidth(iconContent) <= fieldWidth ? iconContent : content;
+				return visibleWidth(withIcon) <= fieldWidth ? [padLeft(withIcon, fieldWidth)] : [];
+			}),
+		].filter((value, index, all) => all.indexOf(value) === index);
+		// A rate wider than the reserved sizes still has to show its number; the icon may go instead.
+		return options.length > 0 ? options : [content];
+	};
+	const speedOptions = rawSpeed ? reservedField(rawSpeed, glyphs.speed) : [];
+	// Active output with no measurable reading yet keeps the same slot so the window can fill it
+	// later without moving the lane or percent. Idle stays quiet and shows no field at all.
+	const unknownSpeedOptions =
+		!rawSpeed && !noticeText && activity !== "idle" ? reservedField("?t/s", glyphs.speed, true) : [];
 	// A notice takes the speedometer's glyph slot and keeps the reading beside it; without a reading
-	// it shows `?t/s`, the same unknown marker as `?%`, so the field never holds a lone icon in a
-	// wide blank. The words are the fallback for ASCII or a terminal without Nerd Fonts.
+	// it shows `?t/s`, the same unknown marker as `?%`. The icon is decoration, so a narrow strip
+	// drops it before the reading and drops the whole field rather than leaving a lone glyph. The
+	// words are the fallback for ASCII or a terminal without Nerd Fonts.
 	const noticeIcon = noticeText ? glyphs[NOTICE_GLYPH_FIELDS[noticeText]] : "";
 	const noticeReading = rawSpeed || "?t/s";
+	// ASCII has no phase icon, so its words (or the punctuation-free form) fill the same fixed fields.
+	const noticeWordOptions = (text: string): readonly string[] => {
+		const trimmed = text.endsWith("…") ? text.slice(0, -1) : undefined;
+		return NARROW_FIELD_WIDTHS.flatMap((fieldWidth) => {
+			const content =
+				visibleWidth(text) <= fieldWidth
+					? text
+					: trimmed !== undefined && visibleWidth(trimmed) <= fieldWidth
+						? trimmed
+						: undefined;
+			return content === undefined ? [] : [padLeft(content, fieldWidth)];
+		}).filter((value, index, all) => all.indexOf(value) === index);
+	};
 	const noticeOptions = noticeText
 		? noticeIcon
-			? [
-					padLeft(`${noticeIcon} ${noticeReading}`, iconFieldWidth),
-					`${noticeIcon} ${noticeReading}`,
-					noticeIcon,
-				].filter((value, index, all) => all.indexOf(value) === index)
-			: [
-					padLeft(noticeText, visibleWidth(SPEED_FIELD_TEXT)),
-					noticeText,
-					// Pending punctuation drops before readable phase text on narrow strips.
-					...(noticeText.endsWith("…") ? [noticeText.slice(0, -1)] : []),
-				].filter((value, index, all) => all.indexOf(value) === index)
+			? reservedField(noticeReading, noticeIcon, true)
+			: noticeWordOptions(noticeText)
 		: [];
-	const slotOptions = noticeText ? noticeOptions : speedOptions;
+	const slotOptions = noticeText ? noticeOptions : rawSpeed ? speedOptions : unknownSpeedOptions;
 	const styleSlot = (value: string): string => (value ? styles.fg("dim", value) : "");
 	const laneWidth = (pickedPercent: string | undefined, pickedSlot: string | undefined): number =>
 		width - 2 - (pickedPercent ? visibleWidth(pickedPercent) + 1 : 0) - (pickedSlot ? visibleWidth(pickedSlot) + 1 : 0);
 	let pickedPercent: string | undefined;
 	let pickedSlot = "";
+	// A known window is decoration beside the reading: give up its columns before dropping the
+	// reading, so a narrow phase field still shows `42.3t/s` or `?t/s` on a plain percent.
 	for (const candidate of percentOptions) {
 		for (const option of slotOptions) {
 			if (laneWidth(candidate, option) >= 4) {
@@ -472,10 +494,13 @@ export const renderLaneStrip = (
 			}
 		}
 		if (pickedPercent) break;
-		if (laneWidth(candidate, undefined) >= 4) {
-			pickedPercent = candidate;
-			pickedSlot = "";
-			break;
+	}
+	if (!pickedPercent) {
+		for (const candidate of percentOptions) {
+			if (laneWidth(candidate, undefined) >= 4) {
+				pickedPercent = candidate;
+				break;
+			}
 		}
 	}
 	if (!pickedPercent) {

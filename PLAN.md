@@ -26,7 +26,7 @@ is shipped, what needs an owner decision, and what remains.
   ready prompt and tools and thinking ghost, `muted` working ghost and power pellets, `dim` pellets and
   thinking level and metrics, `borderMuted` bottom rule, `bashMode` bottom rule while input starts with `!`,
   `warning`/`error` for thresholds and failure, `success` for a completed response. A source test
-  in `lib/chrome.test.ts` fails the build on any hex color or raw ANSI escape in chrome sources.
+  in `lib/chrome.sources.test.ts` fails the build on any hex color or raw ANSI escape in chrome sources.
 - Prompt state: `❯` accent, `✗` error when the last completed turn stopped with `error`
   (`aborted` keeps the previous state). Derived from the session branch on start and tree nav.
 - Nerd Font icons in use: Pac-Man `󰮯`, ghost `󰊠`, reset countdown `󰦛`, reset credits `󰔖`,

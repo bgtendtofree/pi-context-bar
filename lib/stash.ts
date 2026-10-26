@@ -34,11 +34,14 @@ export type EffectiveKeybindings = Readonly<Record<string, string | readonly str
 
 /**
  * Alt+S is claimed only when no action (built-in, extension, or user override) already owns it.
+ * Pi resolves key ids case-insensitively, so a user override keeps `Alt+S` while `matchesKey`
+ * still fires; compare every scalar and array entry the same way.
  * An unavailable/unknown binding map is not proof of freedom, so the key passes through.
  */
 export const stashShortcutFree = (bindings: EffectiveKeybindings | undefined): boolean => {
 	if (bindings === undefined) return false;
+	const ownsStashKey = (value: string): boolean => value.toLowerCase() === STASH_SHORTCUT;
 	return !Object.values(bindings).some((value) =>
-		Array.isArray(value) ? value.includes(STASH_SHORTCUT) : value === STASH_SHORTCUT,
+		typeof value === "string" ? ownsStashKey(value) : value?.some(ownsStashKey) === true,
 	);
 };

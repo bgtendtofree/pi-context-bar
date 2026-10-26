@@ -17,6 +17,7 @@
 	"files": [
 		"index.ts",
 		"commands/openai-codex-reset.ts",
+		"lib/billing.ts",
 		"lib/border.ts",
 		"lib/chrome.ts",
 		"lib/config.ts",
@@ -27,6 +28,7 @@
 		"lib/openai.ts",
 		"lib/pending-reset.ts",
 		"lib/prompt.ts",
+		"lib/quota.ts",
 		"lib/response-quota.ts",
 		"lib/speed.ts",
 		"lib/stash.ts",

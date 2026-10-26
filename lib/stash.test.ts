@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { KeybindingsManager, type KeyId, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { restoreDecision, STASH_SHORTCUT, STASH_SUBCOMMAND, stashDecision, stashShortcutFree } from "./stash.ts";
 
 describe("Alt+S stash toggle", () => {
@@ -43,4 +44,16 @@ test("the stash key is free only when every resolved binding avoids it", () => {
 	assert.equal(stashShortcutFree({ "tui.editor.cursorWordLeft": "alt+left" }), true);
 	assert.equal(stashShortcutFree({ "tui.editor.cursorWordLeft": "alt+s" }), false);
 	assert.equal(stashShortcutFree({ "tui.editor.cursorWordLeft": ["alt+left", "alt+s"] }), false);
+});
+
+test("a resolved override with different case still owns the stash key", () => {
+	// Pi's parser lowercases key ids, so `Alt+S` matches the terminal input while the resolved map
+	// keeps the user's spelling. Claiming the key here would shadow the user's binding.
+	assert.equal(stashShortcutFree({ "tui.editor.undo": "Alt+S" }), false);
+	assert.equal(stashShortcutFree({ "tui.editor.undo": ["Ctrl+Z", "ALT+S"] }), false);
+	const manager = new KeybindingsManager(TUI_KEYBINDINGS, { "tui.editor.undo": "Alt+S" as KeyId });
+	const resolved = manager.getResolvedBindings();
+	assert.equal(manager.matches("\x1bs", "tui.editor.undo"), true);
+	assert.deepEqual(resolved["tui.editor.undo"], "Alt+S");
+	assert.equal(stashShortcutFree(resolved), false);
 });

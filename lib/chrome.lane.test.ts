@@ -1,19 +1,22 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
+	dominantSnapshot,
+	fgOnlyStyles,
+	identityStyles,
+	markedStyles,
+	recorder,
+	snapshot,
+} from "../test-support/chrome-fixtures.ts";
+import {
 	ASCII_GLYPHS,
 	activityAfterContext,
 	activityForAssistantEvent,
-	type ChromeStyles,
-	formatCost,
-	formatDuration,
 	formatWindowSize,
 	GHOST_GLYPH,
 	GHOST_TOKENS,
-	metricOptions,
 	NERD_GLYPHS,
 	PACMAN_CLOSED_GLYPH,
 	PACMAN_FRAMES,
@@ -21,153 +24,12 @@ import {
 	PELLET_GLYPH,
 	POWER_PELLET_GLYPH,
 	POWER_PELLET_RATIOS,
-	type QuotaLimit,
-	type QuotaUsage,
-	quotaRender,
 	renderLaneStrip,
 	renderPacmanLane,
 	USAGE_ERROR_PERCENT,
 	USAGE_WARNING_PERCENT,
 } from "./chrome.ts";
-import type { ContextSnapshot, SessionUsage } from "./context.ts";
 import { type HealthNotice, NOTICES } from "./timing.ts";
-
-const usage = (partial: Partial<SessionUsage> = {}): SessionUsage => ({
-	cost: 0,
-	cacheHitRate: undefined,
-	cacheHitRateAvg: undefined,
-	...partial,
-});
-
-const snapshot = (partial: Partial<ContextSnapshot> = {}): ContextSnapshot => ({
-	usedTokens: 0,
-	contextWindow: 200_000,
-	...partial,
-});
-
-const identityStyles: ChromeStyles = { fg: (_token, text) => text };
-
-const markedStyles: ChromeStyles = { fg: (token, text) => `<${token}>${text}</${token}>` };
-
-/** Foreground-only painter: the chrome must never emit a background escape. */
-const fgOnlyStyles: ChromeStyles = { fg: (_token, text) => `\x1b[38;5;7m${text}\x1b[39m` };
-
-const recorder = (): Readonly<{ styles: ChromeStyles; seen: Array<readonly [string, string]> }> => {
-	const seen: Array<readonly [string, string]> = [];
-	return {
-		styles: {
-			fg: (token, text) => {
-				seen.push([token, text]);
-				return text;
-			},
-		},
-		seen,
-	};
-};
-
-const dominantSnapshot = snapshot({
-	usedTokens: 57_976,
-	contextWindow: 372_000,
-});
-
-describe("health metric formatting", () => {
-	const full = usage({ cost: 1.61, cacheHitRate: 97.9 });
-
-	test("formats cost with useful precision", () => {
-		assert.equal(formatCost(0), "");
-		assert.equal(formatCost(0.042), "$0.042");
-		assert.equal(formatCost(1.61), "$1.61");
-		// A sub-mill cost is real money; it must never round down to a misleading `$0.000`.
-		assert.equal(formatCost(0.0004), "<$0.001");
-		assert.equal(formatCost(0.001), "$0.001");
-		assert.equal(formatCost(Number.NaN), "");
-		assert.equal(formatCost(Number.POSITIVE_INFINITY), "");
-	});
-
-	test("formats remaining time for quota windows and resets", () => {
-		const now = Date.parse("2026-07-01T00:00:00Z");
-		const left = (iso: string): number => Date.parse(iso) - now;
-		assert.equal(formatDuration(left("2026-07-01T00:12:00Z")), "12m");
-		assert.equal(formatDuration(left("2026-07-01T05:10:00Z")), "5h 10m");
-		assert.equal(formatDuration(left("2026-07-03T03:30:00Z")), "2d 3h");
-		assert.equal(formatDuration(0), "expired");
-		assert.equal(formatDuration(-1), "expired");
-		for (const ms of [1, 30_000, 59_999]) assert.equal(formatDuration(ms), "<1m");
-		assert.equal(formatDuration(60_000), "1m");
-		// Whole hours and days drop the zero component instead of printing "6h 0m".
-		assert.equal(formatDuration(left("2026-07-01T06:00:00Z")), "6h");
-		assert.equal(formatDuration(left("2026-07-02T00:00:00Z")), "1d");
-		assert.equal(formatDuration(left("2026-07-04T01:00:00Z")), "3d 1h");
-		// Non-finite input must not leak a `NaNd NaNh` reading into the border.
-		assert.equal(formatDuration(Number.NaN), "expired");
-		assert.equal(formatDuration(Number.POSITIVE_INFINITY), "expired");
-	});
-
-	test("builds wide and narrow options", () => {
-		const nerd = metricOptions(full, identityStyles, NERD_GLYPHS);
-		assert.equal(nerd[0]?.decorated, `${NERD_GLYPHS.cache} 98%  $1.61`);
-		assert.equal(nerd[0]?.plain, "CH98%  $1.61");
-		assert.equal(nerd[1]?.decorated, `${NERD_GLYPHS.cache} 98%`);
-		assert.equal(nerd[1]?.plain, "CH98%");
-		const ascii = metricOptions(full, identityStyles, ASCII_GLYPHS);
-		assert.equal(ascii[0]?.plain, "CH98%  $1.61");
-		assert.equal(ascii[1]?.plain, "CH98%");
-		// Last option is the empty reading used when no metric fits at all.
-		assert.equal(nerd.at(-1)?.plain, "");
-	});
-
-	test("never falls back to an unlabelled cache percentage", () => {
-		// A bare `98%` cannot be identified as cache; the icon replaces the `CH` label at equal width,
-		// so dropping the icon leaves the label in place.
-		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
-			for (const cacheHitRateAvg of [undefined, 92]) {
-				const options = metricOptions({ cost: 1.61, cacheHitRate: 98, cacheHitRateAvg }, identityStyles, glyphs);
-				for (const option of options) if (option.plain !== "") assert.ok(option.plain.includes("CH98"), option.plain);
-			}
-			const [widest] = metricOptions({ cost: 0, cacheHitRate: 98, cacheHitRateAvg: 92 }, identityStyles, glyphs);
-			assert.equal(visibleWidth(widest?.decorated ?? ""), visibleWidth(widest?.plain ?? ""));
-		}
-	});
-
-	test("keeps cost when cache is unknown", () => {
-		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
-			const options = metricOptions(usage({ cost: 0.042 }), identityStyles, glyphs);
-			assert.equal(options[0]?.plain, "$0.042");
-			assert.equal(options[0]?.decorated, "$0.042");
-			assert.equal(
-				options.every((option) => !option.plain.includes("CH") && !option.plain.includes(NERD_GLYPHS.cache)),
-				true,
-			);
-		}
-	});
-});
-
-describe("semantic metric styling", () => {
-	test("keeps healthy cache quiet", () => {
-		const nerd = metricOptions(usage({ cost: 6.65, cacheHitRate: 99 }), markedStyles, NERD_GLYPHS)[0]?.decorated ?? "";
-		assert.ok(nerd.includes(`<dim>${NERD_GLYPHS.cache} 99</dim>%`));
-		assert.ok(!nerd.includes("<warning>"));
-		assert.ok(!nerd.includes("<error>"));
-		const ascii =
-			metricOptions(usage({ cost: 6.65, cacheHitRate: 99 }), markedStyles, ASCII_GLYPHS)[0]?.decorated ?? "";
-		assert.ok(ascii.includes("<dim>CH99</dim>%"));
-	});
-
-	test("rounds the cache rate once so the label and its color agree", () => {
-		const healthy = metricOptions(usage({ cacheHitRate: 79.6 }), markedStyles, ASCII_GLYPHS)[0]?.decorated ?? "";
-		assert.ok(healthy.includes("<dim>CH80</dim>%"));
-		const warning = metricOptions(usage({ cacheHitRate: 49.6 }), markedStyles, ASCII_GLYPHS)[0]?.decorated ?? "";
-		assert.ok(warning.includes("<warning>CH50</warning>%"));
-	});
-
-	test("accents only unhealthy cache", () => {
-		const warning = metricOptions(usage({ cacheHitRate: 60 }), markedStyles, ASCII_GLYPHS)[0]?.decorated ?? "";
-		assert.ok(warning.includes("<warning>CH60</warning>%"));
-		const error = metricOptions(usage({ cacheHitRate: 20 }), markedStyles, ASCII_GLYPHS)[0]?.decorated ?? "";
-		assert.ok(error.includes("<error>CH20</error>%"));
-		assert.equal(metricOptions(usage(), markedStyles, ASCII_GLYPHS)[0]?.decorated, "");
-	});
-});
 
 describe("Pac-Man lane", () => {
 	test("moves left to right while eaten pellets become empty space", () => {
@@ -428,6 +290,27 @@ describe("lane strip", () => {
 		assert.ok(strip.includes(PACMAN_GLYPH));
 	});
 
+	test("keeps an overlong speed reading instead of dropping the whole field", () => {
+		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
+			for (const tokensPerSecond of [1_000, 10_000]) {
+				const strip = stripVTControlCharacters(
+					renderLaneStrip(
+						dominantSnapshot,
+						100,
+						identityStyles,
+						0,
+						"assistant",
+						{ tokensPerSecond, estimated: true },
+						glyphs,
+					),
+				);
+				assert.equal(visibleWidth(strip), 100);
+				assert.ok(strip.includes(`${tokensPerSecond.toFixed(1)}t/s`), strip);
+				assert.ok(strip.includes("15.6%"), strip);
+			}
+		}
+	});
+
 	test("reserves one speed field so reading length cannot resize the lane", () => {
 		// Common digit lengths, the `~` estimate marker, and provider calibration all fill the same
 		// right-aligned field, so Pac-Man and the context percent keep their columns.
@@ -453,6 +336,32 @@ describe("lane strip", () => {
 		const idle = stripVTControlCharacters(renderLaneStrip(dominantSnapshot, 60, identityStyles));
 		assert.ok(idle.endsWith("15.6% (372K) "), idle);
 		assert.ok(!idle.includes("t/s"));
+	});
+
+	test("keeps one reserved speed slot from waiting through the first measurable reading", () => {
+		const speed = { tokensPerSecond: 42.3, estimated: false };
+		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
+			for (const width of [60, 40, 28, 24]) {
+				const waiting = stripVTControlCharacters(
+					renderLaneStrip(dominantSnapshot, width, identityStyles, 0, "working", null, glyphs, NOTICES.waiting),
+				);
+				const streaming = stripVTControlCharacters(
+					renderLaneStrip(dominantSnapshot, width, identityStyles, 0, "assistant", null, glyphs),
+				);
+				const measured = stripVTControlCharacters(
+					renderLaneStrip(dominantSnapshot, width, identityStyles, 0, "assistant", speed, glyphs),
+				);
+				for (const strip of [waiting, streaming, measured]) assert.equal(visibleWidth(strip), width);
+				// The lane, percent, and slot columns stay put while the reading appears.
+				assert.equal(streaming.indexOf("15.6%"), waiting.indexOf("15.6%"), `${glyphs.ascii} w=${width}`);
+				assert.equal(measured.indexOf("15.6%"), waiting.indexOf("15.6%"), `${glyphs.ascii} w=${width}`);
+				assert.equal(measured.indexOf(glyphs.pacmanOpen), waiting.indexOf(glyphs.pacmanOpen));
+				assert.equal(streaming.length, waiting.length);
+				assert.ok(streaming.includes("?t/s"), streaming);
+				assert.ok(measured.includes("42.3t/s"), measured);
+				assert.doesNotMatch(waiting.replace(glyphs.waiting, ""), /~?\d+\.\dt\/s/);
+			}
+		}
 	});
 
 	const ICON_FOR_NOTICE = {
@@ -530,11 +439,68 @@ describe("lane strip", () => {
 			);
 			assert.ok(ascii.endsWith(`${notice} `), ascii);
 		}
-		// The single-cell icon survives a strip too narrow for the placeholder.
+		// A narrow strip drops the window and the icon before the unknown reading, never leaving
+		// the phase glyph alone in the field.
 		const tight = stripVTControlCharacters(
 			renderLaneStrip(dominantSnapshot, 24, identityStyles, 0, "idle", null, NERD_GLYPHS, NOTICES.waiting),
 		);
-		assert.ok(tight.endsWith(`${NERD_GLYPHS.waiting} `), tight);
+		assert.equal(visibleWidth(tight), 24);
+		// The reading survives, but the lone phase glyph never does.
+		assert.ok(tight.includes("?t/s"), tight);
+		assert.ok(!tight.endsWith(`${NERD_GLYPHS.waiting} `), tight);
+	});
+
+	test("keeps the phase reading when the icon or window cannot fit", () => {
+		const speed = { tokensPerSecond: 42.3, estimated: false };
+		// Exact reported shape: a 24-column strip with a known window keeps the useful reading and
+		// gives up the window detail instead of shrinking to a lone hourglass.
+		const wide = stripVTControlCharacters(
+			renderLaneStrip(
+				snapshot({ usedTokens: 31_200, contextWindow: 200_000 }),
+				24,
+				identityStyles,
+				0,
+				"working",
+				speed,
+				NERD_GLYPHS,
+				NOTICES.waiting,
+			),
+		);
+		assert.equal(visibleWidth(wide), 24);
+		assert.ok(wide.includes(NERD_GLYPHS.waiting), wide);
+		assert.ok(wide.includes("42.3t/s"), wide);
+		assert.ok(!wide.includes("(200K)"), wide);
+
+		// Less room drops the icon but keeps the number; still less drops the whole phase field.
+		const noIcon = stripVTControlCharacters(
+			renderLaneStrip(
+				snapshot({ usedTokens: 31_200, contextWindow: 200_000 }),
+				20,
+				identityStyles,
+				0,
+				"working",
+				speed,
+				NERD_GLYPHS,
+				NOTICES.waiting,
+			),
+		);
+		assert.ok(noIcon.includes("42.3t/s"), noIcon);
+		assert.ok(!noIcon.includes(NERD_GLYPHS.waiting), noIcon);
+		const noField = stripVTControlCharacters(
+			renderLaneStrip(
+				snapshot({ usedTokens: 31_200, contextWindow: 200_000 }),
+				19,
+				identityStyles,
+				0,
+				"working",
+				speed,
+				NERD_GLYPHS,
+				NOTICES.waiting,
+			),
+		);
+		assert.ok(noField.includes("15.6%"), noField);
+		assert.ok(!noField.includes("t/s"), noField);
+		assert.ok(!noField.includes(NERD_GLYPHS.waiting), noField);
 	});
 
 	test("drops the notice before the percent on narrow strips", () => {
@@ -724,41 +690,6 @@ describe("lane strip", () => {
 	});
 });
 
-describe("CH session average", () => {
-	test("joins the token-weighted average when it diverges by more than 5 points", () => {
-		const ascii = metricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 92 }), identityStyles, ASCII_GLYPHS);
-		assert.equal(stripVTControlCharacters(ascii[0]?.decorated ?? ""), "CH98/92%");
-		const nerd = metricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 92 }), identityStyles, NERD_GLYPHS);
-		assert.equal(stripVTControlCharacters(nerd[0]?.decorated ?? ""), `${NERD_GLYPHS.cache} 98/92%`);
-	});
-
-	test("stays latest-only when the average is close or unknown", () => {
-		assert.equal(
-			metricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 96 }), identityStyles, ASCII_GLYPHS)[0]?.decorated,
-			"CH98%",
-		);
-		assert.equal(
-			metricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 98.2 }), identityStyles, ASCII_GLYPHS)[0]?.decorated,
-			"CH98%",
-		);
-		assert.equal(metricOptions(usage({ cacheHitRate: 98 }), identityStyles, ASCII_GLYPHS)[0]?.decorated, "CH98%");
-	});
-
-	test("drops the database icon before the average", () => {
-		const [widest] = metricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 92 }), identityStyles, NERD_GLYPHS);
-		assert.equal(widest?.decorated, `${NERD_GLYPHS.cache} 98/92%`);
-		assert.equal(widest?.plain, "CH98/92%");
-		assert.equal(visibleWidth(widest?.plain ?? ""), visibleWidth("CH98/92%"));
-	});
-
-	test("keeps the latest-turn color on CH and styles the average dim", () => {
-		const widest =
-			metricOptions(usage({ cacheHitRate: 20, cacheHitRateAvg: 60 }), markedStyles, ASCII_GLYPHS)[0]?.decorated ?? "";
-		assert.ok(widest.includes("<error>CH20</error>"));
-		assert.ok(widest.includes("<dim>/60</dim>%"));
-	});
-});
-
 describe("Nerd Font glyph grammar", () => {
 	test("matches the official glyphnames.json code points and stays single-cell", () => {
 		assert.equal(PACMAN_GLYPH, "\u{f0baf}");
@@ -791,176 +722,5 @@ describe("Nerd Font glyph grammar", () => {
 		assert.equal(visibleWidth(NERD_GLYPHS.pellet), 1);
 		assert.equal(visibleWidth(ASCII_GLYPHS.pellet), 1);
 		assert.equal(visibleWidth(ASCII_GLYPHS.powerPellet), 1);
-	});
-});
-
-describe("quota rendering", () => {
-	const now = Date.parse("2026-07-01T00:00:00Z");
-	const reset = (label: string, percent: number, minutes = 150): QuotaLimit => ({
-		label,
-		percent,
-		resetAt: now + minutes * 60_000,
-	});
-	const full: QuotaUsage = {
-		limits: [
-			{ label: "5h", percent: 30 },
-			{ label: "1d", percent: 12 },
-		],
-	};
-	const plain = (values: readonly string[]): readonly string[] => values.map(stripVTControlCharacters);
-	const labels = (render: ReturnType<typeof quotaRender>): readonly string[] =>
-		plain(render.essentials.map((option) => option.label));
-	const upgrades = (render: ReturnType<typeof quotaRender>): readonly string[] =>
-		plain(render.essentials[0]?.upgrades ?? []);
-
-	test("healthy windows are percentage-only essentials with no upgrades", () => {
-		const render = quotaRender({ limits: [reset("5h", 53), reset("7d", 43)] }, identityStyles, now);
-		assert.deepEqual(labels(render), ["5h 53%  7d 43%", "5h 53%", "7d 43%", ""]);
-		assert.deepEqual(upgrades(render), []);
-	});
-
-	test("only a window above the warning threshold upgrades to its countdown", () => {
-		const render = quotaRender({ limits: [reset("5h", 75), reset("7d", 43)] }, identityStyles, now);
-		assert.deepEqual(labels(render), ["5h 75%  7d 43%", "5h 75%", "7d 43%", ""]);
-		assert.deepEqual(upgrades(render), ["5h 75% 󰦛 2h 30m  7d 43%"]);
-	});
-
-	test("keeps the most-used window when the whole group cannot fit", () => {
-		// Narrow borders narrow the group instead of dropping quota entirely: highest used percent first,
-		// equal percentages keeping the provider's order.
-		const render = quotaRender({ limits: [reset("7d", 43), reset("5h", 53)] }, identityStyles, now);
-		assert.deepEqual(labels(render), ["7d 43%  5h 53%", "5h 53%", "7d 43%", ""]);
-		const tied = quotaRender({ limits: [reset("7d", 43), reset("5h", 43)] }, identityStyles, now);
-		assert.deepEqual(labels(tied), ["7d 43%  5h 43%", "7d 43%", "5h 43%", ""]);
-	});
-
-	test("a narrowed window only ever shows its own countdown", () => {
-		const render = quotaRender({ limits: [reset("5h", 43), reset("7d", 75)] }, identityStyles, now);
-		const [whole, high, low] = render.essentials;
-		assert.deepEqual(plain([whole?.label ?? ""]), ["5h 43%  7d 75%"]);
-		assert.deepEqual(plain([high?.label ?? ""]), ["7d 75%"]);
-		assert.deepEqual(plain(high?.upgrades ?? []), ["7d 75% 󰦛 2h 30m"]);
-		// The quiet sibling has no countdown of its own, so its reading cannot borrow the other one's.
-		assert.deepEqual(plain([low?.label ?? ""]), ["5h 43%"]);
-		assert.deepEqual(plain(low?.upgrades ?? []), []);
-	});
-
-	test("treats exactly 70 as quiet and 70.01/90 as high", () => {
-		for (const [percent, upgraded] of [
-			[70, false],
-			[70.01, true],
-			[90, true],
-		] as const) {
-			const render = quotaRender({ limits: [reset("5h", percent)] }, identityStyles, now);
-			assert.equal((render.essentials[0]?.upgrades.length ?? 0) > 0, upgraded, String(percent));
-		}
-	});
-
-	test("counts every reported window toward the high check", () => {
-		const high = quotaRender({ limits: [reset("5h", 10), reset("7d", 71)], resetCredits: 2 }, identityStyles, now);
-		assert.deepEqual(plain([high.essentials[0]?.label ?? ""]), ["5h 10%  7d 71%"]);
-		// Only the second window is high, so the banked credits stay visible from that alone.
-		assert.ok((high.essentials[0]?.upgrades ?? []).some((value) => value.includes("󰔖")));
-		// No window above the threshold keeps the same credits hidden.
-		const quiet = quotaRender({ limits: [reset("5h", 10)], resetCredits: 2 }, identityStyles, now);
-		assert.deepEqual(upgrades(quiet), []);
-	});
-
-	test("hides the countdown for missing or expired resets", () => {
-		const missing = quotaRender({ limits: [{ label: "5h", percent: 80 }] }, identityStyles, now);
-		assert.deepEqual(plain([missing.essentials[0]?.label ?? ""]), ["5h 80%"]);
-		assert.deepEqual(upgrades(missing), []);
-		const expired = quotaRender({ limits: [{ label: "5h", percent: 80, resetAt: now - 1000 }] }, identityStyles, now);
-		assert.deepEqual(plain([expired.essentials[0]?.label ?? ""]), ["5h 80%"]);
-		assert.deepEqual(upgrades(expired), []);
-	});
-
-	test("shows credits only while a reported quota is above the warning threshold", () => {
-		const high = quotaRender({ limits: [reset("5h", 75)], resetCredits: 3 }, identityStyles, now);
-		assert.deepEqual(upgrades(high), ["5h 75% 󰦛 2h 30m  󰔖 3", "5h 75% 󰦛 2h 30m", "5h 75%  󰔖 3"]);
-		const healthy = quotaRender({ ...full, resetCredits: 3 }, identityStyles, now);
-		assert.deepEqual(labels(healthy), ["5h 30%  1d 12%", "5h 30%", "1d 12%", ""]);
-		assert.deepEqual(upgrades(healthy), []);
-		const zero = quotaRender({ limits: [reset("5h", 75)], resetCredits: 0 }, identityStyles, now);
-		assert.ok((zero.essentials[0]?.upgrades ?? []).every((value) => !value.includes("󰔖")));
-		const unknown = quotaRender({ limits: [reset("5h", 75)] }, identityStyles, now);
-		assert.ok((unknown.essentials[0]?.upgrades ?? []).every((value) => !value.includes("󰔖")));
-	});
-
-	test("keeps window percentages essential while countdowns and credits upgrade", () => {
-		const render = quotaRender({ limits: [reset("5h", 92), reset("7d", 43)], resetCredits: 1 }, identityStyles, now);
-		assert.ok(render.essentials.every((option) => !option.label.includes("󰦛") && !option.label.includes("󰔖")));
-		assert.ok(render.essentials[0]?.label.includes("5h 92%") && render.essentials[0]?.label.includes("7d 43%"));
-		const richest = render.essentials[0]?.upgrades[0] ?? "";
-		assert.ok(richest.includes("󰦛") && richest.includes("󰔖"));
-	});
-
-	test("uses ASCII tokens without spacing and Nerd glyphs with spacing", () => {
-		const usage: QuotaUsage = { limits: [reset("5h", 75)], resetCredits: 2 };
-		const ascii = quotaRender(usage, identityStyles, now, ASCII_GLYPHS);
-		assert.equal(stripVTControlCharacters(ascii.essentials[0]?.upgrades[0] ?? ""), "5h 75% r2h 30m  R2");
-		const nerd = quotaRender(usage, identityStyles, now, NERD_GLYPHS);
-		assert.equal(stripVTControlCharacters(nerd.essentials[0]?.upgrades[0] ?? ""), "5h 75% 󰦛 2h 30m  󰔖 2");
-		assert.ok(!readFileSync(new URL("./chrome.ts", import.meta.url), "utf8").includes("↻"));
-	});
-
-	test("offers the combined essential and an empty fallback for a quiet session", () => {
-		const render = quotaRender(full, identityStyles);
-		assert.deepEqual(labels(render), ["5h 30%  1d 12%", "5h 30%", "1d 12%", ""]);
-		assert.deepEqual(upgrades(render), []);
-		assert.deepEqual(labels(quotaRender({ limits: [] }, identityStyles)), [""]);
-	});
-
-	test("escalates color with usage level", () => {
-		const render = quotaRender(
-			{
-				limits: [
-					{ label: "5h", percent: 95 },
-					{ label: "7d", percent: 80 },
-				],
-			},
-			markedStyles,
-		);
-		assert.equal(render.essentials[0]?.label, "<error>5h 95%</error><dim>  </dim><warning>7d 80%</warning>");
-	});
-
-	test("keeps quiet quota dim", () => {
-		assert.equal(
-			quotaRender(full, markedStyles).essentials[0]?.label,
-			"<dim>5h 30%</dim><dim>  </dim><dim>1d 12%</dim>",
-		);
-	});
-
-	test("keeps quota lane dollar-free: limit percent renders, balance data never shown", () => {
-		const render = quotaRender({ limits: [{ label: "7d", percent: 32.5 }] }, identityStyles);
-		assert.deepEqual(labels(render), ["7d 33%", ""]);
-	});
-});
-
-describe("chrome color sources", () => {
-	// Omarchy's palette lives in the active pi theme file, so the extension must never carry its own
-	// colors: every value comes from a theme token, and no surface fills a background.
-	const ESC = String.fromCharCode(0x1b);
-	const chromeSources = (): readonly string[] => {
-		const root = new URL("../", import.meta.url);
-		const sources = ["index.ts"];
-		for (const dir of ["lib", "ui"]) {
-			for (const name of readdirSync(new URL(`${dir}/`, root))) {
-				if (name.endsWith(".ts") && !name.endsWith(".test.ts")) sources.push(`${dir}/${name}`);
-			}
-		}
-		return sources;
-	};
-
-	test("uses theme tokens only, with no hex colors and no raw ANSI escapes", () => {
-		const root = new URL("../", import.meta.url);
-		const sources = chromeSources();
-		assert.ok(sources.length >= 10);
-		for (const source of sources) {
-			const text = readFileSync(new URL(source, root), "utf8");
-			assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(text), `${source} hardcodes a hex color`);
-			assert.ok(!text.includes(ESC), `${source} embeds a raw escape character`);
-			assert.ok(!/\\x1b|\\033|\\u001b/.test(text), `${source} embeds a raw escape literal`);
-		}
 	});
 });

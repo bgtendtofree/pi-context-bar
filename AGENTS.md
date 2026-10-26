@@ -38,7 +38,9 @@ Open-sided input shell with health in its top and bottom rows. No multi-line foo
 
 - `lib/context.ts` — native context snapshot types and session usage
 - `lib/chrome.ts` — Pac-Man lane, health metrics, role-based theme styling
-- `lib/openai.ts` — OpenAI Codex quota, expiry-aware banked reset
+- `lib/openai.ts` — OpenAI Codex quota fetch/parse and expiry-aware banked reset
+- `lib/quota.ts` — Codex quota state, refresh/expiry, request/account/endpoint isolation
+- `lib/billing.ts` — fork billing-marker parent read and recovery
 - `lib/response-quota.ts` — passive response-header/stream quota parsing and expiry
 - `lib/status.ts` — bounded, display-only diagnostics and extension status inspection
 - `lib/context-audit.ts` — bounded effective-context and last-request usage derivation
@@ -50,7 +52,8 @@ Open-sided input shell with health in its top and bottom rows. No multi-line foo
 - `commands/openai-codex-reset.ts` — reset command flow and its pending/retry safety
 - `ui/framed-editor.ts` — Pi/TUI framed editor adapter
 - `index.ts` — extension state, I/O, lifecycle wiring only
-- `lib/*.test.ts`, `commands/*.test.ts` — mirrored Node.js `node:test` suites
+- `index.*.test.ts`, `lib/*.test.ts`, `ui/*.test.ts`, `commands/*.test.ts` — behavior-domain Node.js `node:test` suites
+- `test-support/` — shared test-only fixtures; never shipped or production-typed
 
 ## Stack
 

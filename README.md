@@ -52,7 +52,7 @@ metrics and richer context breakdowns; the distinction here is the compact layou
 | Editor body | `❯` prompt (accent) · typed input |
 | Editor border right | cache database · optional `$` |
 | Pac-Man lane | empty consumed space → phase ghost while running → text Pac-Man → dim remaining pellets |
-| Right-aligned metrics | native `%` · one reserved field: phase glyph plus its reading (`t/s`, or `?t/s` while a phase has none) |
+| Right-aligned metrics | native `%` · one reserved field: phase glyph plus its reading (`t/s`, or `?t/s` while a phase or active output has no measurable reading) |
 
 Healthy metrics stay dim; accent marks the model and ready prompt, and warning/error colors mark thresholds and failure only. The Pac-Man strip spans the top row without `─` caps or filler; only the bottom keeps a horizontal rule. No side borders, corners, background fills, or extra rows. The prompt is flush left, followed by one space; continuation rows align with typed text. The right gutter and bottom metric positions stay unchanged; scroll counts remain visible.
 

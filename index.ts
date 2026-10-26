@@ -1,9 +1,9 @@
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { keyText, parseSessionEntries, VERSION } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { keyText, VERSION } from "@earendil-works/pi-coding-agent";
 import { isAppleTerminalSession } from "@earendil-works/pi-tui";
 import { runOpenAiCodexReset } from "./commands/openai-codex-reset.ts";
+import { recoverForkSubscriptionMarkers } from "./lib/billing.ts";
 import type { ModelInfo } from "./lib/border.ts";
 import {
 	ASCII_GLYPHS,
@@ -12,16 +12,12 @@ import {
 	type GlyphSet,
 	type LaneActivity,
 	NERD_GLYPHS,
-	type QuotaUsage,
 } from "./lib/chrome.ts";
 import { configPath, nextAsciiFallback, readConfig } from "./lib/config.ts";
 import {
 	accumulateSessionUsage,
 	type ContextSnapshot,
-	hasParentMarkersCheck,
-	hasRecoverableBilling,
 	latestAssistantResponse,
-	PARENT_MARKERS_CHECKED_ENTRY,
 	recoverableSubscriptionMarkers,
 	type SessionUsage,
 	SUBSCRIPTION_TURN_ENTRY,
@@ -44,23 +40,18 @@ import {
 	headerMark,
 	renderWelcome,
 } from "./lib/header.ts";
-import {
-	fetchOpenAiUsage,
-	officialCodexBaseUrl,
-	openAiAccountId,
-	QUOTA_ENDPOINT_MESSAGE,
-	shouldRefreshQuota,
-} from "./lib/openai.ts";
 import { INITIAL_PROMPT_STATE, type PromptState, promptStateAfterTurn, promptStateFromEntries } from "./lib/prompt.ts";
-import { parseQuotaEvent, parseQuotaHeaders, responseQuotaKey, unexpiredQuota } from "./lib/response-quota.ts";
+import { createQuotaController, INITIAL_QUOTA_STATE, isCodexModel, type QuotaState } from "./lib/quota.ts";
+import { parseQuotaEvent, parseQuotaHeaders, responseQuotaKey } from "./lib/response-quota.ts";
 import {
-	completedTokenSpeed,
 	estimateDeltaTokens,
-	estimateTokenSpeed,
-	pushSpeedSample,
-	type SpeedSample,
-	type TokenSpeedSnapshot,
-	windowedTokenSpeed,
+	finishSpeedMessage,
+	INITIAL_OUTPUT_SPEED,
+	type OutputSpeedState,
+	recordSpeedDelta,
+	resetTurnSpeed,
+	restartSpeedStream,
+	settleSpeedTurn,
 } from "./lib/speed.ts";
 import { restoreDecision, STASH_SHORTCUT, STASH_SUBCOMMAND, stashDecision } from "./lib/stash.ts";
 import { renderStatus } from "./lib/status.ts";
@@ -99,16 +90,11 @@ type ChromeState = Readonly<{
 	/** Request-time billing identity captured before HTTP; the response matches it by model. */
 	billingRequest: Readonly<{ model: string; subscription: boolean }> | undefined;
 	chompTokens: number;
+	/** Last measured live/calibrated reading plus the active window and turn accumulators. */
+	speed: OutputSpeedState;
 	rewind: Readonly<{ usedTokens: number; frame: number }> | undefined;
 	rewindTimer: ReturnType<typeof setInterval> | undefined;
 	laneActivity: LaneActivity;
-	tokenSpeed: TokenSpeedSnapshot | null;
-	speedStreamTokens: number;
-	speedStreamStartedAt: number | undefined;
-	/** Cumulative token readings inside the live window; cleared per assistant message. */
-	speedSamples: readonly SpeedSample[];
-	speedTurnOutputTokens: number;
-	speedTurnActiveMs: number;
 	timing: TimingState;
 	/** Pi's native working indicator kind, read through the public editor API. */
 	phase: string | undefined;
@@ -123,12 +109,7 @@ type ChromeState = Readonly<{
 	tui: RenderRequester | undefined;
 	glyphs: GlyphSet;
 	prompt: PromptState;
-	quota: QuotaUsage | undefined;
-	quotaAccountId: string | undefined;
-	quotaLastAttemptAt: number | undefined;
-	quotaSource: string | undefined;
-	quotaUpdatedAt: number | undefined;
-	quotaIssue: string | undefined;
+	quota: QuotaState;
 	quotaRequestKey: string | undefined;
 	/**
 	 * Identity captured at the latest turn_start. Its presence means a turn started even when `key` is
@@ -136,10 +117,7 @@ type ChromeState = Readonly<{
 	 * through to the newly selected model.
 	 */
 	turnQuota: Readonly<{ key: string | undefined }> | undefined;
-	quotaOwnerKey: string | undefined;
 	getExtensionStatuses: (() => ReadonlyMap<string, string>) | undefined;
-	/** One hint per session when a custom endpoint cannot host official quota queries. */
-	quotaEndpointWarned: boolean;
 }>;
 
 const freshState = (): ChromeState => ({
@@ -152,15 +130,10 @@ const freshState = (): ChromeState => ({
 	subscriptionTurn: false,
 	billingRequest: undefined,
 	chompTokens: 0,
+	speed: INITIAL_OUTPUT_SPEED,
 	rewind: undefined,
 	rewindTimer: undefined,
 	laneActivity: "idle",
-	tokenSpeed: null,
-	speedStreamTokens: 0,
-	speedStreamStartedAt: undefined,
-	speedSamples: [],
-	speedTurnOutputTokens: 0,
-	speedTurnActiveMs: 0,
 	timing: INITIAL_TIMING,
 	phase: undefined,
 	lastRequestUsage: undefined,
@@ -173,21 +146,13 @@ const freshState = (): ChromeState => ({
 	tui: undefined,
 	glyphs: NERD_GLYPHS,
 	prompt: INITIAL_PROMPT_STATE,
-	quota: undefined,
-	quotaAccountId: undefined,
-	quotaLastAttemptAt: undefined,
-	quotaSource: undefined,
-	quotaUpdatedAt: undefined,
-	quotaIssue: undefined,
+	quota: INITIAL_QUOTA_STATE,
 	quotaRequestKey: undefined,
 	turnQuota: undefined,
-	quotaOwnerKey: undefined,
 	getExtensionStatuses: undefined,
-	quotaEndpointWarned: false,
 });
 
 let state = freshState();
-let quotaLookupId = 0;
 /** In-memory forks keep no parent file, so the endpoint's marker is carried in memory across the fork. */
 let pendingForkSubscriptionIds: readonly string[] | undefined;
 
@@ -341,10 +306,6 @@ const restoreStashedDraft = (ctx: ExtensionContext): void => {
 	requestRender();
 };
 
-/** New OpenAI OAuth and virtual selections cannot redeem legacy ChatGPT resets. */
-const isCodexModel = (ctx: ExtensionContext): boolean =>
-	ctx.model?.provider === "openai-codex" && ctx.model.api !== "pi-virtual";
-
 /** OpenAI Responses payloads name the routed physical model; other payloads may omit it. */
 const payloadModelId = (payload: unknown): string | undefined =>
 	typeof payload === "object" && payload !== null && "model" in payload && typeof payload.model === "string"
@@ -370,127 +331,6 @@ const captureRequestBilling = (payload: unknown, ctx: ExtensionContext): void =>
 	});
 };
 
-/** Drop the shown quota and its retry anchor; used whenever the account or endpoint can no longer host it. */
-const dropQuota = (accountId: string | undefined): void => {
-	patch({
-		quota: undefined,
-		quotaAccountId: accountId,
-		quotaLastAttemptAt: undefined,
-		quotaSource: undefined,
-		quotaUpdatedAt: undefined,
-		quotaIssue: undefined,
-		quotaOwnerKey: undefined,
-	});
-};
-
-/** Warn once per session when the active Codex model does not use the official ChatGPT endpoint. */
-const warnQuotaEndpointOnce = (ctx: ExtensionContext): void => {
-	if (state.quotaEndpointWarned) return;
-	patch({ quotaEndpointWarned: true });
-	if (ctx.hasUI)
-		ctx.ui.notify("Official Codex quota queries are off for this endpoint; waiting for provider response metadata");
-};
-
-const passiveQuota = (): boolean => state.quotaSource === "response headers" || state.quotaSource === "stream event";
-
-const expireQuota = (ctx: ExtensionContext): void => {
-	if (!passiveQuota() || !state.quota) return;
-	if (state.quotaOwnerKey !== responseQuotaKey(ctx.model)) {
-		dropQuota(undefined);
-		patch({ quotaIssue: "model or endpoint changed; waiting for provider response metadata" });
-		return;
-	}
-	const quota = unexpiredQuota(state.quota, Date.now());
-	if (quota !== state.quota) patch({ quota, quotaIssue: "expired response quota windows were removed" });
-};
-
-const observeQuota = (quota: QuotaUsage | undefined, source: string): void => {
-	if (!quota) return;
-	quotaLookupId++;
-	patch({
-		quota,
-		quotaSource: source,
-		quotaUpdatedAt: Date.now(),
-		quotaAccountId: undefined,
-		quotaLastAttemptAt: undefined,
-		quotaOwnerKey: state.quotaRequestKey,
-		quotaIssue: quota.limits.length
-			? "responding upstream quota, not a proxy-pool aggregate; reset credits are not reported"
-			: "response reported no usable, unexpired Codex quota windows",
-	});
-	requestRender();
-};
-
-/** Refresh OpenAI quota on activity, at most once per throttle; failures keep the last snapshot. */
-const refreshQuota = async (ctx: ExtensionContext, force = false): Promise<void> => {
-	// Quota is chrome; headless and RPC sessions must not spend an authenticated request on it.
-	if (ctx.mode !== "tui") return;
-	expireQuota(ctx);
-	if (!force && passiveQuota() && state.quota?.limits.length) return;
-	if (!isCodexModel(ctx)) {
-		quotaLookupId++;
-		dropQuota(undefined);
-		patch({
-			quotaIssue: responseQuotaKey(ctx.model)
-				? "waiting for provider response metadata"
-				: "model API does not expose Codex quota",
-		});
-		return;
-	}
-	// Validate the active endpoint before the throttle: switching to a custom/proxy endpoint must clear
-	// a previously shown official quota instead of letting a failed poll keep it alive.
-	if (officialCodexBaseUrl(ctx.model?.baseUrl) === undefined) {
-		quotaLookupId++;
-		dropQuota(undefined);
-		patch({ quotaIssue: "no official queries for custom endpoints; waiting for provider response metadata" });
-		warnQuotaEndpointOnce(ctx);
-		requestRender();
-		return;
-	}
-	const lookupId = ++quotaLookupId;
-	try {
-		const key = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
-		if (lookupId !== quotaLookupId || !isCodexModel(ctx) || officialCodexBaseUrl(ctx.model?.baseUrl) === undefined)
-			return;
-		const accountId = key ? openAiAccountId(key) : undefined;
-		if (accountId !== state.quotaAccountId) {
-			dropQuota(accountId);
-			requestRender();
-		}
-		if (!key || !accountId) {
-			patch({ quotaIssue: "no legacy Codex credentials or account ID" });
-			return;
-		}
-		const now = performance.now();
-		if (!shouldRefreshQuota(state.quotaLastAttemptAt, now, force)) return;
-		patch({ quotaLastAttemptAt: now });
-		const quota = await fetchOpenAiUsage(key, ctx.model?.baseUrl);
-		// Recheck the endpoint on the delayed reply: a switch to a proxy must discard an in-flight official
-		// result instead of attaching it to the unsupported model. A concurrent throttled same-endpoint
-		// lookup must not drop a valid result, so only the account and attempt anchor gate it, not lookupId.
-		if (
-			!isCodexModel(ctx) ||
-			officialCodexBaseUrl(ctx.model?.baseUrl) === undefined ||
-			state.quotaAccountId !== accountId ||
-			state.quotaLastAttemptAt !== now
-		)
-			return;
-		patch({
-			quota,
-			quotaSource: "official query",
-			quotaUpdatedAt: Date.now(),
-			quotaIssue: "official ChatGPT account quota",
-		});
-		requestRender();
-	} catch (error) {
-		if (lookupId !== quotaLookupId) return;
-		patch({ quotaIssue: "official quota query failed; keeping the last good snapshot" });
-		// A custom endpoint can never host Codex quota, so say so once instead of polling forever in silence.
-		if (error instanceof Error && error.message === QUOTA_ENDPOINT_MESSAGE) warnQuotaEndpointOnce(ctx);
-		// ponytail: quota is advisory chrome; a failed poll must never break the editor
-	}
-};
-
 const currentModel = (ctx: ExtensionContext): ModelInfo => {
 	const model = ctx.model;
 	if (!model) return null;
@@ -503,6 +343,13 @@ const currentModel = (ctx: ExtensionContext): ModelInfo => {
 
 const requestRender = (): void => state.tui?.requestRender();
 
+const quotaController = createQuotaController({
+	getState: () => state.quota,
+	setState: (quota) => patch({ quota }),
+	requestRender,
+	getRequestKey: () => state.quotaRequestKey,
+});
+
 /** Ghost and chomp animation carry activity; the border itself stays static theme. */
 const changeLaneActivity = (next: LaneActivity): boolean => {
 	if (state.laneActivity === next) return false;
@@ -510,14 +357,11 @@ const changeLaneActivity = (next: LaneActivity): boolean => {
 	return true;
 };
 
-const resetTurnSpeed = (): void => {
+const resetTurn = (): void => {
 	patch({
-		tokenSpeed: null,
-		speedStreamTokens: 0,
-		speedStreamStartedAt: undefined,
-		speedSamples: [],
-		speedTurnOutputTokens: 0,
-		speedTurnActiveMs: 0,
+		// Keep the last measured reading across turns: waiting and the first chunks hold it until a
+		// live window can measure again. A fresh session starts from the initial null.
+		speed: resetTurnSpeed(state.speed),
 		chompTokens: 0,
 		subscriptionTurn: false,
 		billingRequest: undefined,
@@ -591,52 +435,6 @@ const setWelcomeHeader = (ctx: ExtensionContext): void => {
 	});
 };
 
-/** Guard the untrusted parent path: a FIFO read would hang and a huge file would stall startup. */
-const MAX_PARENT_SESSION_BYTES = 64 * 1024 * 1024;
-
-/** Read a parent session through one descriptor: nonblocking open, fstat the descriptor, bounded read. */
-const readParentSessionEntries = (path: string): readonly SessionEntry[] | undefined => {
-	let fd: number | undefined;
-	try {
-		fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
-		const info = fstatSync(fd);
-		if (!info.isFile() || info.size > MAX_PARENT_SESSION_BYTES) return undefined;
-		const buffer = Buffer.allocUnsafe(info.size);
-		let offset = 0;
-		while (offset < buffer.length) {
-			const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
-			if (read <= 0) break;
-			offset += read;
-		}
-		return parseSessionEntries(buffer.subarray(0, offset).toString("utf8")).filter(
-			(entry): entry is SessionEntry => entry.type !== "session",
-		);
-	} catch {
-		return undefined;
-	} finally {
-		if (fd !== undefined) closeSync(fd);
-	}
-};
-
-/** Re-append billing markers retained as ancestors when a fork copies a response into a new session. */
-const recoverForkSubscriptionMarkers = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
-	const parent = ctx.sessionManager.getHeader?.()?.parentSession;
-	if (!parent) return;
-	const entries = ctx.sessionManager.getEntries();
-	// The sentinel names its parent, so a sentinel copied through another fork cannot skip this one.
-	if (hasParentMarkersCheck(entries, parent)) return;
-	// A marker only re-classifies a billed, non-plan response, so skip the parent read when none is present.
-	if (hasRecoverableBilling(entries)) {
-		const parentEntries = readParentSessionEntries(parent);
-		// Leave the sentinel unwritten on a failed read so the next start can retry it.
-		if (!parentEntries) return;
-		for (const messageEntryId of recoverableSubscriptionMarkers(entries, parentEntries))
-			pi.appendEntry(SUBSCRIPTION_TURN_ENTRY, { messageEntryId });
-	}
-	pi.appendEntry(PARENT_MARKERS_CHECKED_ENTRY, { parentSession: parent });
-};
-
-/** Glyph set from user config; re-applied per session because shutdown resets state to Nerd defaults. */
 const configGlyphs = (): GlyphSet => (readConfig(configPath()).asciiFallback ? ASCII_GLYPHS : NERD_GLYPHS);
 
 /** Pi hides its own startup header on `quietStartup: true`; the replacement header obeys the same setting. */
@@ -661,7 +459,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 		ctx.ui.setWorkingVisible(false);
 		if (!startupHeaderSuppressed(pi)) setWelcomeHeader(ctx);
 	}
-	void refreshQuota(ctx);
+	void quotaController.refresh(ctx);
 	ctx.ui.setFooter((_tui, _theme, footerData) => {
 		const getExtensionStatuses = () => footerData.getExtensionStatuses();
 		patch({ getExtensionStatuses });
@@ -677,7 +475,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 		getModel: () => currentModel(ctx),
 		getThinkingLevel: () => pi.getThinkingLevel(),
 		getHealth: () => {
-			expireQuota(ctx);
+			quotaController.expire(ctx);
 			// Pi appends background usage entries (e.g. cache warming) while idle and only triggers a render; no
 			// extension lifecycle hook fires. The leaf-id memo keeps this cheap and rescans only on a new leaf.
 			// During a captured subscription turn, treat the provisional unmarked response as on-plan.
@@ -688,8 +486,8 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 						? { ...state.context, usedTokens: state.rewind.usedTokens }
 						: state.context,
 				usage: state.usage,
-				quota: state.quota,
-				speed: state.tokenSpeed,
+				quota: state.quota.usage,
+				speed: state.speed.reading,
 				frame: Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0),
 				activity: state.laneActivity,
 				prompt: state.prompt,
@@ -697,7 +495,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 					phase: state.phase,
 					waiting: state.timing.waiting,
 					stashed: state.stash !== undefined,
-					hasSpeed: state.tokenSpeed !== null,
+					hasSpeed: state.speed.reading !== null,
 					outputActive: state.timing.request?.ttftMs !== undefined,
 				}),
 			};
@@ -733,7 +531,7 @@ export default function zContext(pi: ExtensionAPI): void {
 				return;
 			}
 			if (args.trim() === "status") {
-				expireQuota(ctx);
+				quotaController.expire(ctx);
 				refreshSnapshot(ctx);
 				refreshSessionUsage(ctx);
 				ctx.ui.notify(
@@ -744,17 +542,17 @@ export default function zContext(pi: ExtensionAPI): void {
 						config: configPath(),
 						context: state.context,
 						usage: state.usage,
-						speed: state.tokenSpeed,
+						speed: state.speed.reading,
 						timing: timingReport(),
 						requestUsage: state.lastRequestUsage,
 						contextChange: state.contextChange,
 						effective: state.effective,
 						effectiveIssue: state.effectiveIssue,
 						stash: state.stash !== undefined,
-						quota: state.quota,
-						quotaSource: state.quotaSource,
-						quotaUpdatedAt: state.quotaUpdatedAt,
-						quotaIssue: state.quotaIssue,
+						quota: state.quota.usage,
+						quotaSource: state.quota.source,
+						quotaUpdatedAt: state.quota.updatedAt,
+						quotaIssue: state.quota.issue,
 						statuses: state.getExtensionStatuses?.(),
 					}),
 					"info",
@@ -780,7 +578,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		handler: (args, ctx) =>
 			runOpenAiCodexReset(args, ctx, {
 				isCodexModel,
-				refreshQuota: (active) => refreshQuota(active, true),
+				refreshQuota: (active) => quotaController.refresh(active, true),
 			}),
 	});
 
@@ -830,7 +628,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		patch({ timing: startRequest(state.timing, performance.now()) });
 		if (ctx.mode !== "tui") return;
 		// A proxy may rotate credentials between requests; never merge windows from different responses.
-		if (passiveQuota()) dropQuota(undefined);
+		if (quotaController.passive()) quotaController.drop(undefined);
 		const selectedKey = responseQuotaKey(ctx.model);
 		const requestModel = payloadModelId(event.payload);
 		// The turn captured its selection before auth, when this request started. A switch during that
@@ -849,7 +647,7 @@ export default function zContext(pi: ExtensionAPI): void {
 			event.status >= 200 &&
 			event.status < 300
 		)
-			observeQuota(parseQuotaHeaders(event.headers, Date.now()), "response headers");
+			quotaController.observe(parseQuotaHeaders(event.headers, Date.now()), "response headers");
 	});
 	pi.on("provider_stream_event", (event, ctx) => {
 		if (
@@ -860,7 +658,7 @@ export default function zContext(pi: ExtensionAPI): void {
 			event.api === ctx.model.api &&
 			event.model === ctx.model.id
 		)
-			observeQuota(parseQuotaEvent(event.data, Date.now()), "stream event");
+			quotaController.observe(parseQuotaEvent(event.data, Date.now()), "stream event");
 	});
 
 	pi.on("agent_start", (_event, ctx) => {
@@ -875,7 +673,7 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 
 	pi.on("turn_start", (_event, ctx) => {
-		resetTurnSpeed();
+		resetTurn();
 		patch({ timing: startTurn(state.timing, performance.now()) });
 		// Capture the request's selection before auth; a later select must not claim its response quota.
 		// A virtual/unsupported selection is captured too, with `key` undefined, so it cannot fall through.
@@ -890,9 +688,7 @@ export default function zContext(pi: ExtensionAPI): void {
 			event.message.provider === "openai" && billing?.subscription && billing.model === event.message.model,
 		);
 		patch({
-			speedStreamTokens: 0,
-			speedStreamStartedAt: undefined,
-			speedSamples: [],
+			speed: restartSpeedStream(state.speed),
 			subscriptionTurn,
 			// Boundary: only an assistant entry created after this point belongs to the captured request.
 			provisionalBaseIds: subscriptionTurn
@@ -920,20 +716,10 @@ export default function zContext(pi: ExtensionAPI): void {
 				: undefined;
 		if (!delta) return;
 		const tokens = estimateDeltaTokens(delta, type === "toolcall_delta" ? "toolcall" : "text");
-		const streamStartedAt = state.speedStreamStartedAt ?? now;
-		const totalTokens = state.speedStreamTokens + tokens;
-		const samples = pushSpeedSample(state.speedSamples, now, totalTokens);
 		patch({
-			speedStreamStartedAt: streamStartedAt,
-			speedStreamTokens: totalTokens,
-			speedSamples: samples,
-			// Hold the last reading while the window is still too short to measure; only the first
-			// reading of a session falls back to the cumulative estimate so the field never blanks.
-			tokenSpeed:
-				windowedTokenSpeed(samples) ??
-				(state.tokenSpeed
-					? { ...state.tokenSpeed, estimated: true }
-					: estimateTokenSpeed(totalTokens, now - streamStartedAt)),
+			// The reducer holds the last measured reading until the window spans its minimum interval;
+			// with no history it stays null and chrome shows `?t/s` instead of inventing a rate.
+			speed: recordSpeedDelta(state.speed, tokens, now),
 			chompTokens: state.chompTokens + tokens,
 		});
 		requestRender();
@@ -945,14 +731,7 @@ export default function zContext(pi: ExtensionAPI): void {
 			const timing = endTurn(state.timing);
 			if (timing !== state.timing) patch({ timing });
 		}
-		patch({
-			speedTurnActiveMs:
-				state.speedStreamStartedAt !== undefined
-					? state.speedTurnActiveMs + performance.now() - state.speedStreamStartedAt
-					: state.speedTurnActiveMs,
-			speedTurnOutputTokens: state.speedTurnOutputTokens + event.message.usage.output,
-			speedStreamStartedAt: undefined,
-		});
+		patch({ speed: finishSpeedMessage(state.speed, event.message.usage.output, performance.now()) });
 	});
 
 	pi.on("tool_execution_start", () => {
@@ -966,7 +745,7 @@ export default function zContext(pi: ExtensionAPI): void {
 			patch({ prompt: promptStateAfterTurn(state.prompt, event.message.stopReason) });
 		}
 		patch({
-			tokenSpeed: completedTokenSpeed(state.speedTurnOutputTokens, state.speedTurnActiveMs) ?? state.tokenSpeed,
+			speed: settleSpeedTurn(state.speed),
 			timing: endTurn(state.timing),
 			quotaRequestKey: undefined,
 			subscriptionTurn: false,
@@ -975,7 +754,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		});
 		refreshSnapshot(ctx);
 		refreshSessionUsage(ctx);
-		void refreshQuota(ctx);
+		void quotaController.refresh(ctx);
 		requestRender();
 	});
 
@@ -1002,10 +781,10 @@ export default function zContext(pi: ExtensionAPI): void {
 		// A run that spans a model switch has no comparable before/after context reading.
 		patch({ quotaRequestKey: undefined, contextChange: { unavailable: "model changed" } });
 		if (state.timing.run) patch({ runContextIssue: "model changed during the run" });
-		if (passiveQuota()) dropQuota(undefined);
+		if (quotaController.passive()) quotaController.drop(undefined);
 		markEffectiveUnknown("model changed; waiting for the next observation");
 		refreshSnapshot(ctx);
-		void refreshQuota(ctx);
+		void quotaController.refresh(ctx);
 		requestRender();
 	});
 	pi.on("thinking_level_select", requestRender);
@@ -1040,7 +819,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		requestRender();
 	});
 	pi.on("session_shutdown", (event, ctx) => {
-		quotaLookupId++;
+		quotaController.cancel();
 		// Shutdown cannot be cancelled. Restore a held draft into an empty editor first (reload keeps
 		// editor text); with a non-empty editor the SDK leaves no non-disk place to preserve it.
 		if (state.stash !== undefined && ctx.mode === "tui") {

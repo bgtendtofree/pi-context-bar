@@ -998,9 +998,9 @@ test("puts wait/phase notices in the speed slot and mirrors Pi's indicator kind"
 	const before = framed.render(80).map(stripVTControlCharacters);
 	assert.match(before[0] ?? "", /~42\.3t\/s/);
 
-	framed.setHealth(health("retrying"));
+	framed.setHealth(health("retrying…"));
 	const after = framed.render(80).map(stripVTControlCharacters);
-	assert.match(after[0] ?? "", /retrying/);
+	assert.match(after[0] ?? "", /retrying…/);
 	assert.doesNotMatch(after[0] ?? "", /t\/s/);
 	// The notice replaces the reading inside the same reserved field; the percent cannot move.
 	assert.equal(after[0]?.indexOf("20.0%"), before[0]?.indexOf("20.0%"));

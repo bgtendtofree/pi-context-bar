@@ -456,36 +456,38 @@ describe("lane strip", () => {
 
 	test("puts wait/retry notices in the same reserved field so the lane does not move", () => {
 		const speed = { tokensPerSecond: 42.25, estimated: true };
-		const baseline = stripVTControlCharacters(
-			renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed, NERD_GLYPHS),
-		);
-		for (const notice of ["waiting", "retrying", "compact", "summary"]) {
-			const strip = stripVTControlCharacters(
-				renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed, NERD_GLYPHS, notice),
+		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
+			const baseline = stripVTControlCharacters(
+				renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed, glyphs),
 			);
-			assert.equal(visibleWidth(strip), 60);
-			// The notice temporarily replaces the speed reading; neither digit growth nor the estimate
-			// marker can move Pac-Man or the percent.
-			assert.equal(strip.indexOf("15.6%"), baseline.indexOf("15.6%"));
-			assert.equal(strip.indexOf(PACMAN_GLYPH), baseline.indexOf(PACMAN_GLYPH));
-			assert.ok(strip.includes(notice), strip);
-			assert.ok(!strip.includes("t/s"), strip);
-			// A notice is plain dim text; the speedometer never decorates it.
-			assert.ok(!strip.includes(NERD_GLYPHS.speed), strip);
+			for (const notice of ["waiting…", "retrying…", "compact…", "summary…"]) {
+				const { styles, seen } = recorder();
+				const strip = stripVTControlCharacters(
+					renderLaneStrip(dominantSnapshot, 60, styles, 0, "idle", speed, glyphs, notice),
+				);
+				assert.equal(visibleWidth(strip), 60);
+				// Pending labels fit the existing field, including the longest one, `retrying…`.
+				assert.equal(strip.indexOf("15.6%"), baseline.indexOf("15.6%"));
+				assert.equal(strip.indexOf(glyphs.pacmanOpen), baseline.indexOf(glyphs.pacmanOpen));
+				assert.ok(strip.endsWith(`${notice} `), strip);
+				assert.ok(!strip.includes("t/s"), strip);
+				assert.ok(!strip.includes(NERD_GLYPHS.speed), strip);
+				assert.ok(seen.some(([token, text]) => token === "dim" && text.trim() === notice));
+			}
 		}
 	});
 
 	test("notice and speed share one right-aligned field across the transition", () => {
 		const speed = { tokensPerSecond: 9.8, estimated: true };
 		const before = stripVTControlCharacters(
-			renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", null, NERD_GLYPHS, "waiting"),
+			renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", null, NERD_GLYPHS, "waiting…"),
 		);
 		const after = stripVTControlCharacters(
 			renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed, NERD_GLYPHS),
 		);
 		assert.equal(visibleWidth(before), 60);
 		assert.equal(before.indexOf("15.6%"), after.indexOf("15.6%"));
-		assert.ok(before.endsWith("waiting "));
+		assert.ok(before.endsWith("waiting… "));
 		assert.ok(after.endsWith("~9.8t/s "));
 	});
 
@@ -499,7 +501,7 @@ describe("lane strip", () => {
 				"idle",
 				null,
 				NERD_GLYPHS,
-				"waiting",
+				"waiting…",
 			),
 		);
 		assert.ok(roomy.includes("?%"), roomy);
@@ -513,11 +515,46 @@ describe("lane strip", () => {
 				"idle",
 				null,
 				NERD_GLYPHS,
-				"waiting",
+				"waiting…",
 			),
 		);
 		assert.ok(tight.includes("?%"), tight);
 		assert.ok(!tight.includes("waiting"), tight);
+	});
+
+	test("drops pending punctuation before phase text on narrow strips", () => {
+		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
+			for (const [notice, width] of [
+				["waiting…", 17],
+				["retrying…", 18],
+			] as const) {
+				const strip = renderLaneStrip(
+					snapshot({ usedTokens: null, contextWindow: 0 }),
+					width,
+					identityStyles,
+					0,
+					"idle",
+					null,
+					glyphs,
+					notice,
+				);
+				assert.equal(visibleWidth(strip), width);
+				assert.ok(strip.includes("?%"), strip);
+				assert.ok(strip.endsWith(`${notice.slice(0, -1)} `), strip);
+				assert.ok(!strip.includes("…"), strip);
+			}
+		}
+	});
+
+	test("every pending notice fits widths 0..200 in either glyph set", () => {
+		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
+			for (const notice of ["waiting…", "retrying…", "compact…", "summary…", "stash", " "]) {
+				for (let width = 0; width <= 200; width++) {
+					const strip = renderLaneStrip(dominantSnapshot, width, identityStyles, 0, "working", null, glyphs, notice);
+					assert.ok(visibleWidth(strip) <= width, `strip width=${width}, notice=${notice}`);
+				}
+			}
+		}
 	});
 
 	test("shrinks the speed field rather than dropping a readable number on narrow strips", () => {

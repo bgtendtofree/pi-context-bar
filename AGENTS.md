@@ -10,7 +10,7 @@ Open-sided input shell with health in its top and bottom rows. No multi-line foo
 
 - Health chrome lives on the editor's top and bottom rows; no extra rows
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
-- Editor top row: full-width Pac-Man lane + context `%` beside lane + one reserved right-aligned field holding quiet live `t/s` or, while waiting, a short dim `waiting`/`retrying`/`compact`/`summary` notice (same field, no extra row, no timer); no `─` caps or filler
+- Editor top row: full-width Pac-Man lane + context `%` beside lane + one reserved right-aligned field holding quiet live `t/s` or, while waiting, a short dim `waiting…`/`retrying…`/`compact…`/`summary…` notice (same field, no extra row, no timer); pending punctuation drops before phase text at narrow widths; no `─` caps or filler
 - Editor bottom border: model/thinking + OpenAI Codex quota beside it on the left, `CH`/`$` right; never path or Git
 - Health metrics: `%` + quiet live `t/s` (top) · cache hit + optional `$` (bottom right); Nerd Font icons may decorate speed and replace `CH`, ASCII keeps `CH` and `t/s`; a cache reading never falls back to a bare percentage (Nerd icon or `CH` label)
 - Scope: editor chrome/header/footer only; keep Pi's native conversation, thinking, tool-result, and compaction-notice renderers unchanged

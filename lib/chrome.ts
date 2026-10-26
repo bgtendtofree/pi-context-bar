@@ -416,6 +416,8 @@ export const renderLaneStrip = (
 					: []),
 				padLeft(slotText, slotFieldWidth),
 				slotText,
+				// Pending punctuation drops before readable phase text on narrow strips.
+				...(noticeText?.endsWith("…") ? [noticeText.slice(0, -1)] : []),
 			].filter((value, index, all) => all.indexOf(value) === index)
 		: [];
 	const styleSlot = (value: string): string => (value ? styles.fg("dim", value) : "");

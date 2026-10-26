@@ -115,9 +115,9 @@ export const settleAgentRun = (state: TimingState, now: number, aborted: boolean
 
 /** Short, dim speed-field notice: Pi's own indicator kind first, then waiting, then a held stash. */
 export const nativePhaseLabel = (kind: string | undefined): string | undefined => {
-	if (kind === "retry") return "retrying";
-	if (kind === "compaction") return "compact";
-	if (kind === "branchSummary") return "summary";
+	if (kind === "retry") return "retrying…";
+	if (kind === "compaction") return "compact…";
+	if (kind === "branchSummary") return "summary…";
 	return undefined;
 };
 
@@ -134,7 +134,7 @@ export const healthNotice = (
 	const phase = nativePhaseLabel(input.phase);
 	// Once output flows, the live t/s reading owns the field even if a native phase is still set.
 	if (phase && !(input.outputActive && input.hasSpeed)) return phase;
-	if (input.waiting) return "waiting";
+	if (input.waiting) return "waiting…";
 	return input.stashed && !input.hasSpeed ? "stash" : undefined;
 };
 

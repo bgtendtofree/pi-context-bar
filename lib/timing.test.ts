@@ -130,20 +130,23 @@ describe("agent run", () => {
 describe("right-slot notice", () => {
 	test("Pi's observable phase wins, then waiting, then a held stash", () => {
 		const idle = { outputActive: false } as const;
-		assert.equal(healthNotice({ phase: "retry", waiting: true, stashed: true, hasSpeed: false, ...idle }), "retrying");
+		assert.equal(healthNotice({ phase: "retry", waiting: true, stashed: true, hasSpeed: false, ...idle }), "retrying…");
 		assert.equal(
 			healthNotice({ phase: "compaction", waiting: false, stashed: false, hasSpeed: false, ...idle }),
-			"compact",
+			"compact…",
 		);
 		assert.equal(
 			healthNotice({ phase: "branchSummary", waiting: false, stashed: false, hasSpeed: false, ...idle }),
-			"summary",
+			"summary…",
 		);
 		assert.equal(
 			healthNotice({ phase: "working", waiting: true, stashed: false, hasSpeed: false, ...idle }),
-			"waiting",
+			"waiting…",
 		);
-		assert.equal(healthNotice({ phase: undefined, waiting: true, stashed: true, hasSpeed: false, ...idle }), "waiting");
+		assert.equal(
+			healthNotice({ phase: undefined, waiting: true, stashed: true, hasSpeed: false, ...idle }),
+			"waiting…",
+		);
 		assert.equal(healthNotice({ phase: undefined, waiting: false, stashed: true, hasSpeed: false, ...idle }), "stash");
 		assert.equal(healthNotice({ phase: undefined, waiting: false, stashed: true, hasSpeed: true, ...idle }), undefined);
 		assert.equal(
@@ -157,7 +160,7 @@ describe("right-slot notice", () => {
 		);
 		assert.equal(
 			healthNotice({ phase: "retry", waiting: false, stashed: false, hasSpeed: false, outputActive: true }),
-			"retrying",
+			"retrying…",
 		);
 	});
 

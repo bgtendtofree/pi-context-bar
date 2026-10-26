@@ -278,7 +278,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 		): Readonly<{ leftLabel: string; metrics: string }> {
 			const quota = health.quota
 				? quotaRender(health.quota, styles, now, options.getGlyphs())
-				: { essentials: [""], upgrades: [] };
+				: { essentials: [{ label: "", upgrades: [] }] };
 			// Essential reading first: selected model id + window percentages + cache/cost. Optional model
 			// detail (thinking level, route arrow) and quota countdowns/credits only spend spare width.
 			const metricChoices = metricOptions(health.usage, styles, options.getGlyphs());
@@ -286,16 +286,18 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			const picked = pickBottomBorderContent({
 				width,
 				models: editorModelOptions(modelInfo, thinkingLevel),
-				quotas: quota.essentials,
+				quotas: quota.essentials.map((option) => option.label),
 				metrics: metricChoices.map(({ plain }) => ({ plain, decorated: plain })),
 				gap: MODEL_QUOTA_GAP,
 				scrollReserve,
 			});
 			const plainMetrics = picked?.metric ?? "";
 			// Optional quota detail (countdowns, credits) expands only into width left after model +
-			// window percentages + cache/cost; it never displaces those essential readings.
+			// window percentages + cache/cost; it never displaces those essential readings, and it is
+			// read from the chosen reading so a narrowed single window keeps only its own detail.
+			const quotaUpgrades = quota.essentials.find((option) => option.label === picked?.quota)?.upgrades ?? [];
 			const quotaText = picked
-				? (quota.upgrades.find((candidate) =>
+				? (quotaUpgrades.find((candidate) =>
 						bottomBorderFits({
 							width,
 							model: picked.model,

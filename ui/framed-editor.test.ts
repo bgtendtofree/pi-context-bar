@@ -387,11 +387,10 @@ const buildFramedEditor = (
 };
 
 test("never trades useful text for the cache icon under real styled themes", () => {
-	// Regression (audit round 1, refined in round 2): the picker used to strip decoration from
+	// Regression (audit round 1, refined in rounds 2–3): the picker used to strip decoration from
 	// already-styled ANSI strings, so under a real theme `.startsWith(icon)` never matched and the
-	// md-database icon still bought its width by truncating the model. The styled formatter now
-	// carries explicit plain/decorated readings, so these assertions must hold for 256color and
-	// truecolor alike, not just with an identity fg.
+	// md-database icon still bought its width by truncating the model. The icon now replaces the
+	// equal-width `CH` label, so a cache reading is either labelled or absent — never a bare number.
 	const plainHealth = (usage: HealthState["usage"]): HealthState => ({
 		snapshot: { usedTokens: 0, contextWindow: 100_000 },
 		usage,
@@ -419,32 +418,33 @@ test("never trades useful text for the cache icon under real styled themes", () 
 		assert.ok(styled.includes(colorMode === "256color" ? "\x1b[38;5;" : "\x1b[38;2;"), styled);
 
 		const tight = bottom(long, plainHealth(cache98), "off", 34);
-		assert.ok(tight.includes("a-very-long-model-name") && !tight.includes("…"), tight);
-		assert.ok(tight.includes("98%") && !tight.includes(NERD_GLYPHS.cache), tight);
+		assert.ok(tight.includes("a-very-long-mod…"), tight);
+		assert.ok(tight.includes(`${NERD_GLYPHS.cache} 98%`), tight);
+		assert.ok(bottom(long, plainHealth(cache98), "off", 36).includes("a-very-long-model-name"));
 		assert.ok(bottom(long, plainHealth(cache98), "off", 36).includes(`${NERD_GLYPHS.cache} 98%`));
 
 		const thinkTight = bottom(thinking, plainHealth(cache98), "medium", 24);
-		assert.ok(thinkTight.includes("gpt · medium  98%") && !thinkTight.includes(NERD_GLYPHS.cache), thinkTight);
-		assert.ok(bottom(thinking, plainHealth(cache98), "medium", 26).includes(`${NERD_GLYPHS.cache} 98%`));
+		assert.ok(!thinkTight.includes("medium") && thinkTight.includes(`${NERD_GLYPHS.cache} 98%`), thinkTight);
+		const thinkRoomy = bottom(thinking, plainHealth(cache98), "medium", 26);
+		assert.ok(thinkRoomy.includes("gpt · medium") && thinkRoomy.includes(`${NERD_GLYPHS.cache} 98%`), thinkRoomy);
 
 		const costTight = bottom(thinking, plainHealth({ ...cache98, cost: 1.61 }), "medium", 31);
-		assert.ok(costTight.includes("98%  $1.61") && !costTight.includes(NERD_GLYPHS.cache), costTight);
-		assert.ok(
-			bottom(thinking, plainHealth({ ...cache98, cost: 1.61 }), "medium", 33).includes(
-				`${NERD_GLYPHS.cache} 98%  $1.61`,
-			),
-		);
+		assert.ok(!costTight.includes("medium") && costTight.includes(`${NERD_GLYPHS.cache} 98%  $1.61`), costTight);
+		const costRoomy = bottom(thinking, plainHealth({ ...cache98, cost: 1.61 }), "medium", 33);
+		assert.ok(costRoomy.includes("gpt · medium") && costRoomy.includes(`${NERD_GLYPHS.cache} 98%`), costRoomy);
 
 		const routeTight = bottom(routed, plainHealth(cache98), "medium", 27);
-		assert.ok(routeTight.includes("auto → gpt-test  98%") && !routeTight.includes(NERD_GLYPHS.cache), routeTight);
-		assert.ok(bottom(routed, plainHealth(cache98), "medium", 29).includes(`${NERD_GLYPHS.cache} 98%`));
+		assert.ok(routeTight.includes("auto · medium") && routeTight.includes(`${NERD_GLYPHS.cache} 98%`), routeTight);
+		assert.ok(!routeTight.includes("→"), routeTight);
+		const routeRoomy = bottom(routed, plainHealth(cache98), "medium", 29);
+		assert.ok(routeRoomy.includes("auto → gpt-test") && routeRoomy.includes(`${NERD_GLYPHS.cache} 98%`), routeRoomy);
 	}
 });
 
-test("keeps the full model name before the decorative cache icon", () => {
-	// Regression (audit round 1): the metric tier ran outside the model tier, so the md-database icon
-	// kept its place by truncating the selected model, even though the full model name plus the bare
-	// cache number fit. Decoration must drop before model text and before optional detail.
+test("labels the cache reading instead of spending a bare number on a longer model", () => {
+	// Regression (audit rounds 1 and 3): the picker once let the database icon narrow the model, then
+	// fell back to an unlabelled `98%` when the icon did not fit. The icon now replaces the equal-width
+	// `CH` label, so the reading is always identifiable; without room for it, cache degrades to absent.
 	const model: ModelInfo = { id: "a-very-long-model-name", reasoning: false };
 	const health: HealthState = {
 		snapshot: { usedTokens: 0, contextWindow: 100_000 },
@@ -457,12 +457,15 @@ test("keeps the full model name before the decorative cache icon", () => {
 	};
 	const bottom = (width: number): string =>
 		stripVTControlCharacters(buildFramedEditor(NERD_GLYPHS, model, health).render(width).at(-1) ?? "");
+	for (let width = 8; width <= 40; width++) {
+		const line = bottom(width);
+		if (line.includes("98%")) assert.ok(line.includes(`${NERD_GLYPHS.cache} 98%`), `width=${width}: ${line}`);
+	}
+	// The labelled reading narrows the model id to its short form…
 	const tight = bottom(34);
-	assert.ok(tight.includes("a-very-long-model-name"), tight);
-	assert.ok(!tight.includes("…"), tight);
-	assert.ok(tight.includes("98%"), tight);
-	assert.ok(!tight.includes(NERD_GLYPHS.cache), tight);
-	// Two columns wider and the icon fits beside the same full model and number.
+	assert.ok(tight.includes("a-very-long-mod…"), tight);
+	assert.ok(tight.includes(`${NERD_GLYPHS.cache} 98%`), tight);
+	// …and the full id returns as soon as the label fits beside it.
 	const roomy = bottom(36);
 	assert.ok(roomy.includes("a-very-long-model-name"), roomy);
 	assert.ok(roomy.includes(`${NERD_GLYPHS.cache} 98%`), roomy);
@@ -865,9 +868,10 @@ test("keeps window percentages and cache before optional thinking on narrow bord
 	}
 });
 
-test("drops the cache icon before a useful quota countdown", (t) => {
-	// Reproduction: at width 35 the icon kept its place but the `5h 75% 󰦛 1h` countdown did not,
-	// even though the bare cache/cost reading plus that countdown fits. Decoration is the lowest tier.
+test("keeps the labelled cache and cost before an optional quota countdown", (t) => {
+	// The cache label and cost are essential readings; the countdown is spare-width detail. At width 35
+	// the labelled reading plus the countdown does not fit, so the countdown waits two columns longer
+	// instead of the cache losing its identity.
 	const now = 1_800_000_000_000;
 	t.mock.method(Date, "now", () => now);
 	const health: HealthState = {
@@ -879,15 +883,54 @@ test("drops the cache icon before a useful quota countdown", (t) => {
 		activity: "idle",
 		prompt: "success",
 	};
+	const bottom = (width: number): string =>
+		stripVTControlCharacters(
+			buildFramedEditor(NERD_GLYPHS, { id: "gpt", reasoning: false }, health, "off").render(width).at(-1) ?? "",
+		);
+	const tight = bottom(35);
+	assert.ok(tight.includes("gpt"), tight);
+	assert.ok(tight.includes("5h 75%"), tight);
+	assert.ok(tight.includes(`${NERD_GLYPHS.cache} 98%  $1.61`), tight);
+	assert.ok(!tight.includes(NERD_GLYPHS.reset), tight);
+	assert.equal(visibleWidth(tight), 35, tight);
+	// Spare width brings the countdown back beside the same readings.
+	const roomy = bottom(37);
+	assert.ok(roomy.includes(`${NERD_GLYPHS.reset} 1h`), roomy);
+	assert.ok(roomy.includes(`${NERD_GLYPHS.cache} 98%  $1.61`), roomy);
+	assert.equal(visibleWidth(roomy), 37, roomy);
+});
+
+test("narrows to the most-used quota window with only its own countdown", (t) => {
+	// Regression for the layout gap: a narrow border used to show either every window or none. It now
+	// keeps the highest-used window, and that reading's countdown follows it instead of another
+	// window's detail being grafted on.
+	const now = 1_800_000_000_000;
+	t.mock.method(Date, "now", () => now);
+	const minute = 60_000;
+	const health: HealthState = {
+		snapshot: { usedTokens: 20_000, contextWindow: 100_000 },
+		usage: { cost: 0, cacheHitRate: undefined, cacheHitRateAvg: undefined },
+		quota: {
+			limits: [
+				{ label: "5h", percent: 10, resetAt: now + 30 * minute },
+				{ label: "7d", percent: 75, resetAt: now + 150 * minute },
+				{ label: "30d", percent: 40, resetAt: now + 300 * minute },
+			],
+		},
+		speed: null,
+		frame: 0,
+		activity: "idle",
+		prompt: "success",
+	};
 	const line = stripVTControlCharacters(
-		buildFramedEditor(NERD_GLYPHS, { id: "gpt", reasoning: false }, health, "off").render(35).at(-1) ?? "",
+		buildFramedEditor(NERD_GLYPHS, { id: "gpt", reasoning: false }, health, "off").render(30).at(-1) ?? "",
 	);
-	assert.ok(line.includes("gpt"), line);
-	assert.ok(line.includes("5h 75%"), line);
-	assert.ok(line.includes(`${NERD_GLYPHS.reset} 1h`), line);
-	assert.ok(line.includes("98%  $1.61"), line);
-	assert.ok(!line.includes(NERD_GLYPHS.cache), line);
-	assert.equal(visibleWidth(line), 35, line);
+	assert.equal(visibleWidth(line), 30, line);
+	assert.ok(line.includes("7d 75%"), line);
+	// Only the high window's own countdown; the quiet siblings keep their own readings, not this one's.
+	assert.ok(line.includes(`${NERD_GLYPHS.reset} 2h 30m`), line);
+	assert.ok(!line.includes("5h 10%"), line);
+	assert.ok(!line.includes("30d 40%"), line);
 });
 
 test("invalidates the bottom memo when the relative countdown crosses its bucket", (t) => {

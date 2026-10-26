@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { bottomBorderFits, editorModelOptions, pickBottomBorderContent, renderLabeledBorder } from "./border.ts";
-import { type MetricOption, metricOptions, NERD_GLYPHS } from "./chrome.ts";
+import { ASCII_GLYPHS, type MetricOption, metricOptions, NERD_GLYPHS } from "./chrome.ts";
 
 /** Plain reading, optionally with the same reading behind the cache icon. */
 const pair = (plain: string, decorated = plain): MetricOption => ({ plain, decorated });
@@ -118,12 +118,35 @@ describe("bottom border decoration priority", () => {
 			scrollReserve: 0,
 		});
 
-	test("never trades the selected model text for the database icon", () => {
-		// The audit case: full model (22) + bare `98%` needs 34 columns; the icon version needs 36.
+	test("keeps the cache reading labelled instead of trading the label for a longer model", () => {
+		// The database icon and the `CH` label occupy the same columns, so the icon costs nothing
+		// against useful text: the reading either keeps its label or degrades to no metric at all.
 		const models = ["a-very-long-model-name", "a-very-long-mod…"];
 		const usage = { cost: 0, cacheHitRate: 98, cacheHitRateAvg: undefined };
-		assert.deepEqual(pick(34, models, usage), { model: "a-very-long-model-name", quota: "", metric: "98%" });
-		// Once the icon genuinely fits alongside the same model, it comes back.
+		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
+			for (let width = 8; width <= 40; width++) {
+				const picked = pickBottomBorderContent({
+					width,
+					models,
+					quotas: [""],
+					metrics: metricOptions(usage, styles, glyphs),
+					gap: 2,
+					scrollReserve: 0,
+				});
+				if (!picked || picked.metric === "") continue;
+				assert.ok(
+					picked.metric === "CH98%" || picked.metric === `${NERD_GLYPHS.cache} 98%`,
+					`${width}: ${picked.metric}`,
+				);
+			}
+		}
+		// Two columns short of the labelled reading the metric tier is already gone, so the full model
+		// returns; at 34 the reading narrows the model id to its short form instead of going unlabelled.
+		assert.deepEqual(pick(34, models, usage), {
+			model: "a-very-long-mod…",
+			quota: "",
+			metric: `${NERD_GLYPHS.cache} 98%`,
+		});
 		assert.deepEqual(pick(36, models, usage), {
 			model: "a-very-long-model-name",
 			quota: "",
@@ -131,27 +154,31 @@ describe("bottom border decoration priority", () => {
 		});
 	});
 
-	test("never trades thinking or route detail for the database icon", () => {
+	test("keeps optional thinking and route detail once the labelled reading allows it", () => {
 		const usage = { cost: 0, cacheHitRate: 98, cacheHitRateAvg: undefined };
-		// Width 24: `gpt · medium` + bare `98%` fits, the icon does not.
-		assert.deepEqual(pick(24, ["gpt · medium", "gpt"], usage), { model: "gpt · medium", quota: "", metric: "98%" });
-		// Routed labels fare the same when the icon would shorten them.
+		const cache = `${NERD_GLYPHS.cache} 98%`;
+		assert.deepEqual(pick(24, ["gpt · medium", "gpt"], usage), { model: "gpt", quota: "", metric: cache });
+		assert.deepEqual(pick(26, ["gpt · medium", "gpt"], usage), { model: "gpt · medium", quota: "", metric: cache });
 		assert.deepEqual(pick(27, ["auto → gpt-test", "auto → gpt-t…"], usage), {
+			model: "auto → gpt-t…",
+			quota: "",
+			metric: cache,
+		});
+		assert.deepEqual(pick(29, ["auto → gpt-test", "auto → gpt-t…"], usage), {
 			model: "auto → gpt-test",
 			quota: "",
-			metric: "98%",
+			metric: cache,
 		});
-		// The same holds when the metric carries cache and cost together: at width 31 the icon would cost
-		// the thinking level, so it drops; two columns wider it fits beside the same thinking level.
+		// Cost keeps its place beside cache; the thinking level returns two columns later.
 		assert.deepEqual(pick(31, ["gpt · medium", "gpt"], { ...usage, cost: 1.61 }), {
-			model: "gpt · medium",
+			model: "gpt",
 			quota: "",
-			metric: "98%  $1.61",
+			metric: `${cache}  $1.61`,
 		});
 		assert.deepEqual(pick(33, ["gpt · medium", "gpt"], { ...usage, cost: 1.61 }), {
 			model: "gpt · medium",
 			quota: "",
-			metric: `${NERD_GLYPHS.cache} 98%  $1.61`,
+			metric: `${cache}  $1.61`,
 		});
 	});
 });

@@ -105,14 +105,27 @@ describe("health metric formatting", () => {
 	test("builds wide and narrow options", () => {
 		const nerd = metricOptions(full, identityStyles, NERD_GLYPHS);
 		assert.equal(nerd[0]?.decorated, `${NERD_GLYPHS.cache} 98%  $1.61`);
-		assert.equal(nerd[0]?.plain, "98%  $1.61");
+		assert.equal(nerd[0]?.plain, "CH98%  $1.61");
 		assert.equal(nerd[1]?.decorated, `${NERD_GLYPHS.cache} 98%`);
-		assert.equal(nerd[1]?.plain, "98%");
+		assert.equal(nerd[1]?.plain, "CH98%");
 		const ascii = metricOptions(full, identityStyles, ASCII_GLYPHS);
 		assert.equal(ascii[0]?.plain, "CH98%  $1.61");
 		assert.equal(ascii[1]?.plain, "CH98%");
 		// Last option is the empty reading used when no metric fits at all.
 		assert.equal(nerd.at(-1)?.plain, "");
+	});
+
+	test("never falls back to an unlabelled cache percentage", () => {
+		// A bare `98%` cannot be identified as cache; the icon replaces the `CH` label at equal width,
+		// so dropping the icon leaves the label in place.
+		for (const glyphs of [NERD_GLYPHS, ASCII_GLYPHS]) {
+			for (const cacheHitRateAvg of [undefined, 92]) {
+				const options = metricOptions({ cost: 1.61, cacheHitRate: 98, cacheHitRateAvg }, identityStyles, glyphs);
+				for (const option of options) if (option.plain !== "") assert.ok(option.plain.includes("CH98"), option.plain);
+			}
+			const [widest] = metricOptions({ cost: 0, cacheHitRate: 98, cacheHitRateAvg: 92 }, identityStyles, glyphs);
+			assert.equal(visibleWidth(widest?.decorated ?? ""), visibleWidth(widest?.plain ?? ""));
+		}
 	});
 
 	test("keeps cost when cache is unknown", () => {
@@ -414,6 +427,46 @@ describe("lane strip", () => {
 		assert.ok(strip.includes(PACMAN_GLYPH));
 	});
 
+	test("reserves one speed field so reading length cannot resize the lane", () => {
+		// Common digit lengths, the `~` estimate marker, and provider calibration all fill the same
+		// right-aligned field, so Pac-Man and the context percent keep their columns.
+		const strips = [
+			{ tokensPerSecond: 9.8, estimated: true },
+			{ tokensPerSecond: 100, estimated: true },
+			{ tokensPerSecond: 100, estimated: false },
+			{ tokensPerSecond: 42.3, estimated: false },
+		].map((speed) => stripVTControlCharacters(renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "idle", speed)));
+		const baseline = strips[0] ?? "";
+		for (const strip of strips) {
+			assert.equal(visibleWidth(strip), 60);
+			assert.equal(strip.indexOf("15.6%"), baseline.indexOf("15.6%"));
+			assert.equal(strip.indexOf(PACMAN_GLYPH), baseline.indexOf(PACMAN_GLYPH));
+			// The reading itself is right-aligned: its `t/s` ends at the same column in every strip.
+			assert.equal(strip.indexOf("t/s"), baseline.indexOf("t/s"));
+		}
+		assert.ok(strips[0]?.includes(`${NERD_GLYPHS.speed} ~9.8t/s `));
+		assert.ok(strips[0]?.includes("15.6% (372K)"));
+	});
+
+	test("reserves no speed field for an unknown or absent reading", () => {
+		const idle = stripVTControlCharacters(renderLaneStrip(dominantSnapshot, 60, identityStyles));
+		assert.ok(idle.endsWith("15.6% (372K) "), idle);
+		assert.ok(!idle.includes("t/s"));
+	});
+
+	test("shrinks the speed field rather than dropping a readable number on narrow strips", () => {
+		// Without a known window the reserved field cannot fit, but the reading's own width can.
+		const strip = stripVTControlCharacters(
+			renderLaneStrip(snapshot({ usedTokens: null, contextWindow: 0 }), 17, identityStyles, 0, "idle", {
+				tokensPerSecond: 42.3,
+				estimated: false,
+			}),
+		);
+		assert.equal(visibleWidth(strip), 17);
+		assert.ok(strip.includes("42.3t/s"), strip);
+		assert.ok(strip.includes("?%"), strip);
+	});
+
 	test("appends the window size to the percent", () => {
 		const strip = stripVTControlCharacters(
 			renderLaneStrip(dominantSnapshot, 40, identityStyles, 0, "idle", {
@@ -539,8 +592,8 @@ describe("CH session average", () => {
 	test("drops the database icon before the average", () => {
 		const [widest] = metricOptions(usage({ cacheHitRate: 98, cacheHitRateAvg: 92 }), identityStyles, NERD_GLYPHS);
 		assert.equal(widest?.decorated, `${NERD_GLYPHS.cache} 98/92%`);
-		assert.equal(widest?.plain, "98/92%");
-		assert.equal(visibleWidth(widest?.plain ?? ""), visibleWidth("98/92%"));
+		assert.equal(widest?.plain, "CH98/92%");
+		assert.equal(visibleWidth(widest?.plain ?? ""), visibleWidth("CH98/92%"));
 	});
 
 	test("keeps the latest-turn color on CH and styles the average dim", () => {
@@ -600,17 +653,41 @@ describe("quota rendering", () => {
 		],
 	};
 	const plain = (values: readonly string[]): readonly string[] => values.map(stripVTControlCharacters);
+	const labels = (render: ReturnType<typeof quotaRender>): readonly string[] =>
+		plain(render.essentials.map((option) => option.label));
+	const upgrades = (render: ReturnType<typeof quotaRender>): readonly string[] =>
+		plain(render.essentials[0]?.upgrades ?? []);
 
 	test("healthy windows are percentage-only essentials with no upgrades", () => {
 		const render = quotaRender({ limits: [reset("5h", 53), reset("7d", 43)] }, identityStyles, now);
-		assert.deepEqual(plain(render.essentials), ["5h 53%  7d 43%", ""]);
-		assert.deepEqual(render.upgrades, []);
+		assert.deepEqual(labels(render), ["5h 53%  7d 43%", "5h 53%", "7d 43%", ""]);
+		assert.deepEqual(upgrades(render), []);
 	});
 
 	test("only a window above the warning threshold upgrades to its countdown", () => {
 		const render = quotaRender({ limits: [reset("5h", 75), reset("7d", 43)] }, identityStyles, now);
-		assert.deepEqual(plain(render.essentials), ["5h 75%  7d 43%", ""]);
-		assert.deepEqual(plain(render.upgrades), ["5h 75% 󰦛 2h 30m  7d 43%"]);
+		assert.deepEqual(labels(render), ["5h 75%  7d 43%", "5h 75%", "7d 43%", ""]);
+		assert.deepEqual(upgrades(render), ["5h 75% 󰦛 2h 30m  7d 43%"]);
+	});
+
+	test("keeps the most-used window when the whole group cannot fit", () => {
+		// Narrow borders narrow the group instead of dropping quota entirely: highest used percent first,
+		// equal percentages keeping the provider's order.
+		const render = quotaRender({ limits: [reset("7d", 43), reset("5h", 53)] }, identityStyles, now);
+		assert.deepEqual(labels(render), ["7d 43%  5h 53%", "5h 53%", "7d 43%", ""]);
+		const tied = quotaRender({ limits: [reset("7d", 43), reset("5h", 43)] }, identityStyles, now);
+		assert.deepEqual(labels(tied), ["7d 43%  5h 43%", "7d 43%", "5h 43%", ""]);
+	});
+
+	test("a narrowed window only ever shows its own countdown", () => {
+		const render = quotaRender({ limits: [reset("5h", 43), reset("7d", 75)] }, identityStyles, now);
+		const [whole, high, low] = render.essentials;
+		assert.deepEqual(plain([whole?.label ?? ""]), ["5h 43%  7d 75%"]);
+		assert.deepEqual(plain([high?.label ?? ""]), ["7d 75%"]);
+		assert.deepEqual(plain(high?.upgrades ?? []), ["7d 75% 󰦛 2h 30m"]);
+		// The quiet sibling has no countdown of its own, so its reading cannot borrow the other one's.
+		assert.deepEqual(plain([low?.label ?? ""]), ["5h 43%"]);
+		assert.deepEqual(plain(low?.upgrades ?? []), []);
 	});
 
 	test("treats exactly 70 as quiet and 70.01/90 as high", () => {
@@ -620,61 +697,63 @@ describe("quota rendering", () => {
 			[90, true],
 		] as const) {
 			const render = quotaRender({ limits: [reset("5h", percent)] }, identityStyles, now);
-			assert.equal(render.upgrades.length > 0, upgraded, String(percent));
+			assert.equal((render.essentials[0]?.upgrades.length ?? 0) > 0, upgraded, String(percent));
 		}
 	});
 
 	test("counts every reported window toward the high check", () => {
 		const high = quotaRender({ limits: [reset("5h", 10), reset("7d", 71)], resetCredits: 2 }, identityStyles, now);
-		assert.equal(stripVTControlCharacters(high.essentials[0] ?? ""), "5h 10%  7d 71%");
+		assert.deepEqual(plain([high.essentials[0]?.label ?? ""]), ["5h 10%  7d 71%"]);
 		// Only the second window is high, so the banked credits stay visible from that alone.
-		assert.ok(high.upgrades.some((value) => value.includes("󰔖")));
+		assert.ok((high.essentials[0]?.upgrades ?? []).some((value) => value.includes("󰔖")));
 		// No window above the threshold keeps the same credits hidden.
 		const quiet = quotaRender({ limits: [reset("5h", 10)], resetCredits: 2 }, identityStyles, now);
-		assert.deepEqual(quiet.upgrades, []);
+		assert.deepEqual(upgrades(quiet), []);
 	});
 
 	test("hides the countdown for missing or expired resets", () => {
 		const missing = quotaRender({ limits: [{ label: "5h", percent: 80 }] }, identityStyles, now);
-		assert.equal(stripVTControlCharacters(missing.essentials[0] ?? ""), "5h 80%");
-		assert.deepEqual(missing.upgrades, []);
+		assert.deepEqual(plain([missing.essentials[0]?.label ?? ""]), ["5h 80%"]);
+		assert.deepEqual(upgrades(missing), []);
 		const expired = quotaRender({ limits: [{ label: "5h", percent: 80, resetAt: now - 1000 }] }, identityStyles, now);
-		assert.equal(stripVTControlCharacters(expired.essentials[0] ?? ""), "5h 80%");
-		assert.deepEqual(expired.upgrades, []);
+		assert.deepEqual(plain([expired.essentials[0]?.label ?? ""]), ["5h 80%"]);
+		assert.deepEqual(upgrades(expired), []);
 	});
 
 	test("shows credits only while a reported quota is above the warning threshold", () => {
 		const high = quotaRender({ limits: [reset("5h", 75)], resetCredits: 3 }, identityStyles, now);
-		assert.deepEqual(plain(high.upgrades), ["5h 75% 󰦛 2h 30m  󰔖 3", "5h 75% 󰦛 2h 30m", "5h 75%  󰔖 3"]);
+		assert.deepEqual(upgrades(high), ["5h 75% 󰦛 2h 30m  󰔖 3", "5h 75% 󰦛 2h 30m", "5h 75%  󰔖 3"]);
 		const healthy = quotaRender({ ...full, resetCredits: 3 }, identityStyles, now);
-		assert.deepEqual(plain(healthy.essentials), ["5h 30%  1d 12%", ""]);
-		assert.deepEqual(healthy.upgrades, []);
+		assert.deepEqual(labels(healthy), ["5h 30%  1d 12%", "5h 30%", "1d 12%", ""]);
+		assert.deepEqual(upgrades(healthy), []);
 		const zero = quotaRender({ limits: [reset("5h", 75)], resetCredits: 0 }, identityStyles, now);
-		assert.ok(zero.upgrades.every((value) => !value.includes("󰔖")));
+		assert.ok((zero.essentials[0]?.upgrades ?? []).every((value) => !value.includes("󰔖")));
 		const unknown = quotaRender({ limits: [reset("5h", 75)] }, identityStyles, now);
-		assert.ok(unknown.upgrades.every((value) => !value.includes("󰔖")));
+		assert.ok((unknown.essentials[0]?.upgrades ?? []).every((value) => !value.includes("󰔖")));
 	});
 
 	test("keeps window percentages essential while countdowns and credits upgrade", () => {
 		const render = quotaRender({ limits: [reset("5h", 92), reset("7d", 43)], resetCredits: 1 }, identityStyles, now);
-		assert.ok(render.essentials.every((value) => !value.includes("󰦛") && !value.includes("󰔖")));
-		assert.ok(render.essentials[0]?.includes("5h 92%") && render.essentials[0]?.includes("7d 43%"));
-		assert.ok(render.upgrades[0]?.includes("󰦛") && render.upgrades[0]?.includes("󰔖"));
+		assert.ok(render.essentials.every((option) => !option.label.includes("󰦛") && !option.label.includes("󰔖")));
+		assert.ok(render.essentials[0]?.label.includes("5h 92%") && render.essentials[0]?.label.includes("7d 43%"));
+		const richest = render.essentials[0]?.upgrades[0] ?? "";
+		assert.ok(richest.includes("󰦛") && richest.includes("󰔖"));
 	});
 
 	test("uses ASCII tokens without spacing and Nerd glyphs with spacing", () => {
 		const usage: QuotaUsage = { limits: [reset("5h", 75)], resetCredits: 2 };
 		const ascii = quotaRender(usage, identityStyles, now, ASCII_GLYPHS);
-		assert.equal(stripVTControlCharacters(ascii.upgrades[0] ?? ""), "5h 75% r2h 30m  R2");
+		assert.equal(stripVTControlCharacters(ascii.essentials[0]?.upgrades[0] ?? ""), "5h 75% r2h 30m  R2");
 		const nerd = quotaRender(usage, identityStyles, now, NERD_GLYPHS);
-		assert.equal(stripVTControlCharacters(nerd.upgrades[0] ?? ""), "5h 75% 󰦛 2h 30m  󰔖 2");
+		assert.equal(stripVTControlCharacters(nerd.essentials[0]?.upgrades[0] ?? ""), "5h 75% 󰦛 2h 30m  󰔖 2");
 		assert.ok(!readFileSync(new URL("./chrome.ts", import.meta.url), "utf8").includes("↻"));
 	});
 
 	test("offers the combined essential and an empty fallback for a quiet session", () => {
 		const render = quotaRender(full, identityStyles);
-		assert.deepEqual(plain(render.essentials), ["5h 30%  1d 12%", ""]);
-		assert.deepEqual(render.upgrades, []);
+		assert.deepEqual(labels(render), ["5h 30%  1d 12%", "5h 30%", "1d 12%", ""]);
+		assert.deepEqual(upgrades(render), []);
+		assert.deepEqual(labels(quotaRender({ limits: [] }, identityStyles)), [""]);
 	});
 
 	test("escalates color with usage level", () => {
@@ -687,16 +766,19 @@ describe("quota rendering", () => {
 			},
 			markedStyles,
 		);
-		assert.equal(render.essentials[0], "<error>5h 95%</error><dim>  </dim><warning>7d 80%</warning>");
+		assert.equal(render.essentials[0]?.label, "<error>5h 95%</error><dim>  </dim><warning>7d 80%</warning>");
 	});
 
 	test("keeps quiet quota dim", () => {
-		assert.equal(quotaRender(full, markedStyles).essentials[0], "<dim>5h 30%</dim><dim>  </dim><dim>1d 12%</dim>");
+		assert.equal(
+			quotaRender(full, markedStyles).essentials[0]?.label,
+			"<dim>5h 30%</dim><dim>  </dim><dim>1d 12%</dim>",
+		);
 	});
 
 	test("keeps quota lane dollar-free: limit percent renders, balance data never shown", () => {
 		const render = quotaRender({ limits: [{ label: "7d", percent: 32.5 }] }, identityStyles);
-		assert.deepEqual(plain(render.essentials), ["7d 33%", ""]);
+		assert.deepEqual(labels(render), ["7d 33%", ""]);
 	});
 });
 

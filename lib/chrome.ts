@@ -170,22 +170,17 @@ const styleCache = (text: string, rate: number | undefined, styles: ChromeStyles
 /** Session average joins the CH label only when it diverges meaningfully from the latest turn. */
 export const CH_AVG_DIVERGENCE_POINTS = 5;
 
-/**
- * Cache-hit label variants, widest → tightest. Nerd mode leads with the md-database icon
- * (`󰆼 98/94%`); the icon is decorative and drops before the numbers, never the average.
- * ASCII keeps the `CH` label (`CH98/94%`). The latest turn keeps its warning/error color;
- * the average stays dim.
- */
 /** One health reading: its plain label plus the same reading behind an optional decorative icon. */
 export type MetricOption = Readonly<{ plain: string; decorated: string }>;
 
 /**
- * Cache/cost options, widest → tightest, styled at construction. The `plain` form carries only the
- * numbers (ASCII keeps the `CH` label; Nerd stays number-only), and `decorated` is the same reading
- * behind the cache icon when the glyph set has one. Keeping both forms explicit lets the border fit
- * the plain reading first and add the icon only while the chosen model and quota still fit, instead
- * of trying to parse already-styled strings. The latest-turn threshold color and the session average
- * are preserved on both forms.
+ * Cache/cost options, widest → tightest, styled at construction. Every form carries an identifiable
+ * label: the `CH` label always, with the md-database icon replacing it only when the glyph set has
+ * one — a bare `98%` would be an unlabelled number, so there is no number-only form to fall back to.
+ * The icon and the label take the same columns, so the icon can never buy width from useful text.
+ * Keeping both forms explicit lets the border fit the plain reading first and pick the icon only
+ * while the chosen model and quota still fit, instead of parsing already-styled strings. The
+ * latest-turn threshold color and the session average are preserved on both forms.
  */
 export const metricOptions = (
 	usage: SessionUsage,
@@ -202,7 +197,7 @@ export const metricOptions = (
 		const avgPart = diverged ? styles.fg("dim", `/${Math.round(avg)}`) : "";
 		// Color the same rounded number the label shows, so text and warning color cannot disagree.
 		const roundedLatest = Math.round(latest);
-		const plain = `${styleCache(`${glyphs.ascii ? "CH" : ""}${roundedLatest}`, roundedLatest, styles)}${avgPart}%`;
+		const plain = `${styleCache(`CH${roundedLatest}`, roundedLatest, styles)}${avgPart}%`;
 		caches.push({
 			plain,
 			decorated: glyphs.cache
@@ -239,17 +234,24 @@ export type QuotaUsage = Readonly<{
 export const EMPTY_QUOTA: QuotaUsage = { limits: [] };
 
 /**
- * Quota label split for the bottom border. `essentials` are window percentages, widest →
- * tightest, and never carry countdowns or credits. `upgrades` are optional enrichments of an
- * essential label (countdowns, credits), richest → narrowest, to be used only while model,
- * window percentages, and cache/cost still fit. Healthy windows stay percentage-only; a window
- * above the warning threshold shows its future countdown, and banked credits show only while any
- * reported quota is above the warning threshold.
+ * One quota reading for the bottom border: the window percentages that must fit, plus the optional
+ * enrichments of exactly that reading. Keeping them together means a reading that narrowed to one
+ * window can never inherit another window's countdown.
  */
-export type QuotaRender = Readonly<{
-	essentials: readonly string[];
+export type QuotaOption = Readonly<{
+	label: string;
+	/** Optional enrichments of this label (countdowns, credits), richest → narrowest. */
 	upgrades: readonly string[];
 }>;
+
+/**
+ * Quota choices for the bottom border, widest → tightest: the whole window group first, then each
+ * single window by used percentage, then an empty reading. Healthy windows stay percentage-only; a
+ * window above the warning threshold shows its future countdown, and banked credits show only while
+ * any reported quota is above the warning threshold. Enrichments never displace model, window
+ * percentages, or cache/cost, which is why they are a second tier on the reading they extend.
+ */
+export type QuotaRender = Readonly<{ essentials: readonly QuotaOption[] }>;
 
 export const quotaRender = (
 	usage: QuotaUsage,
@@ -271,8 +273,8 @@ export const quotaRender = (
 				: "";
 		return base + countdown;
 	};
-	const fullLimits = usage.limits.map((limit) => renderLimit(limit, true)).join(gap);
-	const plainLimits = usage.limits.map((limit) => renderLimit(limit, false)).join(gap);
+	const limitsLabel = (limits: readonly QuotaLimit[], withCountdown: boolean): string =>
+		limits.map((limit) => renderLimit(limit, withCountdown)).join(gap);
 	const anyHigh = usage.limits.some((limit) => limit.percent > USAGE_WARNING_PERCENT);
 	// Banked resets are quiet chrome; zero, unknown, and healthy sessions keep them hidden.
 	const resets =
@@ -285,15 +287,26 @@ export const quotaRender = (
 		for (const value of values) if (!unique.includes(value)) unique.push(value);
 		return unique;
 	};
-	const essentials = dedupe([plainLimits, ""]);
-	const upgrades = dedupe([
-		resets ? group(fullLimits, resets) : "",
-		fullLimits === plainLimits ? "" : fullLimits,
-		resets ? group(plainLimits, resets) : "",
-	])
-		.filter((value) => value !== "" && !essentials.includes(value))
-		.sort((left, right) => visibleWidth(right) - visibleWidth(left));
-	return { essentials, upgrades };
+	// Whole group first; when it cannot fit, the most-used window survives instead of quota going
+	// all-or-nothing. The sort is stable, so equal percentages keep the provider's order.
+	const groups = [
+		usage.limits,
+		...[...usage.limits].sort((left, right) => right.percent - left.percent).map((limit) => [limit]),
+	];
+	const essentials = groups
+		.map((limits) => ({ base: limitsLabel(limits, false), full: limitsLabel(limits, true) }))
+		.filter(({ base }, index, all) => base !== "" && all.findIndex((entry) => entry.base === base) === index)
+		.map(({ base, full }) => ({
+			label: base,
+			upgrades: dedupe([
+				resets ? group(full, resets) : "",
+				full === base ? "" : full,
+				resets ? group(base, resets) : "",
+			])
+				.filter((value) => value !== "" && value !== base)
+				.sort((left, right) => visibleWidth(right) - visibleWidth(left)),
+		}));
+	return { essentials: [...essentials, { label: "", upgrades: [] }] };
 };
 
 /** One lane cell: glyph plus the remaining columns in its track. */
@@ -346,6 +359,12 @@ export const renderPacmanLane = (
 	return `${consumed}${pacman}${pellets}${remainder}`;
 };
 
+/**
+ * Widest speed reading a wide strip reserves for. Reserving one field width keeps the lane, Pac-Man,
+ * and the context percent fixed while digits, the `~` estimate marker, or provider calibration change.
+ */
+const SPEED_FIELD_TEXT = "~100.0t/s";
+
 /** Top-border strip: auto-fit lane with context `%` (+ window size), quiet speed at the right end. */
 export const renderLaneStrip = (
 	snapshot: ContextSnapshot,
@@ -371,11 +390,20 @@ export const renderLaneStrip = (
 	// An unknown window still keeps the honest `?%`; only the `(size)` form needs a known denominator.
 	const percentOptions = [...(window ? [`${percent} ${styles.fg("dim", `(${window})`)}`] : []), percent];
 	const rawSpeed = formatTokenSpeed(speed);
-	// The speedometer is decorative: try it, then plain `t/s`, then drop speed entirely.
+	// One reserved field (right-aligned reading) so common digit lengths, the `~` estimate marker, and
+	// provider calibration cannot resize the lane. A longer real reading grows the field, never cuts it.
+	const speedFieldWidth = rawSpeed ? Math.max(visibleWidth(SPEED_FIELD_TEXT), visibleWidth(rawSpeed)) : 0;
+	// Pad by terminal columns: a Nerd Font glyph may be one cell but two UTF-16 units.
+	const padLeft = (text: string, fieldWidth: number): string =>
+		" ".repeat(Math.max(0, fieldWidth - visibleWidth(text))) + text;
+	// The speedometer is decorative: icon field, plain field, then the reading's own width on tight
+	// strips, then no speed at all.
 	const speedOptions = rawSpeed
-		? [glyphs.speed ? `${glyphs.speed} ${rawSpeed}` : rawSpeed, rawSpeed].filter(
-				(value, index, all) => all.indexOf(value) === index,
-			)
+		? [
+				...(glyphs.speed ? [padLeft(`${glyphs.speed} ${rawSpeed}`, speedFieldWidth + 2)] : []),
+				padLeft(rawSpeed, speedFieldWidth),
+				rawSpeed,
+			].filter((value, index, all) => all.indexOf(value) === index)
 		: [];
 	const styleSpeed = (value: string): string => (value ? styles.fg("dim", value) : "");
 	const laneWidth = (pickedPercent: string | undefined, pickedSpeed: string | undefined): number =>

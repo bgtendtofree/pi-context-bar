@@ -56,6 +56,82 @@ describe("parseOpenAiUsage", () => {
 		});
 	});
 
+	test("rejects out-of-range official percentages and keeps valid reset credits", () => {
+		for (const used_percent of [-1, 101, Number.NaN, Number.POSITIVE_INFINITY, "bad"]) {
+			const usage = parseOpenAiUsage({
+				rate_limit: { primary_window: { used_percent, limit_window_seconds: 18000 } },
+				rate_limit_reset_credits: { available_count: 2 },
+			});
+			assert.deepEqual(usage, { limits: [], resetCredits: 2 }, JSON.stringify(used_percent));
+		}
+		assert.deepEqual(
+			parseOpenAiUsage({
+				rate_limit: {
+					primary_window: { used_percent: 0, limit_window_seconds: 18000 },
+					secondary_window: { used_percent: 100, limit_window_seconds: 604800 },
+				},
+			}),
+			{
+				limits: [
+					{ label: "5h", percent: 0 },
+					{ label: "7d", percent: 100 },
+				],
+			},
+		);
+	});
+
+	test("keeps missing resets but skips a present, unusable reset window", () => {
+		assert.deepEqual(parseOpenAiUsage({ primary_window: { used_percent: 95 } }), {
+			limits: [{ label: "L1", percent: 95 }],
+		});
+		assert.deepEqual(parseOpenAiUsage({ primary_window: { used_percent: 95, reset_at: "garbage" } }), {
+			limits: [],
+		});
+		assert.deepEqual(
+			parseOpenAiUsage({
+				rate_limit: {
+					primary_window: { used_percent: 42, limit_window_seconds: 18000 },
+					secondary_window: { used_percent: 24, limit_window_seconds: 604800 },
+				},
+				rate_limit_reset_credits: { available_count: 2 },
+			}),
+			{
+				limits: [
+					{ label: "5h", percent: 42 },
+					{ label: "7d", percent: 24 },
+				],
+				resetCredits: 2,
+			},
+		);
+
+		for (const reset_at of ["garbage", null, -1, 0, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_VALUE]) {
+			assert.deepEqual(
+				parseOpenAiUsage({
+					rate_limit: {
+						primary_window: { used_percent: 95, reset_at, limit_window_seconds: 18000 },
+						secondary_window: { used_percent: 24, limit_window_seconds: 604800 },
+					},
+					rate_limit_reset_credits: { available_count: 2 },
+				}),
+				{
+					limits: [{ label: "7d", percent: 24 }],
+					resetCredits: 2,
+				},
+				JSON.stringify(reset_at),
+			);
+		}
+
+		assert.deepEqual(
+			parseOpenAiUsage({
+				rate_limit: {
+					primary_window: { used_percent: 42, resetAt: "garbage" },
+					secondary_window: { used_percent: 24, resetAt: Number.MAX_VALUE },
+				},
+			}),
+			{ limits: [] },
+		);
+	});
+
 	test("converts window seconds to labels", () => {
 		const usage = parseOpenAiUsage({
 			rate_limit: {

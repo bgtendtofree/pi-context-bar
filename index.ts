@@ -30,7 +30,7 @@ import {
 	type EffectiveContextSummary,
 	latestRequestUsage,
 	type RequestUsage,
-	toolDeclaration,
+	toolDeclarations,
 } from "./lib/context-audit.ts";
 import {
 	COMPACT_HINT_DEFS,
@@ -222,7 +222,7 @@ const observeEffectiveContext = (messages: readonly { role: string }[]): void =>
 				systemPrompt: getCurrentSystemPrompt(messages),
 				// Replayed transcript declarations, not getActiveTools: hidden/conditional tools that
 				// never reach the provider must not inflate the Tools estimate.
-				tools: getCurrentTools(messages).map(toolDeclaration),
+				tools: toolDeclarations(getCurrentTools(messages)),
 				now: Date.now(),
 			}),
 			effectiveIssue: undefined,
@@ -275,7 +275,10 @@ const toggleStash = (ctx: ExtensionContext): void => {
 			return;
 		}
 		patch({ stash: decision.text });
-		ctx.ui.notify(`Draft stashed (${STASH_SHORTCUT} or /context-bar ${STASH_SUBCOMMAND} restores)`, "info");
+		ctx.ui.notify(
+			`Draft stashed in memory; quitting Pi loses it — restore first (${STASH_SHORTCUT} or /context-bar ${STASH_SUBCOMMAND})`,
+			"warning",
+		);
 	} else if (decision.action === "restore") {
 		restoreDraftText(ctx, decision.text);
 	} else if (decision.action === "refuse") {
@@ -820,23 +823,24 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 	pi.on("session_shutdown", (event, ctx) => {
 		quotaController.cancel();
-		// Shutdown cannot be cancelled. Restore a held draft into an empty editor first (reload keeps
-		// editor text); with a non-empty editor the SDK leaves no non-disk place to preserve it.
-		if (state.stash !== undefined && ctx.mode === "tui") {
+		// Reload keeps the TUI and editor text, so a held draft can return there. Interactive quit stops
+		// the TUI before this hook, which leaves no visible/restorable editor; the stash action already
+		// warned that quitting loses the memory-only draft.
+		if (state.stash !== undefined && ctx.mode === "tui" && event.reason === "reload") {
 			try {
 				if (ctx.ui.getEditorText().length === 0) {
 					ctx.ui.setEditorText(state.stash);
 				} else {
-					// Reload/quit cannot be cancelled, so this in-memory draft cannot be preserved.
+					// Reload cannot be cancelled, so this in-memory draft cannot be preserved.
 					ctx.ui.notify(
-						`Stash lost during ${event.reason} shutdown: the editor already has text; restore the draft before reloading or quitting (${STASH_SHORTCUT} or /context-bar ${STASH_SUBCOMMAND})`,
+						`Stash lost during reload: the editor already has text; restore the draft before reloading (${STASH_SHORTCUT} or /context-bar ${STASH_SUBCOMMAND})`,
 						"warning",
 					);
 				}
 			} catch {
-				// A forced shutdown can take the editor before this handler runs; no disk workaround.
+				// A forced reload can take the editor before this handler runs; no disk workaround.
 				try {
-					ctx.ui.notify(`Stash could not be restored during ${event.reason} shutdown`, "warning");
+					ctx.ui.notify("Stash could not be restored during reload", "warning");
 				} catch {
 					// The UI is already gone.
 				}

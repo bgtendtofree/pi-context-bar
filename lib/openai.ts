@@ -42,12 +42,24 @@ const windowLabel = (window: JsonObject, fallback: string): string => {
 	return `${seconds}s`;
 };
 
-const windowPercent = (window: JsonObject): number | undefined => toNumber(window.used_percent ?? window.usedPercent);
+const windowPercent = (window: JsonObject): number | undefined => {
+	const percent = toNumber(window.used_percent ?? window.usedPercent);
+	return percent !== undefined && percent >= 0 && percent <= 100 ? percent : undefined;
+};
+
+/** A reset field that is absent keeps compatibility; a present but unusable value invalidates the window. */
+type WindowReset = Readonly<{ status: "missing" } | { status: "invalid" } | { status: "valid"; at: number }>;
 
 /** Window reset as epoch ms; the API reports `reset_at` in seconds. */
-const windowResetAt = (window: JsonObject): number | undefined => {
+const windowResetAt = (window: JsonObject): WindowReset => {
+	if (!Object.hasOwn(window, "reset_at") && !Object.hasOwn(window, "resetAt")) return { status: "missing" };
 	const seconds = toNumber(window.reset_at ?? window.resetAt);
-	return seconds !== undefined && seconds > 0 ? seconds * 1000 : undefined;
+	if (seconds === undefined || seconds <= 0) return { status: "invalid" };
+	const millis = seconds * 1000;
+	// Reject overflow past the Date range instead of rendering a countdown from a bogus timestamp.
+	return Number.isSafeInteger(millis) && millis <= 8_640_000_000_000_000
+		? { status: "valid", at: millis }
+		: { status: "invalid" };
 };
 
 export const shouldRefreshQuota = (lastAttemptAt: number | undefined, now: number, force = false): boolean =>
@@ -63,11 +75,12 @@ export const parseOpenAiUsage = (payload: unknown): QuotaUsage => {
 		if (!isObject(window)) continue;
 		const percent = windowPercent(window);
 		if (percent === undefined) continue;
-		const resetAt = windowResetAt(window);
+		const reset = windowResetAt(window);
+		if (reset.status === "invalid") continue;
 		limits.push({
 			label: windowLabel(window, `L${index + 1}`),
 			percent,
-			...(resetAt !== undefined ? { resetAt } : {}),
+			...(reset.status === "valid" ? { resetAt: reset.at } : {}),
 		});
 	}
 	// The usage payload may nest the container under rate_limit; the unstyled shape carries it at the top level.

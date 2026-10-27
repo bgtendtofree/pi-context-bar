@@ -86,14 +86,20 @@ export const createQuotaController = (input: {
 
 	const expire = (ctx: ExtensionContext): void => {
 		const state = input.getState();
-		if (!isPassive(state) || !state.usage) return;
-		if (state.ownerKey !== responseQuotaKey(ctx.model)) {
+		if (!state.usage) return;
+		if (isPassive(state) && state.ownerKey !== responseQuotaKey(ctx.model)) {
 			drop(undefined);
 			patch({ issue: "model or endpoint changed; waiting for provider response metadata" });
 			return;
 		}
 		const quota = unexpiredQuota(state.usage, Date.now());
-		if (quota !== state.usage) patch({ usage: quota, issue: "expired response quota windows were removed" });
+		if (quota !== state.usage)
+			patch({
+				usage: quota,
+				issue: isPassive(state)
+					? "expired response quota windows were removed"
+					: "expired official quota windows were removed",
+			});
 	};
 
 	const observe = (quota: QuotaUsage | undefined, source: string): void => {

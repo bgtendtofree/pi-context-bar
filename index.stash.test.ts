@@ -16,6 +16,7 @@ test("Alt+S stashes without sending anything, and the command only restores", as
 	h.stash();
 	assert.equal(h.editorText(), "");
 	assert.match(h.notices.at(-1)?.message ?? "", /Draft stashed/);
+	assert.match(h.notices.at(-1)?.message ?? "", /quitting Pi loses it/);
 	assert.match(await h.status(), /Stash: 1 draft held in memory/);
 	assert.equal(h.appendCount(), 0);
 
@@ -92,7 +93,7 @@ test("a held stash blocks session replacement until it is restored", async () =>
 	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, h.ctx);
 });
 
-test("shutdown restores a stash into an empty editor and reports the non-empty boundary", async () => {
+test("reload restores a stash into an empty editor and warns at the non-empty boundary", async () => {
 	const h = stashHarness();
 	h.setEditorText("recoverable");
 	h.stash();
@@ -101,17 +102,36 @@ test("shutdown restores a stash into an empty editor and reports the non-empty b
 	assert.equal(h.editorText(), "recoverable");
 	assert.match(await h.status(), /Stash: none/);
 
-	// A non-empty editor cannot take the draft without overwriting it; the SDK has no cancellable
-	// shutdown, so this is the documented loss boundary rather than a silent state-only clear.
+	// A non-empty editor cannot take the draft without overwriting it; reload cannot be cancelled.
 	h.handlers.get("session_start")?.({ reason: "startup" }, h.ctx);
 	h.setEditorText("held again");
 	h.stash();
 	h.setEditorText("typed over");
-	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, h.ctx);
+	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "reload" }, h.ctx);
 	assert.equal(h.editorText(), "typed over");
-	assert.match(h.notices.at(-1)?.message ?? "", /Stash lost during quit shutdown/);
+	assert.match(h.notices.at(-1)?.message ?? "", /Stash lost during reload/);
+});
+
+test("quit never pretends to restore the memory-only draft into a stopped TUI", async () => {
+	const h = stashHarness();
+	h.setEditorText("lost on quit");
+	h.stash();
+	assert.equal(h.editorText(), "");
+	assert.match(h.notices.at(-1)?.message ?? "", /quitting Pi loses it/);
+	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, h.ctx);
+	assert.equal(h.editorText(), "");
+	assert.match(h.notices.at(-1)?.message ?? "", /quitting Pi loses it/);
+
 	h.handlers.get("session_start")?.({ reason: "startup" }, h.ctx);
 	await h.commands.get("context-bar")?.("stash", h.ctx as ExtensionCommandContext);
 	assert.match(h.notices.at(-1)?.message ?? "", /No stashed draft/);
+
+	// Even with a non-empty editor, shutdown cannot repaint a warning after the TUI stopped.
+	h.setEditorText("held again");
+	h.stash();
+	h.setEditorText("typed over");
+	const noticesAtQuit = h.notices.length;
 	h.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, h.ctx);
+	assert.equal(h.editorText(), "typed over");
+	assert.equal(h.notices.length, noticesAtQuit);
 });

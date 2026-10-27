@@ -382,6 +382,8 @@ export const renderPacmanLane = (
  * and the context percent fixed while digits, the `~` estimate marker, or provider calibration change.
  */
 const SPEED_FIELD_TEXT = "~100.0t/s";
+/** ASCII has no archive icon; reserve enough for the stash word beside the widest reading. */
+const ASCII_STASH_FIELD_TEXT = `${NOTICES.stash} ~100.0t/s`;
 /** Narrower reserved fields; content changes width only by dropping to the next standard size. */
 const NARROW_FIELD_WIDTHS = [9, 8, 7] as const;
 
@@ -472,10 +474,20 @@ export const renderLaneStrip = (
 			return content === undefined ? [] : [padLeft(content, fieldWidth)];
 		}).filter((value, index, all) => all.indexOf(value) === index);
 	};
+	// A held stash is persistent, so its word and the current reading share one fixed ASCII field.
+	const stashWithSpeedOptions = (text: string): readonly string[] => {
+		if (!rawSpeed) return [];
+		const combined = `${text} ${rawSpeed}`;
+		return visibleWidth(combined) <= visibleWidth(ASCII_STASH_FIELD_TEXT)
+			? [padLeft(combined, visibleWidth(ASCII_STASH_FIELD_TEXT))]
+			: [];
+	};
 	const noticeOptions = noticeText
 		? noticeIcon
 			? reservedField(noticeReading, noticeIcon, true)
-			: noticeWordOptions(noticeText)
+			: noticeText === NOTICES.stash && rawSpeed
+				? [...stashWithSpeedOptions(noticeText), ...speedOptions, ...noticeWordOptions(noticeText)]
+				: noticeWordOptions(noticeText)
 		: [];
 	const slotOptions = noticeText ? noticeOptions : rawSpeed ? speedOptions : unknownSpeedOptions;
 	const styleSlot = (value: string): string => (value ? styles.fg("dim", value) : "");

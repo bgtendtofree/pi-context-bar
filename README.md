@@ -96,7 +96,11 @@ Quota has two read paths:
 Passive snapshots replace both windows rather than merging different upstream credentials. They are
 cleared before the next request and on model/endpoint changes; delayed replies cannot overwrite a
 newer passive snapshot. Missing, malformed and expired windows are hidden, including on the next
-render after expiry; real 0% stays visible. Labels use reported durations, not guessed 5h/7d defaults.
+render after expiry; real 0% stays visible. A reset field that is absent keeps a window without a
+countdown; a present but unusable reset (non-numeric, zero, negative, overflow) skips that window.
+Official `/wham/usage` windows follow the same `resetAt` expiry, and filtering keeps missing reset
+fields plus the reported reset-credit count.
+Labels use reported durations, not guessed 5h/7d defaults.
 There is no idle quota timer. These are the responding upstream's limits, **not a proxy-pool total**.
 Banked reset credits come only from the official query; passive metadata never inherits an older
 response's credits. `/context-bar status` shows the source, timestamp and availability reason.
@@ -116,7 +120,7 @@ Only the exact known completed consume codes `reset` and `already_redeemed` allo
 
 Token speed appears as estimated `~Nt/s` while output streams, then uses provider-reported output tokens for the completed turn's `Nt/s`. The live reading is a one-second sliding window: it measures the newest cumulative count against the oldest sample still inside the window, so a pause drops out instead of dragging the number down, and it holds the previous reading until the window spans half a second rather than showing a lone chunk's fabricated rate. The estimate counts CJK at one token per character, tool-call JSON at two characters per token, and prose or reasoning at four; a flat four would report Chinese output at a quarter of its real rate until the provider calibrates the turn. Timing starts at the first output delta and excludes tool-execution gaps. While a reading exists, a wide top row right-aligns it in one reserved field sized for three-digit speeds, so digit growth, the `~` estimate marker, and provider calibration never resize the lane or move Pac-Man and the context percent; an unknown or absent speed with no phase reserves nothing. Narrow rows keep the percent first and may shrink or drop the field before any useful number.
 
-The same reserved field carries a short dim phase before the first non-empty output: one dim icon (hourglass `waiting`, retry arrow, collapse `compact`, script `summary`, archive `stash`) takes the speedometer slot, and the settled reading stays beside it (`󰡍 42.3t/s`) instead of being hidden. A phase with no reading shows `?t/s` — the same unknown marker as `?%` — so the field never holds a lone icon in blank space and the percent and lane do not move when output starts. Wording — `waiting…`, or Pi's own observable phase kind `retrying…`/`compact…`/`summary…` while the public embedded working-status API reports one — is the fallback for glyph sets without icons (ASCII), where the ellipsis marks work in progress and drops before the phase text on narrow rows. The normal `t/s` returns as soon as output streams. These are static, no timer, no new row, and Pac-Man remains token-driven. A held draft's `stash` icon shows only when no speed reading is active and the field would otherwise be empty.
+The same reserved field carries a short dim phase before the first non-empty output: one dim icon (hourglass `waiting`, retry arrow, collapse `compact`, script `summary`, archive `stash`) takes the speedometer slot, and the settled reading stays beside it (`󰡍 42.3t/s`) instead of being hidden. A phase with no reading shows `?t/s` — the same unknown marker as `?%` — so the field never holds a lone icon in blank space and the percent and lane do not move when output starts. Wording — `waiting…`, or Pi's own observable phase kind `retrying…`/`compact…`/`summary…` while the public embedded working-status API reports one — is the fallback for glyph sets without icons (ASCII), where the ellipsis marks work in progress and drops before the phase text on narrow rows. The normal `t/s` returns as soon as output streams. These are static, no timer, no new row, and Pac-Man remains token-driven. A held draft's `stash` icon (or its ASCII word plus the reading) stays visible beside a speed reading too; a native work phase or waiting still takes priority, and narrow rows drop the decoration before the number.
 
 `/context-bar status` reports the last measured time-to-first-token and full agent-run duration. TTFT starts at `before_provider_request` (falling back to `turn_start` when the transport never emits that stage) and ends at the first non-empty text, thinking, or tool-call output; bare starts and empty deltas do not count. The run starts at `agent_start` and ends at `agent_settled`, so it includes tool loops and Pi's retry/recovery starts instead of resetting at `agent_end`. A pending request is shown as waiting; an older measurement stays labelled as last measured. Aborts and errors clear the pending measurement, and an aborted run is labelled.
 
@@ -132,7 +136,7 @@ System is the replayed prompt, Tools is the declaration text, and Messages/Tool 
 
 `Alt+S` stashes or restores one in-memory editor draft. Non-empty editor with no held draft stashes and clears; empty editor with a held draft restores and clears; both non-empty refuses without overwriting either; both empty is a no-op. The draft is never sent to the model and never written to disk or session entries. The key is claimed only when no resolved Pi action (built-in, extension, or user override) owns `Alt+S`; otherwise the original action receives the key through Pi's normal editor path, and another extension's registered shortcut keeps the priority Pi already gives it. `/context-bar stash` is the discoverable restore path; because Pi has already cleared the submitted command line, it restores only and refuses to overwrite a non-empty editor.
 
-`session_before_switch`, `session_before_fork`, and `session_before_tree` cancel a new/resume/fork/tree transition while a draft is held, so the stash cannot leak into another session silently. Reload and quit shutdown cannot be cancelled by an extension: if the editor is empty the draft is restored into it first (reload keeps editor text); if the editor already has text, the extension warns that the in-memory stash is lost. A forced kill cannot be guaranteed. Stash restore updates the editor before clearing the stash, so a failed editor write leaves the draft recoverable for a retry.
+`session_before_switch`, `session_before_fork`, and `session_before_tree` cancel a new/resume/fork/tree transition while a draft is held, so the stash cannot leak into another session silently. Stashing warns immediately that quitting Pi loses the memory-only draft; the persistent stash marker keeps that state visible. Interactive quit stops the TUI before `session_shutdown`, so shutdown makes no restore attempt and does not claim a warning can still be seen. Reload keeps the TUI: if the editor is empty the draft is restored into it first; if the editor already has text, the extension warns that the in-memory stash is lost. Neither path is cancellable, nothing is written to disk, and a forced kill cannot be guaranteed. Stash restore updates the editor before clearing the stash, so a failed editor write leaves the draft recoverable for a retry.
 
 Top row carries context consumption (lane, `%` with the model's context-window size, `t/s`); bottom left carries session identity (model · thinking); bottom right carries session health (`CH`, cost). The lane stretches with the window, using the columns previously reserved for short rule caps.
 
@@ -171,9 +175,12 @@ counts are exact integers; only the effective-context text volumes use compact K
 
 The normal footer stays empty. Status inspection never dispatches a slash command, opens another
 extension, sends a model message, or fetches quota. The effective-context summary is bounded to
-2000 messages / 8M characters of scanned text, keeps only the three largest tool-result names and volumes,
-and never stores message bodies. External status text has terminal controls and bidirectional
-overrides removed; inspection is bounded to 64 entries and 4096 characters per field.
+2000 messages / 8M characters of scanned text, with shared 10000-block and 100000-JSON-node traversal
+budgets across the whole summary and tool schema list. System transcript entries are skipped because the replayed prompt
+owns that bucket; non-plain objects and `toJSON` values are unknown rather than serialized. It keeps
+only the three largest tool-result names and volumes and never stores message bodies. External status
+text has terminal controls and bidirectional overrides removed; inspection is bounded to 64 entries
+and 4096 characters per field.
 If another extension replaced our footer, or the editor fell back to native layout, that status
 source is unavailable rather than a retained stale snapshot.
 

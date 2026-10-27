@@ -403,6 +403,21 @@ describe("lane strip", () => {
 		}
 	});
 
+	test("keeps a held stash beside the speed reading in both glyph sets", () => {
+		const speed = { tokensPerSecond: 42.3, estimated: false };
+		const nerd = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "assistant", speed, NERD_GLYPHS, NOTICES.stash),
+		);
+		assert.equal(visibleWidth(nerd), 60);
+		assert.ok(nerd.includes(NERD_GLYPHS.stash), nerd);
+		assert.ok(nerd.includes("42.3t/s"), nerd);
+		const ascii = stripVTControlCharacters(
+			renderLaneStrip(dominantSnapshot, 60, identityStyles, 0, "assistant", speed, ASCII_GLYPHS, NOTICES.stash),
+		);
+		assert.equal(visibleWidth(ascii), 60);
+		assert.ok(ascii.includes(`${NOTICES.stash} 42.3t/s`), ascii);
+	});
+
 	test("notice and speed share one right-aligned field across the transition", () => {
 		const speed = { tokensPerSecond: 9.8, estimated: true };
 		const before = stripVTControlCharacters(

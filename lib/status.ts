@@ -114,7 +114,7 @@ export const renderStatus = (snapshot: StatusSnapshot): string => {
 		}`,
 		`Request usage: ${requestUsage}`,
 		...effectiveRows(snapshot.effective, snapshot.effectiveIssue),
-		`Stash: ${snapshot.stash ? `1 draft held in memory (never written to disk; ${STASH_SHORTCUT} or /context-bar ${STASH_SUBCOMMAND} restores)` : "none"}`,
+		`Stash: ${snapshot.stash ? `1 draft held in memory (never written to disk; quitting Pi loses it; ${STASH_SHORTCUT} or /context-bar ${STASH_SUBCOMMAND} restores)` : "none"}`,
 		`Quota: ${quotaText}`,
 		`Quota source: ${snapshot.quotaSource ?? "none"}${snapshot.quotaUpdatedAt === undefined ? "" : ` · ${new Date(snapshot.quotaUpdatedAt).toISOString()}`}`,
 		`Quota note: ${snapshot.mode !== "tui" ? "chrome quota is disabled outside TUI" : (snapshot.quotaIssue ?? "waiting for a usable quota snapshot")}`,

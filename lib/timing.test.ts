@@ -148,7 +148,10 @@ describe("right-slot notice", () => {
 			"waiting…",
 		);
 		assert.equal(healthNotice({ phase: undefined, waiting: false, stashed: true, hasSpeed: false, ...idle }), "stash");
-		assert.equal(healthNotice({ phase: undefined, waiting: false, stashed: true, hasSpeed: true, ...idle }), undefined);
+		assert.equal(healthNotice({ phase: undefined, waiting: false, stashed: true, hasSpeed: true, ...idle }), "stash");
+		// Work phases still win over a held stash, with or without a reading.
+		assert.equal(healthNotice({ phase: undefined, waiting: true, stashed: true, hasSpeed: true, ...idle }), "waiting…");
+		assert.equal(healthNotice({ phase: "retry", waiting: false, stashed: true, hasSpeed: true, ...idle }), "retrying…");
 		assert.equal(
 			healthNotice({ phase: undefined, waiting: false, stashed: false, hasSpeed: false, ...idle }),
 			undefined,

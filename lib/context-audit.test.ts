@@ -9,10 +9,14 @@ import {
 	formatCount,
 	formatExactCount,
 	latestRequestUsage,
+	MAX_JSON_DEPTH,
+	MAX_JSON_NODES,
+	MAX_SCAN_BLOCKS,
 	MAX_SCAN_CHARS,
 	MAX_SCAN_MESSAGES,
 	MAX_TOOL_NAME_CHARS,
 	toolDeclaration,
+	toolDeclarations,
 } from "./context-audit.ts";
 
 const usage = (
@@ -131,6 +135,77 @@ describe("tool declarations and labels", () => {
 		assert.equal(broken.textChars, 3);
 	});
 
+	test("non-plain objects and toJSON values stay unknown instead of being mis-counted", () => {
+		const date = toolDeclaration({
+			name: "date",
+			description: "",
+			parameters: { type: "string", default: new Date("2020-01-01T00:00:00Z") },
+		});
+		assert.equal(date.schemaKnown, false);
+		assert.equal(date.textChars, 4);
+
+		const withToJSON = toolDeclaration({
+			name: "json",
+			description: "",
+			parameters: { type: "string", default: { toJSON: () => "not executed" } },
+		});
+		assert.equal(withToJSON.schemaKnown, false);
+
+		class Box {
+			readonly value = 1;
+		}
+		assert.equal(toolDeclaration({ name: "box", parameters: { default: new Box() } }).schemaKnown, false);
+	});
+
+	test("tool schema lists share node and character budgets without repeating a spent walk", () => {
+		const small = [
+			{ name: "read", description: "Read", parameters: { type: "object" } },
+			{ name: "bash", description: "", parameters: { type: "object", properties: { command: { type: "string" } } } },
+		];
+		assert.deepEqual(toolDeclarations(small), small.map(toolDeclaration));
+
+		const wide = { values: Array.from({ length: 60_000 }, (_, index) => index) };
+		let touched = 0;
+		const forbidden = new Proxy(
+			{},
+			{
+				get: () => {
+					touched++;
+					return undefined;
+				},
+				has: () => {
+					touched++;
+					return false;
+				},
+				ownKeys: () => {
+					touched++;
+					return [];
+				},
+				getPrototypeOf: () => {
+					touched++;
+					return Object.prototype;
+				},
+			},
+		);
+		const declarations = toolDeclarations([
+			{ name: "first", parameters: wide },
+			{ name: "second", parameters: wide },
+			{ name: "third", parameters: forbidden },
+		]);
+		assert.equal(declarations[0]?.schemaKnown, true);
+		assert.equal(declarations[1]?.schemaKnown, false);
+		assert.equal(declarations[2]?.schemaKnown, false);
+		assert.equal(touched, 0);
+
+		const giant = "x".repeat(MAX_SCAN_CHARS - 2);
+		const exhausted = toolDeclarations([
+			{ name: "giant", parameters: giant },
+			{ name: "after", parameters: { type: "object" } },
+		]);
+		assert.equal(exhausted[0]?.schemaKnown, true);
+		assert.equal(exhausted[1]?.schemaKnown, false);
+	});
+
 	test("tool names lose controls, stay bounded, and never become empty", () => {
 		const esc = String.fromCharCode(27);
 		const name = boundedToolName(`${esc}[31mevil${"\u0007"}\u202E${"x".repeat(1_000_000)}`);
@@ -235,6 +310,24 @@ describe("effective context", () => {
 		assert.equal(empty.toolsChars, 0);
 	});
 
+	test("tool declaration JSON counting is bounded instead of serializing a hostile schema", () => {
+		const huge = toolDeclaration({
+			name: "huge",
+			description: "",
+			parameters: { data: "x".repeat(MAX_SCAN_CHARS + 1) },
+		});
+		assert.equal(huge.schemaKnown, false);
+		assert.equal(huge.textChars, 4);
+
+		const cyclic: Record<string, unknown> = {};
+		cyclic.self = cyclic;
+		assert.equal(toolDeclaration({ name: "cycle", parameters: cyclic }).schemaKnown, false);
+		const deep = Array.from({ length: MAX_JSON_DEPTH + 1 }).reduce<unknown>((value) => ({ value }), {});
+		assert.equal(toolDeclaration({ name: "deep", parameters: deep }).schemaKnown, false);
+		const wide = Object.fromEntries(Array.from({ length: MAX_JSON_NODES + 1 }, (_, index) => [`k${index}`, 1]));
+		assert.equal(toolDeclaration({ name: "wide", parameters: wide }).schemaKnown, false);
+	});
+
 	test("message and volume bounds stop the scan and mark it truncated", () => {
 		const many: ContextMessage[] = Array.from({ length: MAX_SCAN_MESSAGES + 1 }, () => ({
 			role: "user",
@@ -257,6 +350,97 @@ describe("effective context", () => {
 		});
 		assert.equal(hugeSummary.truncated, true);
 		assert.equal(hugeSummary.summaryChars, MAX_SCAN_CHARS + 1);
+	});
+
+	test("system transcript blocks are skipped without being scanned or counted", () => {
+		const summary = buildEffectiveContext({
+			messages: [
+				{
+					role: "system",
+					content: Array.from({ length: MAX_SCAN_BLOCKS + 1 }, () => ({ type: "image" })),
+				},
+			],
+			systemPrompt: "SYS",
+			tools: [],
+			now: 0,
+		});
+		assert.equal(summary.truncated, false);
+		assert.equal(summary.imageParts, 0);
+		assert.equal(summary.otherChars, 0);
+		assert.equal(summary.systemChars, 3);
+	});
+
+	test("bounds also apply inside one message's blocks and tool-call arguments", () => {
+		const blocks = Array.from({ length: MAX_SCAN_BLOCKS + 1 }, () => ({ type: "image" }));
+		const manyBlocks = buildEffectiveContext({
+			messages: [{ role: "user", content: blocks }],
+			systemPrompt: "",
+			tools: [],
+			now: 0,
+		});
+		assert.equal(manyBlocks.imageParts, MAX_SCAN_BLOCKS);
+		assert.equal(manyBlocks.truncated, true);
+
+		const hugeArgs = buildEffectiveContext({
+			messages: [
+				{ role: "assistant", content: [{ type: "toolCall", arguments: { data: "x".repeat(MAX_SCAN_CHARS + 1) } }] },
+			],
+			systemPrompt: "",
+			tools: [],
+			now: 0,
+		});
+		assert.equal(hugeArgs.truncated, true);
+		assert.ok(hugeArgs.messagesChars > 0);
+
+		const unknownArgs = buildEffectiveContext({
+			messages: [{ role: "assistant", content: [{ type: "toolCall", arguments: { size: 1n } }] }],
+			systemPrompt: "",
+			tools: [],
+			now: 0,
+		});
+		assert.equal(unknownArgs.truncated, true);
+
+		const dateArgs = buildEffectiveContext({
+			messages: [
+				{
+					role: "assistant",
+					content: [{ type: "toolCall", arguments: { default: new Date("2020-01-01T00:00:00Z") } }],
+				},
+			],
+			systemPrompt: "",
+			tools: [],
+			now: 0,
+		});
+		assert.equal(dateArgs.truncated, true);
+	});
+
+	test("block and JSON work budgets are shared across the whole summary", () => {
+		const blockMessages: ContextMessage[] = Array.from({ length: MAX_SCAN_MESSAGES }, () => ({
+			role: "user",
+			content: Array.from({ length: 6 }, () => ({ type: "image" })),
+		}));
+		const blockSummary = buildEffectiveContext({
+			messages: blockMessages,
+			systemPrompt: "",
+			tools: [],
+			now: 0,
+		});
+		assert.equal(blockSummary.imageParts, MAX_SCAN_BLOCKS);
+		assert.equal(blockSummary.truncated, true);
+
+		const args = { values: Array.from({ length: 55 }, (_, index) => index) };
+		const jsonMessages: ContextMessage[] = Array.from({ length: MAX_SCAN_MESSAGES }, () => ({
+			role: "assistant",
+			content: [{ type: "toolCall", arguments: args }],
+		}));
+		const jsonSummary = buildEffectiveContext({
+			messages: jsonMessages,
+			systemPrompt: "",
+			tools: [],
+			now: 0,
+		});
+		assert.equal(jsonSummary.truncated, true);
+		assert.ok(jsonSummary.messagesChars > 0);
 	});
 });
 

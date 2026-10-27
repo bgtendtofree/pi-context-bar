@@ -79,7 +79,7 @@ test("malformed percentages and expired, missing or overflowing resets never bec
 		);
 });
 
-test("expiry drops stale windows without mutating the snapshot or retaining reset credits from it", () => {
+test("expiry drops stale windows without mutating the snapshot and keeps reset credits plus windows without resetAt", () => {
 	const quota = {
 		limits: [
 			{ label: "5h", percent: 42, resetAt: now + 1 },
@@ -88,6 +88,13 @@ test("expiry drops stale windows without mutating the snapshot or retaining rese
 		resetCredits: 2,
 	};
 	assert.equal(unexpiredQuota(quota, now), quota);
-	assert.deepEqual(unexpiredQuota(quota, now + 1), { limits: [{ label: "", percent: 10 }] });
+	assert.deepEqual(unexpiredQuota(quota, now + 1), {
+		limits: [{ label: "", percent: 10 }],
+		resetCredits: 2,
+	});
+	assert.deepEqual(unexpiredQuota({ limits: [{ label: "5h", percent: 42, resetAt: now }], resetCredits: 1 }, now), {
+		limits: [],
+		resetCredits: 1,
+	});
 	assert.equal(quota.limits.length, 2);
 });

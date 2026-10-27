@@ -149,7 +149,7 @@ export const healthNotice = (
 	// Once output flows, the live t/s reading owns the field even if a native phase is still set.
 	if (phase && !(input.outputActive && input.hasSpeed)) return phase;
 	if (input.waiting) return NOTICES.waiting;
-	return input.stashed && !input.hasSpeed ? NOTICES.stash : undefined;
+	return input.stashed ? NOTICES.stash : undefined;
 };
 
 /** Status detail: milliseconds below a second, seconds below a minute, then minutes. */

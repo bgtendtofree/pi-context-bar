@@ -62,7 +62,9 @@ export const parseQuotaEvent = (data: unknown, now: number): QuotaUsage | undefi
 };
 
 /** Return the same snapshot until expiry, preserving the editor's memo key. No idle timer needed. */
-export const unexpiredQuota = (quota: QuotaUsage, now: number): QuotaUsage =>
-	quota.limits.every((limit) => limit.resetAt === undefined || limit.resetAt > now)
-		? quota
-		: { limits: quota.limits.filter((limit) => limit.resetAt === undefined || limit.resetAt > now) };
+export const unexpiredQuota = (quota: QuotaUsage, now: number): QuotaUsage => {
+	const limits = quota.limits.filter((limit) => limit.resetAt === undefined || limit.resetAt > now);
+	if (limits.length === quota.limits.length) return quota;
+	// Reset credits are not window-scoped; keep the valid count while stale windows disappear.
+	return { limits, ...(quota.resetCredits !== undefined ? { resetCredits: quota.resetCredits } : {}) };
+};

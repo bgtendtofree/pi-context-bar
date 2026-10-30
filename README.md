@@ -75,6 +75,30 @@ With a virtual model selected, the bottom border shows `auto · high → physica
 
 Session cost includes standalone usage entries (such as cache warming) and nested model work reported by tool results. New OpenAI ChatGPT assistant turns record their request-time billing identity in non-context custom entries, so switching between OpenAI API keys and ChatGPT login never reclassifies earlier bills. Legacy `openai-codex` and `ln` reference costs remain excluded. Other providers keep their existing cost semantics, since subscription OAuth can include billed extra usage. Older untagged turns and tool/summary usage retain their reported costs; these are catalog estimates, not provider invoices.
 
+## DeepSeek balance
+
+For a physical `deepseek` model on the official `https://api.deepseek.com` endpoint
+(including its `/v1` and `/anthropic` API roots), the bottom border shows account balance
+beside the model: `Bal ¥20.50`. Pi resolves the existing login/API key through its public
+model registry; the extension never reads credential files itself.
+
+A positive granted balance adds `(gift ¥5.00)` only in spare width. Gifts are **already included**
+in the total, not extra money or reset tickets. Zero gifts stay hidden. Narrow borders drop gift
+detail before total, cache, or cost. Currency follows the API; multiple currencies remain separate.
+ASCII mode uses `Bal CNY 20.50 (gift CNY 5.00)`. The right-hand `$` remains estimated session
+spend, not account balance. An API-reported unavailable account is labelled `unavailable` in error color;
+no low-balance percentage or grant-expiry countdown is invented.
+
+The extension calls the official [balance API](https://api-docs.deepseek.com/api/get-user-balance)
+on TUI startup, model selection, and agent settlement, throttled to once per minute for an unchanged
+selection/key. No idle timer or per-token requests. Queries reject redirects, time out after 15 seconds,
+and cap bodies at 64 KiB. Custom/proxy endpoints, virtual models, and non-TUI sessions do not query.
+Account, selection, and session changes invalidate old responses; credentials are rechecked after HTTP.
+Failures hide the reading rather than turn it into zero, and snapshots older than five minutes disappear
+on render. Balances and credential fingerprints stay in memory only; keys are never logged.
+`/context-bar status` reports balance details, last successful query time, and any availability reason,
+without making a request.
+
 ## Subscription quota
 
 OpenAI Codex subscription quota sits beside the model label:

@@ -1,6 +1,7 @@
 /** Read-only diagnostics; external statuses are text, never commands or terminal control. */
 
 import { stripVTControlCharacters } from "node:util";
+import type { BalanceState } from "./balance.ts";
 import { formatCost, type QuotaUsage } from "./chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
 import {
@@ -45,6 +46,7 @@ export type StatusSnapshot = Readonly<{
 	quotaSource: string | undefined;
 	quotaUpdatedAt: number | undefined;
 	quotaIssue: string | undefined;
+	balance?: BalanceState;
 	statuses: ReadonlyMap<string, string> | undefined;
 }>;
 
@@ -77,6 +79,27 @@ const effectiveRows = (effective: EffectiveContextSummary | undefined, issue: st
 		`  Messages: ${formatCount(effective.messagesChars)} · Tool results: ${formatCount(effective.toolResultsChars)} · Summary: ${formatCount(effective.summaryChars)} · Other: ${formatCount(effective.otherChars)} chars${images}${scanned}`,
 		`  Largest tool results: ${largest}`,
 	];
+};
+
+const balanceRows = (balance: BalanceState | undefined, mode: string): readonly string[] => {
+	if (!balance) return [];
+	const usage = balance.usage;
+	const amounts = usage?.balances
+		.map((entry) => `${entry.currency} ${entry.total} (gift ${entry.granted}, topped up ${entry.toppedUp})`)
+		.join(" · ");
+	const reading = usage ? `${usage.available ? "available" : "unavailable"} · ${amounts}` : "unavailable";
+	const source =
+		balance.updatedAt === undefined
+			? "none"
+			: `official DeepSeek query · ${new Date(balance.updatedAt).toISOString()} (last successful query)`;
+	const note =
+		mode !== "tui"
+			? "chrome balance is disabled outside TUI"
+			: (balance.issue ??
+				(balance.owner
+					? "account balance, not session spend; gifts included in total"
+					: "active selection does not support official DeepSeek balance"));
+	return [`Balance: ${reading}`, `Balance source: ${source}`, `Balance note: ${note}`];
 };
 
 export const renderStatus = (snapshot: StatusSnapshot): string => {
@@ -118,6 +141,7 @@ export const renderStatus = (snapshot: StatusSnapshot): string => {
 		`Quota: ${quotaText}`,
 		`Quota source: ${snapshot.quotaSource ?? "none"}${snapshot.quotaUpdatedAt === undefined ? "" : ` · ${new Date(snapshot.quotaUpdatedAt).toISOString()}`}`,
 		`Quota note: ${snapshot.mode !== "tui" ? "chrome quota is disabled outside TUI" : (snapshot.quotaIssue ?? "waiting for a usable quota snapshot")}`,
+		...balanceRows(snapshot.balance, snapshot.mode),
 		"Other extension statuses (display-only):",
 	];
 	if (statuses === undefined) rows.push("  unavailable (this extension no longer owns the footer)");

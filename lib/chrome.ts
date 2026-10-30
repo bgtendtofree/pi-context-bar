@@ -3,6 +3,7 @@
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ContextSnapshot, SessionUsage } from "./context.ts";
+import type { BalanceInfo, BalanceUsage } from "./deepseek.ts";
 import { formatTokenSpeed, type TokenSpeedSnapshot } from "./speed.ts";
 import { type HealthNotice, NOTICES } from "./timing.ts";
 
@@ -325,6 +326,30 @@ export const quotaRender = (
 				.sort((left, right) => visibleWidth(right) - visibleWidth(left)),
 		}));
 	return { essentials: [...essentials, { label: "", upgrades: [] }] };
+};
+
+/** Account money is not a quota percent; gifts are already included in the total. */
+export const balanceRender = (
+	usage: BalanceUsage,
+	styles: ChromeStyles,
+	glyphs: GlyphSet = NERD_GLYPHS,
+): QuotaRender => {
+	const amount = (balance: BalanceInfo, value: string): string =>
+		glyphs.ascii ? `${balance.currency} ${value}` : `${balance.currency === "CNY" ? "¥" : "$"}${value}`;
+	const label = styles.fg(
+		usage.available ? "dim" : "error",
+		`Bal ${usage.balances.map((balance) => amount(balance, balance.total)).join(" / ")}${usage.available ? "" : " unavailable"}`,
+	);
+	const gifts = usage.balances
+		.filter((balance) => /[1-9]/.test(balance.granted))
+		.map((balance) => amount(balance, balance.granted))
+		.join(" / ");
+	return {
+		essentials: [
+			{ label, upgrades: gifts ? [`${label} ${styles.fg("dim", `(gift ${gifts})`)}`] : [] },
+			{ label: "", upgrades: [] },
+		],
+	};
 };
 
 /** One lane cell: glyph plus the remaining columns in its track. */

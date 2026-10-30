@@ -10,6 +10,7 @@ import {
 	renderLabeledBorder,
 } from "../lib/border.ts";
 import {
+	balanceRender,
 	type ChromeStyles,
 	formatDuration,
 	type GlyphSet,
@@ -21,6 +22,7 @@ import {
 	USAGE_WARNING_PERCENT,
 } from "../lib/chrome.ts";
 import type { ContextSnapshot, SessionUsage } from "../lib/context.ts";
+import type { BalanceUsage } from "../lib/deepseek.ts";
 import { type PromptState, promptColor, promptGlyph } from "../lib/prompt.ts";
 import type { TokenSpeedSnapshot } from "../lib/speed.ts";
 import { STASH_SHORTCUT, stashShortcutFree } from "../lib/stash.ts";
@@ -30,6 +32,7 @@ export type HealthState = Readonly<{
 	snapshot: ContextSnapshot;
 	usage: SessionUsage;
 	quota: QuotaUsage | undefined;
+	balance?: BalanceUsage | undefined;
 	speed: TokenSpeedSnapshot | null;
 	frame: number;
 	activity: LaneActivity;
@@ -288,6 +291,7 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 				options.getGlyphs(),
 				health.usage,
 				health.quota,
+				health.balance,
 				countdown,
 				modelInfo?.id ?? null,
 				modelInfo?.reasoning ?? null,
@@ -322,9 +326,11 @@ export const registerFramedEditor = (ctx: ExtensionContext, options: FramedEdito
 			styles: ChromeStyles,
 			now: number,
 		): Readonly<{ leftLabel: string; metrics: string }> {
-			const quota = health.quota
-				? quotaRender(health.quota, styles, now, options.getGlyphs())
-				: { essentials: [{ label: "", upgrades: [] }] };
+			const quota = health.balance
+				? balanceRender(health.balance, styles, options.getGlyphs())
+				: health.quota
+					? quotaRender(health.quota, styles, now, options.getGlyphs())
+					: { essentials: [{ label: "", upgrades: [] }] };
 			// Essential reading first: selected model id + window percentages + cache/cost. Optional model
 			// detail (thinking level, route arrow) and quota countdowns/credits only spend spare width.
 			const metricChoices = metricOptions(health.usage, styles, options.getGlyphs());

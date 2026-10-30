@@ -11,7 +11,8 @@ Open-sided input shell with health in its top and bottom rows. No multi-line foo
 - Health chrome lives on the editor's top and bottom rows; no extra rows
 - Empty footer via `setFooter` → `render: () => []` so default footer dies
 - Editor top row: full-width Pac-Man lane + context `%` beside lane + one reserved right-aligned field holding a phase glyph and its reading: quiet live `t/s` (speedometer), or, while waiting/retrying/compacting, the same reading beside one short dim phase icon (hourglass `waiting`, retry, collapse `compact`, script `summary`, archive `stash`) in the same field, no extra row, no timer; a phase with no reading shows `?t/s` (same unknown marker as `?%`), never a lone icon in blank space, and wording (`waiting…`/`retrying…`/…) is the fallback when the glyph set has no icon, with pending punctuation dropping before phase text at narrow widths
-- Editor bottom border: model/thinking + OpenAI Codex quota beside it on the left, `CH`/`$` right; never path or Git
+- Editor bottom border: model/thinking + OpenAI Codex quota or official DeepSeek account balance beside it on the left, `CH`/`$` right; never path or Git
+- DeepSeek balance: official physical `deepseek` endpoints only, public Pi credential resolution, TUI-only activity refresh with 60s throttle; decimal currency amounts, never percentages; nonzero granted balance is optional `(gift …)` detail already included in total and drops before useful readings; no grant expiry inferred, no credential/balance persistence, failures/expired snapshots hide rather than become zero, delayed responses cannot cross credentials/endpoints/sessions
 - Health metrics: `%` + quiet live `t/s` (top) · cache hit + optional `$` (bottom right); Nerd Font icons may decorate speed and replace `CH`, ASCII keeps `CH` and `t/s`; a cache reading never falls back to a bare percentage (Nerd icon or `CH` label)
 - Scope: editor chrome/header/footer only; keep Pi's native conversation, thinking, tool-result, and compaction-notice renderers unchanged
 - Icon grammar: plain dim thinking level (no brain icon), cache database, dim speedometer, one pending-notice icon (hourglass/retry/collapse/script/archive) inside the same dim field; a notice icon carries the phase alone and wording is its ASCII fallback, decorations drop before useful text/numbers at narrow widths, all through `GlyphSet` with ASCII fallback
@@ -40,6 +41,8 @@ Open-sided input shell with health in its top and bottom rows. No multi-line foo
 - `lib/chrome.ts` — Pac-Man lane, health metrics, role-based theme styling
 - `lib/openai.ts` — OpenAI Codex quota fetch/parse and expiry-aware banked reset
 - `lib/quota.ts` — Codex quota state, refresh/expiry, request/account/endpoint isolation
+- `lib/balance.ts` — DeepSeek balance refresh, expiry, and credential/selection/session isolation
+- `lib/deepseek.ts` — official DeepSeek endpoint validation, bounded balance query and decimal parsing
 - `lib/billing.ts` — fork billing-marker parent read and recovery
 - `lib/response-quota.ts` — passive response-header/stream quota parsing and expiry
 - `lib/status.ts` — bounded, display-only diagnostics and extension status inspection

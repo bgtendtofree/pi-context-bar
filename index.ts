@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { keyText, VERSION } from "@earendil-works/pi-coding-agent";
 import { isAppleTerminalSession } from "@earendil-works/pi-tui";
 import { runOpenAiCodexReset } from "./commands/openai-codex-reset.ts";
+import { type BalanceState, createBalanceController, INITIAL_BALANCE_STATE } from "./lib/balance.ts";
 import { recoverForkSubscriptionMarkers } from "./lib/billing.ts";
 import type { ModelInfo } from "./lib/border.ts";
 import {
@@ -110,6 +111,7 @@ type ChromeState = Readonly<{
 	glyphs: GlyphSet;
 	prompt: PromptState;
 	quota: QuotaState;
+	balance: BalanceState;
 	quotaRequestKey: string | undefined;
 	/**
 	 * Identity captured at the latest turn_start. Its presence means a turn started even when `key` is
@@ -147,6 +149,7 @@ const freshState = (): ChromeState => ({
 	glyphs: NERD_GLYPHS,
 	prompt: INITIAL_PROMPT_STATE,
 	quota: INITIAL_QUOTA_STATE,
+	balance: INITIAL_BALANCE_STATE,
 	quotaRequestKey: undefined,
 	turnQuota: undefined,
 	getExtensionStatuses: undefined,
@@ -353,6 +356,12 @@ const quotaController = createQuotaController({
 	getRequestKey: () => state.quotaRequestKey,
 });
 
+const balanceController = createBalanceController({
+	getState: () => state.balance,
+	setState: (balance) => patch({ balance }),
+	requestRender,
+});
+
 /** Ghost and chomp animation carry activity; the border itself stays static theme. */
 const changeLaneActivity = (next: LaneActivity): boolean => {
 	if (state.laneActivity === next) return false;
@@ -463,6 +472,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 		if (!startupHeaderSuppressed(pi)) setWelcomeHeader(ctx);
 	}
 	void quotaController.refresh(ctx);
+	void balanceController.refresh(ctx);
 	ctx.ui.setFooter((_tui, _theme, footerData) => {
 		const getExtensionStatuses = () => footerData.getExtensionStatuses();
 		patch({ getExtensionStatuses });
@@ -479,6 +489,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 		getThinkingLevel: () => pi.getThinkingLevel(),
 		getHealth: () => {
 			quotaController.expire(ctx);
+			balanceController.expire(ctx);
 			// Pi appends background usage entries (e.g. cache warming) while idle and only triggers a render; no
 			// extension lifecycle hook fires. The leaf-id memo keeps this cheap and rescans only on a new leaf.
 			// During a captured subscription turn, treat the provisional unmarked response as on-plan.
@@ -490,6 +501,7 @@ const registerChrome = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
 						: state.context,
 				usage: state.usage,
 				quota: state.quota.usage,
+				balance: state.balance.usage,
 				speed: state.speed.reading,
 				frame: Math.floor(state.chompTokens / PACMAN_TOKENS_PER_FRAME) + (state.rewind?.frame ?? 0),
 				activity: state.laneActivity,
@@ -535,6 +547,7 @@ export default function zContext(pi: ExtensionAPI): void {
 			}
 			if (args.trim() === "status") {
 				quotaController.expire(ctx);
+				balanceController.expire(ctx);
 				refreshSnapshot(ctx);
 				refreshSessionUsage(ctx);
 				ctx.ui.notify(
@@ -556,6 +569,7 @@ export default function zContext(pi: ExtensionAPI): void {
 						quotaSource: state.quota.source,
 						quotaUpdatedAt: state.quota.updatedAt,
 						quotaIssue: state.quota.issue,
+						balance: state.balance,
 						statuses: state.getExtensionStatuses?.(),
 					}),
 					"info",
@@ -608,6 +622,7 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", (event, ctx) => {
+		balanceController.cancel();
 		const carried = event.reason === "fork" ? pendingForkSubscriptionIds : undefined;
 		pendingForkSubscriptionIds = undefined;
 		for (const messageEntryId of carried ?? []) pi.appendEntry(SUBSCRIPTION_TURN_ENTRY, { messageEntryId });
@@ -778,6 +793,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		});
 		refreshSessionUsage(ctx);
 		changeLaneActivity("idle");
+		void balanceController.refresh(ctx);
 		requestRender();
 	});
 	pi.on("model_select", (_event, ctx) => {
@@ -788,6 +804,7 @@ export default function zContext(pi: ExtensionAPI): void {
 		markEffectiveUnknown("model changed; waiting for the next observation");
 		refreshSnapshot(ctx);
 		void quotaController.refresh(ctx);
+		void balanceController.refresh(ctx);
 		requestRender();
 	});
 	pi.on("thinking_level_select", requestRender);
@@ -823,6 +840,7 @@ export default function zContext(pi: ExtensionAPI): void {
 	});
 	pi.on("session_shutdown", (event, ctx) => {
 		quotaController.cancel();
+		balanceController.cancel();
 		// Reload keeps the TUI and editor text, so a held draft can return there. Interactive quit stops
 		// the TUI before this hook, which leaves no visible/restorable editor; the stash action already
 		// warned that quitting loses the memory-only draft.

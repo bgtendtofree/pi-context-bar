@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { INITIAL_BALANCE_STATE } from "./balance.ts";
 import { diagnosticText, renderStatus, type StatusSnapshot } from "./status.ts";
 import { INITIAL_TIMING } from "./timing.ts";
 
@@ -23,6 +24,33 @@ const snapshot: StatusSnapshot = {
 	quotaIssue: undefined,
 	statuses: new Map(),
 };
+
+test("balance diagnostics distinguish availability, stale/failed queries, and session spend without exposing ownership", () => {
+	const balance = {
+		...INITIAL_BALANCE_STATE,
+		owner: "internal-selection",
+		identity: "internal-fingerprint",
+		updatedAt: 0,
+		usage: {
+			available: false,
+			balances: [{ currency: "USD" as const, total: "0.00", granted: "0.00", toppedUp: "0.00" }],
+		},
+	};
+	const output = renderStatus({ ...snapshot, balance });
+	assert.match(output, /Balance: unavailable · USD 0.00/);
+	assert.match(output, /last successful query/);
+	assert.match(output, /not session spend; gifts included in total/);
+	assert.doesNotMatch(output, /internal-selection|internal-fingerprint/);
+	assert.match(renderStatus({ ...snapshot, balance, mode: "rpc" }), /chrome balance is disabled outside TUI/);
+	assert.match(
+		renderStatus({ ...snapshot, balance: { ...balance, usage: undefined, issue: "query failed; reading hidden" } }),
+		/Balance: unavailable\n/,
+	);
+	assert.match(
+		renderStatus({ ...snapshot, balance: INITIAL_BALANCE_STATE }),
+		/active selection does not support official DeepSeek balance/,
+	);
+});
 
 test("diagnostics explain unavailable readings and never add persistent chrome", () => {
 	const output = renderStatus(snapshot);
